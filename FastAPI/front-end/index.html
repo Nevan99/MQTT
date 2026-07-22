@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Pi Fleet Controller</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; margin: 0; background: #111; color: #eee; }
+  header { display: flex; gap: 0.5rem; align-items: center; padding: 0.75rem 1rem; background: #1a1a1a; border-bottom: 1px solid #333; }
+  header h1 { font-size: 1rem; margin: 0; margin-right: 1rem; }
+  nav { display: flex; gap: 0.25rem; margin-right: 1rem; }
+  nav button.tab { background: transparent; border: 1px solid transparent; }
+  nav button.tab.active { background: #2a2a2a; border-color: #444; }
+  input, select { padding: 0.4rem 0.6rem; background: #222; border: 1px solid #444; color: #eee; border-radius: 4px; }
+  button { padding: 0.4rem 0.9rem; border: 1px solid #444; background: #2a2a2a; color: #eee; border-radius: 4px; cursor: pointer; }
+  button:hover { background: #333; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  #status { margin-left: auto; font-size: 0.85rem; padding: 0.2rem 0.6rem; border-radius: 4px; }
+  #status.connected { background: #163; }
+  #status.disconnected { background: #522; }
+  #status.connecting { background: #542; }
+
+  .view { display: none; }
+  .view.active { display: block; }
+
+  #log { padding: 0.5rem 1rem; overflow-y: auto; height: calc(100vh - 56px); }
+  .line { padding: 0.25rem 0; border-bottom: 1px solid #222; font-family: ui-monospace, monospace; font-size: 0.85rem; white-space: pre-wrap; word-break: break-word; }
+  .ts { color: #888; margin-right: 0.6rem; }
+  .lvl { display: inline-block; min-width: 3.5rem; text-transform: uppercase; font-weight: bold; margin-right: 0.6rem; }
+  .lvl-info { color: #6cf; }
+  .lvl-warning { color: #fc6; }
+  .lvl-error { color: #f66; }
+  .lvl-unknown { color: #999; }
+  .msg { color: #ddd; }
+
+  #fleet { display: grid; grid-template-columns: 1fr 380px; gap: 1rem; padding: 1rem; height: calc(100vh - 56px); box-sizing: border-box; }
+  .panel { background: #1a1a1a; border: 1px solid #333; border-radius: 6px; padding: 0.75rem; overflow-y: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid #262626; }
+  th { color: #999; font-weight: 600; }
+  tr.pi-row { cursor: pointer; }
+  tr.pi-row:hover { background: #222; }
+  tr.pi-row.selected { background: #263a2a; }
+  .badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 10px; font-size: 0.75rem; }
+  .badge-online { background: #163; }
+  .badge-offline { background: #522; }
+  .badge-unassigned { background: #333; color: #999; }
+  label { display: block; font-size: 0.8rem; color: #aaa; margin: 0.6rem 0 0.2rem; }
+  .field { width: 100%; }
+  .row { display: flex; gap: 0.5rem; }
+  .row > * { flex: 1; }
+  #cmdResults { margin-top: 1rem; }
+  .cmd-entry { border: 1px solid #262626; border-radius: 4px; padding: 0.5rem; margin-bottom: 0.5rem; font-size: 0.8rem; }
+  .cmd-entry .hdr { display: flex; justify-content: space-between; color: #aaa; margin-bottom: 0.3rem; }
+  .cmd-status { text-transform: uppercase; font-weight: bold; }
+  .cmd-status.pending { color: #fc6; }
+  .cmd-status.complete { color: #6f6; }
+  .cmd-status.failed, .cmd-status.timeout { color: #f66; }
+  .cmd-entry .hdr { cursor: pointer; user-select: none; }
+  .cmd-entry .toggle { color: #777; margin-right: 0.4rem; display: inline-block; width: 0.7rem; }
+  .cmd-entry.collapsed .result { display: none; }
+  pre.result { margin: 0.4rem 0 0; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, monospace; }
+  .hint { color: #777; font-size: 0.75rem; margin-top: 0.5rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Pi Fleet Controller</h1>
+  <nav>
+    <button class="tab active" data-view="fleet">Fleet</button>
+    <button class="tab" data-view="logs">Logs</button>
+  </nav>
+  <input id="deviceId" placeholder="device id (e.g. pi01)" value="pi01">
+  <button id="connectBtn">Connect</button>
+  <span id="status" class="disconnected">disconnected</span>
+</header>
+
+<section id="fleet" class="view active">
+  <div class="panel">
+    <table>
+      <thead>
+        <tr><th>Pi ID</th><th>IP</th><th>Role</th><th>Status</th><th>Last seen</th></tr>
+      </thead>
+      <tbody id="piTableBody"></tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <label>Target</label>
+    <select id="targetSelect" class="field">
+      <option value="all">all (broadcast)</option>
+    </select>
+
+    <label>Action</label>
+    <select id="actionSelect" class="field">
+      <option value="ping">ping</option>
+      <option value="signal_stats">signal_stats</option>
+      <option value="throughput_test">throughput_test</option>
+      <option value="set_channel">set_channel</option>
+      <option value="syslog">syslog</option>
+      <option value="stream_logs">stream_logs</option>
+      <option value="stop_logs">stop_logs</option>
+      <option value="tcpdump">tcpdump</option>
+      <option value="stop_tcpdump">stop_tcpdump</option>
+    </select>
+
+    <div id="paramFields"></div>
+
+    <div class="row" style="margin-top: 0.75rem;">
+      <button id="sendCmdBtn">Send command</button>
+    </div>
+
+    <div id="cmdResults"></div>
+  </div>
+</section>
+
+<section id="logs" class="view">
+  <div id="log"></div>
+</section>
+
+<script>
+const API = '';
+const tabs = document.querySelectorAll('nav .tab');
+const views = document.querySelectorAll('.view');
+tabs.forEach(btn => btn.addEventListener('click', () => {
+  tabs.forEach(b => b.classList.remove('active'));
+  views.forEach(v => v.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById(btn.dataset.view).classList.add('active');
+}));
+
+// --- Fleet: Pi list -------------------------------------------------------
+
+const piTableBody = document.getElementById('piTableBody');
+const targetSelect = document.getElementById('targetSelect');
+let pis = [];
+let selectedPiId = null;
+
+function statusBadge(status) {
+  const cls = status === 'online' ? 'badge-online' : status === 'offline' ? 'badge-offline' : 'badge-unassigned';
+  return `<span class="badge ${cls}">${status}</span>`;
+}
+
+function renderPis() {
+  piTableBody.innerHTML = pis.map(p => `
+    <tr class="pi-row ${p.pi_id === selectedPiId ? 'selected' : ''}" data-pi-id="${p.pi_id}">
+      <td>${p.pi_id}</td>
+      <td>${p.ip_address || ''}</td>
+      <td>${p.role || ''}</td>
+      <td>${statusBadge(p.status)}</td>
+      <td>${p.last_seen ? new Date(p.last_seen).toLocaleString() : ''}</td>
+    </tr>
+  `).join('');
+
+  piTableBody.querySelectorAll('.pi-row').forEach(row => {
+    row.addEventListener('click', () => {
+      selectedPiId = row.dataset.piId;
+      targetSelect.value = selectedPiId;
+      renderPis();
+    });
+  });
+
+  const current = targetSelect.value;
+  targetSelect.innerHTML = '<option value="all">all (broadcast)</option>' +
+    pis.map(p => `<option value="${p.pi_id}">${p.pi_id}</option>`).join('');
+  if ([...targetSelect.options].some(o => o.value === current)) targetSelect.value = current;
+}
+
+async function refreshPis() {
+  try {
+    const res = await fetch(`${API}/pis`);
+    if (!res.ok) return;
+    pis = await res.json();
+    renderPis();
+  } catch {
+    // backend unreachable; keep last known list
+  }
+}
+
+refreshPis();
+setInterval(refreshPis, 5000);
+
+// --- Fleet: command builder ------------------------------------------------
+
+const actionSelect = document.getElementById('actionSelect');
+const paramFields = document.getElementById('paramFields');
+const sendCmdBtn = document.getElementById('sendCmdBtn');
+const cmdResults = document.getElementById('cmdResults');
+
+const ACTION_PARAMS = {
+  ping: [],
+  signal_stats: [],
+  throughput_test: [{ name: 'duration', label: 'Duration (s)', type: 'number', default: 10 }],
+  set_channel: [{ name: 'channel', label: 'Channel', type: 'number' }],
+  syslog: [{ name: 'lines', label: 'Lines', type: 'number', default: 100 }],
+  stream_logs: [{ name: 'interface', label: 'Interface (optional)', type: 'text' }],
+  stop_logs: [],
+  tcpdump: [{ name: 'interface', label: 'Interface', type: 'text', required: true }],
+  stop_tcpdump: [{ name: 'interface', label: 'Interface', type: 'text', required: true }],
+};
+
+function renderParamFields() {
+  const fields = ACTION_PARAMS[actionSelect.value] || [];
+  paramFields.innerHTML = fields.map(f => `
+    <label>${f.label}</label>
+    <input class="field" data-param="${f.name}" type="${f.type}" ${f.default !== undefined ? `value="${f.default}"` : ''}>
+  `).join('');
+}
+
+actionSelect.addEventListener('change', renderParamFields);
+renderParamFields();
+
+function collectParams() {
+  const params = {};
+  paramFields.querySelectorAll('[data-param]').forEach(input => {
+    if (input.value === '') return;
+    params[input.dataset.param] = input.type === 'number' ? Number(input.value) : input.value;
+  });
+  return params;
+}
+
+function addCommandEntry(commandId, piId, action) {
+  const entry = document.createElement('div');
+  entry.className = 'cmd-entry';
+  entry.dataset.commandId = commandId;
+  entry.innerHTML = `
+    <div class="hdr"><span><span class="toggle">&#9660;</span>${action} &rarr; ${piId}</span><span class="cmd-status pending">pending</span></div>
+    <pre class="result"></pre>
+  `;
+  entry.querySelector('.hdr').addEventListener('click', () => {
+    entry.classList.toggle('collapsed');
+    entry.querySelector('.toggle').innerHTML = entry.classList.contains('collapsed') ? '&#9654;' : '&#9660;';
+  });
+  cmdResults.prepend(entry);
+  pollCommand(commandId, entry);
+}
+
+async function pollCommand(commandId, entry) {
+  const statusEl = entry.querySelector('.cmd-status');
+  const resultEl = entry.querySelector('.result');
+  for (let i = 0; i < 30; i++) {
+    try {
+      const res = await fetch(`${API}/commands/${commandId}`);
+      if (res.ok) {
+        const data = await res.json();
+        statusEl.textContent = data.status;
+        statusEl.className = `cmd-status ${data.status}`;
+        if (data.result) resultEl.textContent = JSON.stringify(data.result, null, 2);
+        if (data.status !== 'pending') return;
+      }
+    } catch {
+      // ignore transient errors and keep polling
+    }
+    await new Promise(r => setTimeout(r, 2000));
+  }
+}
+
+sendCmdBtn.addEventListener('click', async () => {
+  const target = targetSelect.value;
+  const action = actionSelect.value;
+  const params = collectParams();
+  sendCmdBtn.disabled = true;
+  try {
+    const url = target === 'all' ? `${API}/pis/broadcast` : `${API}/pis/${encodeURIComponent(target)}/cmd`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, params }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      alert(`Command failed: ${res.status} ${text}`);
+      return;
+    }
+    const data = await res.json();
+    addCommandEntry(data.command_id, data.pi_id, data.action);
+  } finally {
+    sendCmdBtn.disabled = false;
+  }
+});
+
+// --- Logs (live WebSocket feed) --------------------------------------------
+
+const deviceInput = document.getElementById('deviceId');
+const connectBtn = document.getElementById('connectBtn');
+const statusEl = document.getElementById('status');
+const logEl = document.getElementById('log');
+
+let ws = null;
+
+function setStatus(text, cls) {
+  statusEl.textContent = text;
+  statusEl.className = cls;
+}
+
+function levelClass(level) {
+  const l = (level || 'unknown').toLowerCase();
+  return ['info', 'warning', 'error'].includes(l) ? `lvl-${l}` : 'lvl-unknown';
+}
+
+function appendLine(payload) {
+  const div = document.createElement('div');
+  div.className = 'line';
+
+  const ts = document.createElement('span');
+  ts.className = 'ts';
+  ts.textContent = payload.timestamp || '';
+
+  const lvl = document.createElement('span');
+  const levelValue = payload.loglevel || payload.level || 'unknown';
+  lvl.className = `lvl ${levelClass(levelValue)}`;
+  lvl.textContent = levelValue;
+
+  const msg = document.createElement('span');
+  msg.className = 'msg';
+  msg.textContent = payload.message !== undefined ? payload.message : JSON.stringify(payload);
+
+  div.append(ts, lvl, msg);
+  logEl.appendChild(div);
+
+  const nearBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 100;
+  if (nearBottom) logEl.scrollTop = logEl.scrollHeight;
+}
+
+function connect() {
+  if (ws) ws.close();
+
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const url = `${proto}://${location.host}/ws/live`;
+  setStatus('connecting…', 'connecting');
+  connectBtn.disabled = true;
+
+  ws = new WebSocket(url);
+
+  ws.onopen = () => {
+    setStatus('connected', 'connected');
+    connectBtn.disabled = false;
+  };
+
+  ws.onmessage = (event) => {
+    let msg;
+    try {
+      msg = JSON.parse(event.data);
+    } catch {
+      appendLine({ message: event.data });
+      return;
+    }
+    // mqtt_service broadcasts {pi_id, category, payload}; filter to the
+    // device typed in the header and to log-shaped categories.
+    const filterId = deviceInput.value.trim();
+    if (filterId && msg.pi_id && msg.pi_id !== filterId) return;
+    appendLine(msg.payload !== undefined ? msg.payload : msg);
+  };
+
+  ws.onclose = () => {
+    setStatus('disconnected', 'disconnected');
+    connectBtn.disabled = false;
+  };
+
+  ws.onerror = () => {
+    setStatus('error', 'disconnected');
+  };
+}
+
+connectBtn.addEventListener('click', connect);
+deviceInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') connect(); });
+</script>
+</body>
+</html>
