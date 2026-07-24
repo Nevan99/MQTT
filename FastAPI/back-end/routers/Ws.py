@@ -7,6 +7,7 @@ router = APIRouter(tags=["websocket"])
 
 @router.websocket("/ws/live")
 async def websocket_live(websocket: WebSocket):
+    """Firehose: every message for every device, no server-side filtering."""
     await manager.connect(websocket)
     try:
         while True:
@@ -15,3 +16,14 @@ async def websocket_live(websocket: WebSocket):
             await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+
+
+@router.websocket("/ws/live/{device_id}")
+async def websocket_device_live(websocket: WebSocket, device_id: str):
+    """Only messages whose pi_id matches device_id."""
+    await manager.connect(websocket, device_id=device_id)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket, device_id=device_id)

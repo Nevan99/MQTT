@@ -15,15 +15,9 @@
   button { padding: 0.4rem 0.9rem; border: 1px solid #444; background: #2a2a2a; color: #eee; border-radius: 4px; cursor: pointer; }
   button:hover { background: #333; }
   button:disabled { opacity: 0.5; cursor: default; }
-  #status { margin-left: auto; font-size: 0.85rem; padding: 0.2rem 0.6rem; border-radius: 4px; }
-  #status.connected { background: #163; }
-  #status.disconnected { background: #522; }
-  #status.connecting { background: #542; }
-
   .view { display: none; }
   .view.active { display: block; }
 
-  #log { padding: 0.5rem 1rem; overflow-y: auto; height: calc(100vh - 56px); }
   .line { padding: 0.25rem 0; border-bottom: 1px solid #222; font-family: ui-monospace, monospace; font-size: 0.85rem; white-space: pre-wrap; word-break: break-word; }
   .ts { color: #888; margin-right: 0.6rem; }
   .lvl { display: inline-block; min-width: 3.5rem; text-transform: uppercase; font-weight: bold; margin-right: 0.6rem; }
@@ -41,6 +35,16 @@
   tr.pi-row { cursor: pointer; }
   tr.pi-row:hover { background: #222; }
   tr.pi-row.selected { background: #263a2a; }
+  .pi-toggle { display: inline-block; padding: 0.05rem 0.3rem; margin-right: 0.2rem; font-size: 0.7rem; color: #999; cursor: pointer; border: 1px solid #333; border-radius: 3px; }
+  .pi-toggle:hover { background: #222; color: #eee; }
+  tr.pi-toolbar-row td { background: #181818; padding: 0.4rem 0.5rem; }
+  tr.pi-toolbar-row.hidden { display: none; }
+  tr.pi-log-row td { background: #141414; padding: 0; }
+  tr.pi-log-row.hidden { display: none; }
+  .pi-log-heading { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; color: #888; padding: 0.4rem 0.75rem 0.2rem; }
+  .pi-log-panel { max-height: 240px; overflow-y: auto; padding: 0.2rem 0.75rem 0.5rem; }
+  .pi-log-panel .line { border-bottom: 1px solid #202020; }
+  .pi-log-empty { color: #666; font-size: 0.78rem; padding: 0.4rem 0; }
   .badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 10px; font-size: 0.75rem; }
   .badge-online { background: #163; }
   .badge-offline { background: #522; }
@@ -59,7 +63,12 @@
   .cmd-entry .hdr { cursor: pointer; user-select: none; }
   .cmd-entry .toggle { color: #777; margin-right: 0.4rem; display: inline-block; width: 0.7rem; }
   .cmd-entry.collapsed .result { display: none; }
-  pre.result { margin: 0.4rem 0 0; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, monospace; }
+  .result { margin-top: 0.4rem; }
+  table.result-table { width: 100%; border-collapse: collapse; font-family: ui-monospace, monospace; font-size: 0.78rem; }
+  table.result-table td { padding: 0.15rem 0.4rem; border-bottom: 1px solid #222; vertical-align: top; white-space: pre-wrap; word-break: break-word; }
+  table.result-table .result-key { color: #888; width: 40%; }
+  table.result-table .result-value { color: #ddd; }
+  table.result-table table.result-table { margin: 0; }
   .hint { color: #777; font-size: 0.75rem; margin-top: 0.5rem; }
 </style>
 </head>
@@ -68,18 +77,14 @@
   <h1>Pi Fleet Controller</h1>
   <nav>
     <button class="tab active" data-view="fleet">Fleet</button>
-    <button class="tab" data-view="logs">Logs</button>
   </nav>
-  <input id="deviceId" placeholder="device id (e.g. pi01)" value="pi01">
-  <button id="connectBtn">Connect</button>
-  <span id="status" class="disconnected">disconnected</span>
 </header>
 
 <section id="fleet" class="view active">
   <div class="panel">
     <table>
       <thead>
-        <tr><th>Pi ID</th><th>IP</th><th>Role</th><th>Status</th><th>Last seen</th></tr>
+        <tr><th></th><th>Pi ID</th><th>IP</th><th>Role</th><th>Status</th><th>Last seen</th></tr>
       </thead>
       <tbody id="piTableBody"></tbody>
     </table>
@@ -114,10 +119,6 @@
   </div>
 </section>
 
-<section id="logs" class="view">
-  <div id="log"></div>
-</section>
-
 <script>
 const API = '';
 const tabs = document.querySelectorAll('nav .tab');
@@ -136,28 +137,189 @@ const targetSelect = document.getElementById('targetSelect');
 let pis = [];
 let selectedPiId = null;
 
+// One entry per Pi: { summaryRow, logRow, logPanel, expanded, ws }.
+// Kept alive across refreshPis() calls so expanding a row and its live
+// log feed survive the 5s poll instead of being torn down and rebuilt.
+const piRows = new Map();
+
 function statusBadge(status) {
   const cls = status === 'online' ? 'badge-online' : status === 'offline' ? 'badge-offline' : 'badge-unassigned';
   return `<span class="badge ${cls}">${status}</span>`;
 }
 
-function renderPis() {
-  piTableBody.innerHTML = pis.map(p => `
-    <tr class="pi-row ${p.pi_id === selectedPiId ? 'selected' : ''}" data-pi-id="${p.pi_id}">
-      <td>${p.pi_id}</td>
-      <td>${p.ip_address || ''}</td>
-      <td>${p.role || ''}</td>
-      <td>${statusBadge(p.status)}</td>
-      <td>${p.last_seen ? new Date(p.last_seen).toLocaleString() : ''}</td>
-    </tr>
-  `).join('');
+// Category -> which panel it's routed to. registration/status/result are
+// command acks and fleet metadata, not something to show in a log feed.
+const CATEGORY_PANEL = { logs: 'logPanel', tcpdump: 'tcpdumpPanel' };
 
-  piTableBody.querySelectorAll('.pi-row').forEach(row => {
-    row.addEventListener('click', () => {
-      selectedPiId = row.dataset.piId;
-      targetSelect.value = selectedPiId;
-      renderPis();
+function connectPiLog(piId, entry) {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  // Server-side filtered: the backend only forwards messages for this device_id.
+  const ws = new WebSocket(`${proto}://${location.host}/ws/live/${encodeURIComponent(piId)}`);
+
+  ws.onmessage = (event) => {
+    let msg;
+    try {
+      msg = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    const panelKey = CATEGORY_PANEL[msg.category];
+    if (!panelKey) return;
+    const panel = entry[panelKey];
+    const empty = panel.querySelector('.pi-log-empty');
+    if (empty) empty.remove();
+    appendLineTo(panel, msg.payload !== undefined ? msg.payload : msg);
+  };
+
+  return ws;
+}
+
+// Each Pi has two independently-collapsible windows sharing one lazily
+// opened WebSocket; the socket stays open as long as either is expanded.
+const PANELS = [
+  { kind: 'logs', rowKey: 'logRow', panelKey: 'logPanel', toggleKey: 'logToggle', expandedKey: 'logExpanded', label: 'syslog / stream_logs', short: 'syslog / stream_logs' },
+  { kind: 'tcpdump', rowKey: 'tcpdumpRow', panelKey: 'tcpdumpPanel', toggleKey: 'tcpdumpToggle', expandedKey: 'tcpdumpExpanded', label: 'tcpdump', short: 'tcpdump' },
+];
+
+function anyExpanded(entry) {
+  return PANELS.some(p => entry[p.expandedKey]);
+}
+
+function togglePanel(piId, kind) {
+  const entry = piRows.get(piId);
+  if (!entry) return;
+  const spec = PANELS.find(p => p.kind === kind);
+
+  entry[spec.expandedKey] = !entry[spec.expandedKey];
+  entry[spec.rowKey].classList.toggle('hidden', !entry[spec.expandedKey]);
+  entry[spec.toggleKey].innerHTML = entry[spec.expandedKey] ? '&#9660; ' + spec.short : '&#9654; ' + spec.short;
+
+  if (entry[spec.expandedKey] && !entry[spec.panelKey].children.length) {
+    entry[spec.panelKey].innerHTML = '<div class="pi-log-empty">waiting for messages…</div>';
+  }
+
+  const isAnyExpanded = anyExpanded(entry);
+  if (isAnyExpanded && !entry.ws) {
+    entry.ws = connectPiLog(piId, entry);
+  } else if (!isAnyExpanded && entry.ws) {
+    entry.ws.close();
+    entry.ws = null;
+  }
+}
+
+function toggleRow(piId) {
+  const entry = piRows.get(piId);
+  if (!entry) return;
+  entry.rowExpanded = !entry.rowExpanded;
+  entry.toolbarRow.classList.toggle('hidden', !entry.rowExpanded);
+  entry.mainToggle.innerHTML = entry.rowExpanded ? '&#9660;' : '&#9654;';
+
+  // Collapsing the Pi row also collapses/tears down its log windows.
+  if (!entry.rowExpanded) {
+    PANELS.forEach(spec => {
+      if (entry[spec.expandedKey]) {
+        entry[spec.expandedKey] = false;
+        entry[spec.rowKey].classList.add('hidden');
+        entry[spec.toggleKey].innerHTML = '&#9654; ' + spec.short;
+      }
     });
+    if (entry.ws) {
+      entry.ws.close();
+      entry.ws = null;
+    }
+  }
+}
+
+function createPiRow(piId) {
+  const summaryRow = document.createElement('tr');
+  summaryRow.className = 'pi-row';
+  summaryRow.dataset.piId = piId;
+  summaryRow.innerHTML = `
+    <td><span class="pi-toggle main-toggle">&#9654;</span></td>
+    <td class="c-id"></td>
+    <td class="c-ip"></td>
+    <td class="c-role"></td>
+    <td class="c-status"></td>
+    <td class="c-seen"></td>
+  `;
+  const mainToggle = summaryRow.querySelector('.main-toggle');
+  mainToggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleRow(piId);
+  });
+  summaryRow.addEventListener('click', () => {
+    selectedPiId = piId;
+    targetSelect.value = piId;
+    piRows.forEach((entry, id) => entry.summaryRow.classList.toggle('selected', id === selectedPiId));
+  });
+
+  // Toolbar row: only visible once the Pi row itself is expanded; holds the
+  // per-stream toggles that open the actual log windows below it.
+  const toolbarRow = document.createElement('tr');
+  toolbarRow.className = 'pi-toolbar-row hidden';
+  const toolbarCell = document.createElement('td');
+  toolbarCell.colSpan = 6;
+  toolbarCell.innerHTML = PANELS.map(spec =>
+    `<span class="pi-toggle" data-kind="${spec.kind}">&#9654; ${spec.short}</span>`
+  ).join('');
+  toolbarRow.appendChild(toolbarCell);
+  toolbarCell.querySelectorAll('.pi-toggle').forEach(toggle => {
+    toggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      togglePanel(piId, toggle.dataset.kind);
+    });
+  });
+
+  const entry = { summaryRow, mainToggle, toolbarRow, rowExpanded: false, ws: null };
+  PANELS.forEach(spec => {
+    const row = document.createElement('tr');
+    row.className = 'pi-log-row hidden';
+    const cell = document.createElement('td');
+    cell.colSpan = 6;
+    cell.innerHTML = `<div class="pi-log-heading">${spec.label}</div><div class="pi-log-panel"></div>`;
+    row.appendChild(cell);
+
+    entry[spec.rowKey] = row;
+    entry[spec.panelKey] = cell.querySelector('.pi-log-panel');
+    entry[spec.toggleKey] = toolbarCell.querySelector(`.pi-toggle[data-kind="${spec.kind}"]`);
+    entry[spec.expandedKey] = false;
+  });
+
+  return entry;
+}
+
+function renderPis() {
+  const seen = new Set();
+
+  pis.forEach(p => {
+    seen.add(p.pi_id);
+    let entry = piRows.get(p.pi_id);
+    if (!entry) {
+      entry = createPiRow(p.pi_id);
+      piRows.set(p.pi_id, entry);
+      piTableBody.appendChild(entry.summaryRow);
+      piTableBody.appendChild(entry.toolbarRow);
+      piTableBody.appendChild(entry.logRow);
+      piTableBody.appendChild(entry.tcpdumpRow);
+    }
+    entry.summaryRow.classList.toggle('selected', p.pi_id === selectedPiId);
+    entry.summaryRow.querySelector('.c-id').textContent = p.pi_id;
+    entry.summaryRow.querySelector('.c-ip').textContent = p.ip_address || '';
+    entry.summaryRow.querySelector('.c-role').textContent = p.role || '';
+    entry.summaryRow.querySelector('.c-status').innerHTML = statusBadge(p.status);
+    entry.summaryRow.querySelector('.c-seen').textContent = p.last_seen ? new Date(p.last_seen).toLocaleString() : '';
+  });
+
+  // Drop rows for Pis that disappeared, closing any open log socket.
+  [...piRows.keys()].forEach(id => {
+    if (seen.has(id)) return;
+    const entry = piRows.get(id);
+    if (entry.ws) entry.ws.close();
+    entry.summaryRow.remove();
+    entry.toolbarRow.remove();
+    entry.logRow.remove();
+    entry.tcpdumpRow.remove();
+    piRows.delete(id);
   });
 
   const current = targetSelect.value;
@@ -188,7 +350,7 @@ const sendCmdBtn = document.getElementById('sendCmdBtn');
 const cmdResults = document.getElementById('cmdResults');
 
 const ACTION_PARAMS = {
-  ping: [],
+  ping: [{ name: 'interface', label: 'Interface (optional)', type: 'text' }],
   signal_stats: [],
   throughput_test: [{ name: 'duration', label: 'Duration (s)', type: 'number', default: 10 }],
   set_channel: [{ name: 'channel', label: 'Channel', type: 'number' }],
@@ -225,17 +387,62 @@ function addCommandEntry(commandId, piId, action) {
   entry.dataset.commandId = commandId;
   entry.innerHTML = `
     <div class="hdr"><span><span class="toggle">&#9660;</span>${action} &rarr; ${piId}</span><span class="cmd-status pending">pending</span></div>
-    <pre class="result"></pre>
+    <div class="result"></div>
   `;
   entry.querySelector('.hdr').addEventListener('click', () => {
     entry.classList.toggle('collapsed');
     entry.querySelector('.toggle').innerHTML = entry.classList.contains('collapsed') ? '&#9654;' : '&#9660;';
   });
   cmdResults.prepend(entry);
-  pollCommand(commandId, entry);
+  pollCommand(commandId, entry, piId, action);
 }
 
-async function pollCommand(commandId, entry) {
+function formatResultValue(value) {
+  if (value === null || value === undefined) return '';
+  if (Array.isArray(value)) {
+    const allPrimitive = value.every(v => v === null || typeof v !== 'object');
+    if (allPrimitive && value.length <= 5) return value.join(', ') || '(empty)';
+    return `${value.length} item${value.length === 1 ? '' : 's'}`;
+  }
+  return String(value);
+}
+
+function renderResultTable(container, obj) {
+  container.innerHTML = '';
+  if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
+    container.textContent = JSON.stringify(obj);
+    return;
+  }
+  const table = document.createElement('table');
+  table.className = 'result-table';
+  Object.entries(obj).forEach(([key, value]) => {
+    const row = document.createElement('tr');
+    const keyCell = document.createElement('td');
+    keyCell.className = 'result-key';
+    keyCell.textContent = key;
+    const valCell = document.createElement('td');
+    valCell.className = 'result-value';
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      renderResultTable(valCell, value);
+    } else {
+      valCell.textContent = formatResultValue(value);
+    }
+    row.append(keyCell, valCell);
+    table.appendChild(row);
+  });
+  container.appendChild(table);
+}
+
+function pushToPiLogPanel(piId, lines) {
+  if (piId === 'all') return;
+  let entry = piRows.get(piId);
+  if (!entry) return;
+  const empty = entry.logPanel.querySelector('.pi-log-empty');
+  if (empty) empty.remove();
+  lines.forEach(line => appendLineTo(entry.logPanel, line));
+}
+
+async function pollCommand(commandId, entry, piId, action) {
   const statusEl = entry.querySelector('.cmd-status');
   const resultEl = entry.querySelector('.result');
   for (let i = 0; i < 30; i++) {
@@ -245,7 +452,10 @@ async function pollCommand(commandId, entry) {
         const data = await res.json();
         statusEl.textContent = data.status;
         statusEl.className = `cmd-status ${data.status}`;
-        if (data.result) resultEl.textContent = JSON.stringify(data.result, null, 2);
+        if (data.result) renderResultTable(resultEl, data.result);
+        if (data.status === 'complete' && action === 'syslog' && Array.isArray(data.result?.logs)) {
+          pushToPiLogPanel(piId, data.result.logs);
+        }
         if (data.status !== 'pending') return;
       }
     } catch {
@@ -279,91 +489,48 @@ sendCmdBtn.addEventListener('click', async () => {
   }
 });
 
-// --- Logs (live WebSocket feed) --------------------------------------------
-
-const deviceInput = document.getElementById('deviceId');
-const connectBtn = document.getElementById('connectBtn');
-const statusEl = document.getElementById('status');
-const logEl = document.getElementById('log');
-
-let ws = null;
-
-function setStatus(text, cls) {
-  statusEl.textContent = text;
-  statusEl.className = cls;
-}
+// --- Shared log line rendering (used by per-Pi log panels) -----------------
 
 function levelClass(level) {
   const l = (level || 'unknown').toLowerCase();
   return ['info', 'warning', 'error'].includes(l) ? `lvl-${l}` : 'lvl-unknown';
 }
 
-function appendLine(payload) {
+function appendLineTo(container, payload) {
   const div = document.createElement('div');
   div.className = 'line';
 
-  const ts = document.createElement('span');
-  ts.className = 'ts';
-  ts.textContent = payload.timestamp || '';
+  if (typeof payload === 'string') {
+    // Raw journalctl/tcpdump line - no structured fields, just show it as-is.
+    const msg = document.createElement('span');
+    msg.className = 'msg';
+    msg.textContent = payload;
+    div.append(msg);
+  } else {
+    const ts = document.createElement('span');
+    ts.className = 'ts';
+    ts.textContent = payload.timestamp || '';
 
-  const lvl = document.createElement('span');
-  const levelValue = payload.loglevel || payload.level || 'unknown';
-  lvl.className = `lvl ${levelClass(levelValue)}`;
-  lvl.textContent = levelValue;
+    const lvl = document.createElement('span');
+    const levelValue = payload.loglevel || payload.level || 'unknown';
+    lvl.className = `lvl ${levelClass(levelValue)}`;
+    lvl.textContent = levelValue;
 
-  const msg = document.createElement('span');
-  msg.className = 'msg';
-  msg.textContent = payload.message !== undefined ? payload.message : JSON.stringify(payload);
+    const msg = document.createElement('span');
+    msg.className = 'msg';
+    msg.textContent = payload.message !== undefined ? payload.message : JSON.stringify(payload);
 
-  div.append(ts, lvl, msg);
-  logEl.appendChild(div);
+    div.append(ts, lvl, msg);
+  }
+  container.appendChild(div);
 
-  const nearBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 100;
-  if (nearBottom) logEl.scrollTop = logEl.scrollHeight;
+  // Cap growth so a long-running stream (tcpdump, syslog) doesn't leak memory.
+  while (container.children.length > 500) container.removeChild(container.firstChild);
+
+  const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+  if (nearBottom) container.scrollTop = container.scrollHeight;
 }
 
-function connect() {
-  if (ws) ws.close();
-
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const url = `${proto}://${location.host}/ws/live`;
-  setStatus('connecting…', 'connecting');
-  connectBtn.disabled = true;
-
-  ws = new WebSocket(url);
-
-  ws.onopen = () => {
-    setStatus('connected', 'connected');
-    connectBtn.disabled = false;
-  };
-
-  ws.onmessage = (event) => {
-    let msg;
-    try {
-      msg = JSON.parse(event.data);
-    } catch {
-      appendLine({ message: event.data });
-      return;
-    }
-    // mqtt_service broadcasts {pi_id, category, payload}; filter to the
-    // device typed in the header and to log-shaped categories.
-    const filterId = deviceInput.value.trim();
-    if (filterId && msg.pi_id && msg.pi_id !== filterId) return;
-    appendLine(msg.payload !== undefined ? msg.payload : msg);
-  };
-
-  ws.onclose = () => {
-    setStatus('disconnected', 'disconnected');
-    connectBtn.disabled = false;
-  };
-
-  ws.onerror = () => {
-    setStatus('error', 'disconnected');
-  };
-}
-
-connectBtn.addEventListener('click', connect);
-deviceInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') connect(); });
 </script>
 </body>
 </html>

@@ -58,7 +58,7 @@ class MQTTService:
         try:
             payload = json.loads(msg.payload.decode())
         except json.JSONDecodeError:
-            payload = {"raw": msg.payload.decode(errors="replace")}
+            payload = msg.payload.decode(errors="replace")
 
         # DB writes happen synchronously here, on paho's thread -
         # SQLite + check_same_thread=False makes this safe for a lab-scale rig.
