@@ -5,6 +5,7 @@ import paho.mqtt.client as mqtt
 BROKER_HOST = "192.168.150.20"
 BROKER_PORT = 1883
 
+
 CMD_TOPIC_ALL = "test/all/cmd"
 RESULT_WILDCARD = "test/+/result"
 STATUS_WILDCARD = "test/+/status"
