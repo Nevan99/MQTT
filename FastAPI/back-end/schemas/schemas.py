@@ -31,5 +31,21 @@ class CommandOut(BaseModel):
 class LogEntryOut(BaseModel):
     pi_id: str
     category: str
-    payload: dict
+    payload: Any
     timestamp: datetime
+
+
+class CaptureRequest(BaseModel):
+    pi_id: str
+    category: str
+    name: str
+    lines: list[Any]
+
+
+class CaptureOut(BaseModel):
+    id: int
+    pi_id: str
+    category: str
+    name: str
+    created_at: datetime
+    line_count: int

@@ -2,7 +2,7 @@ import json
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from database.database import get_session
 from database.models import Command, Pi
@@ -46,6 +46,24 @@ def broadcast_command(req: CommandRequest, session: Session = Depends(get_sessio
     return _dispatch("all", req, session)
 
 
+@router.get("/commands", response_model=list[CommandOut])
+def list_commands(limit: int = 50, session: Session = Depends(get_session)):
+    """Most recent commands across the fleet, newest first, so a page reload
+    can repopulate the command-result feed instead of starting empty."""
+    commands = session.exec(
+        select(Command).order_by(Command.created_at.desc()).limit(limit)
+    ).all()
+    return [
+        CommandOut(
+            command_id=c.command_id, pi_id=c.pi_id, action=c.action,
+            status=c.status,
+            result=json.loads(c.result_json) if c.result_json else None,
+            created_at=c.created_at, completed_at=c.completed_at,
+        )
+        for c in commands
+    ]
+
+
 @router.get("/commands/{command_id}", response_model=CommandOut)
 def get_command(command_id: str, session: Session = Depends(get_session)):
     command = session.get(Command, command_id)
@@ -57,3 +75,13 @@ def get_command(command_id: str, session: Session = Depends(get_session)):
         result=json.loads(command.result_json) if command.result_json else None,
         created_at=command.created_at, completed_at=command.completed_at,
     )
+
+
+@router.delete("/commands/{command_id}")
+def delete_command(command_id: str, session: Session = Depends(get_session)):
+    command = session.get(Command, command_id)
+    if command is None:
+        raise HTTPException(status_code=404, detail="Command not found")
+    session.delete(command)
+    session.commit()
+    return {"deleted": command_id}

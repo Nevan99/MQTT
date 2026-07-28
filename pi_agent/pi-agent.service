@@ -1,0 +1,15 @@
+[Unit]
+Description=Pi MQTT Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/alexle/MQTT
+ExecStart=/home/alexle/MQTT/.venv/bin/python /home/alexle/MQTT/Pi_agent.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

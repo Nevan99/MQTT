@@ -5,8 +5,9 @@
 <title>Pi Fleet Controller</title>
 <style>
   * { box-sizing: border-box; }
-  body { font-family: system-ui, sans-serif; margin: 0; background: #111; color: #eee; }
-  header { display: flex; gap: 0.5rem; align-items: center; padding: 0.75rem 1rem; background: #1a1a1a; border-bottom: 1px solid #333; }
+  html, body { height: 100%; }
+  body { font-family: system-ui, sans-serif; margin: 0; background: #111; color: #eee; display: flex; flex-direction: column; }
+  header { flex: 0 0 auto; display: flex; gap: 0.5rem; align-items: center; padding: 0.75rem 1rem; background: #1a1a1a; border-bottom: 1px solid #333; }
   header h1 { font-size: 1rem; margin: 0; margin-right: 1rem; }
   nav { display: flex; gap: 0.25rem; margin-right: 1rem; }
   nav button.tab { background: transparent; border: 1px solid transparent; }
@@ -15,8 +16,12 @@
   button { padding: 0.4rem 0.9rem; border: 1px solid #444; background: #2a2a2a; color: #eee; border-radius: 4px; cursor: pointer; }
   button:hover { background: #333; }
   button:disabled { opacity: 0.5; cursor: default; }
-  .view { display: none; }
-  .view.active { display: block; }
+  /* Each view fills whatever vertical space is left below the header,
+     regardless of the header's actual rendered height - avoids the page
+     needing to scroll just to reveal the active tab's content. */
+  .view { display: none; flex: 1 1 auto; min-height: 0; }
+  #fleet.active { display: grid; }
+  #captures.active { display: flex; flex-direction: column; }
 
   .line { padding: 0.25rem 0; border-bottom: 1px solid #222; font-family: ui-monospace, monospace; font-size: 0.85rem; white-space: pre-wrap; word-break: break-word; }
   .ts { color: #888; margin-right: 0.6rem; }
@@ -27,8 +32,13 @@
   .lvl-unknown { color: #999; }
   .msg { color: #ddd; }
 
-  #fleet { display: grid; grid-template-columns: 1fr 380px; gap: 1rem; padding: 1rem; height: calc(100vh - 56px); box-sizing: border-box; }
-  .panel { background: #1a1a1a; border: 1px solid #333; border-radius: 6px; padding: 0.75rem; overflow-y: auto; }
+  #fleet { grid-template-columns: 1fr 6px 380px; gap: 1rem; padding: 1rem; }
+  #captures { padding: 1rem; }
+  .captures-panel { flex: 1 1 auto; min-height: 0; }
+  #fleet.dragging { user-select: none; cursor: col-resize; }
+  .panel { background: #1a1a1a; border: 1px solid #333; border-radius: 6px; padding: 0.75rem; overflow-y: auto; overflow-x: auto; min-width: 0; }
+  .gutter { width: 6px; margin: 0 -0.5rem; border-radius: 3px; background: #2a2a2a; cursor: col-resize; }
+  .gutter:hover, .gutter.active { background: #444; }
   table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
   th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid #262626; }
   th { color: #999; font-weight: 600; }
@@ -41,7 +51,10 @@
   tr.pi-toolbar-row.hidden { display: none; }
   tr.pi-log-row td { background: #141414; padding: 0; }
   tr.pi-log-row.hidden { display: none; }
-  .pi-log-heading { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; color: #888; padding: 0.4rem 0.75rem 0.2rem; }
+  .pi-log-heading { display: flex; justify-content: space-between; align-items: center; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; color: #888; padding: 0.4rem 0.75rem 0.2rem; }
+  .pi-log-actions { display: flex; gap: 0.4rem; text-transform: none; letter-spacing: normal; }
+  .pi-log-actions button.icon-btn { border: 1px solid #333; }
+  .pi-log-actions button.recording { background: #522; border-color: #a44; color: #fbb; }
   .pi-log-panel { max-height: 240px; overflow-y: auto; padding: 0.2rem 0.75rem 0.5rem; }
   .pi-log-panel .line { border-bottom: 1px solid #202020; }
   .pi-log-empty { color: #666; font-size: 0.78rem; padding: 0.4rem 0; }
@@ -62,6 +75,12 @@
   .cmd-status.failed, .cmd-status.timeout { color: #f66; }
   .cmd-entry .hdr { cursor: pointer; user-select: none; }
   .cmd-entry .toggle { color: #777; margin-right: 0.4rem; display: inline-block; width: 0.7rem; }
+  .icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 2.1rem; height: 2.1rem; padding: 0; border: none; background: transparent; color: #888; font-size: 1.3rem; line-height: 1; border-radius: 4px; text-decoration: none; cursor: pointer; }
+  .icon-btn:hover { color: #eee; background: #2a2a2a; }
+  .cmd-delete { margin-left: 0.5rem; }
+  .cmd-delete:hover { color: #f66; background: #2a2a2a; }
+  .capture-actions { display: flex; gap: 0.2rem; white-space: nowrap; }
+  .capture-actions .capture-delete:hover { color: #f66; }
   .cmd-entry.collapsed .result { display: none; }
   .result { margin-top: 0.4rem; }
   table.result-table { width: 100%; border-collapse: collapse; font-family: ui-monospace, monospace; font-size: 0.78rem; }
@@ -77,6 +96,7 @@
   <h1>Pi Fleet Controller</h1>
   <nav>
     <button class="tab active" data-view="fleet">Fleet</button>
+    <button class="tab" data-view="captures">Captures</button>
   </nav>
 </header>
 
@@ -89,6 +109,8 @@
       <tbody id="piTableBody"></tbody>
     </table>
   </div>
+
+  <div class="gutter" id="fleetGutter"></div>
 
   <div class="panel">
     <label>Target</label>
@@ -107,6 +129,10 @@
       <option value="stop_logs">stop_logs</option>
       <option value="tcpdump">tcpdump</option>
       <option value="stop_tcpdump">stop_tcpdump</option>
+      <option value="connect_wifi">connect_wifi</option>
+      <option value="disconnect_wifi">disconnect_wifi</option>
+      <option value="list_interfaces">list_interfaces</option>
+      <option value="list_interface_ips">list_interface_ips</option>
     </select>
 
     <div id="paramFields"></div>
@@ -116,6 +142,17 @@
     </div>
 
     <div id="cmdResults"></div>
+  </div>
+</section>
+
+<section id="captures" class="view">
+  <div class="panel captures-panel">
+    <table>
+      <thead>
+        <tr><th>Pi</th><th>Category</th><th>Name</th><th>Lines</th><th>Created</th><th></th></tr>
+      </thead>
+      <tbody id="capturesTableBody"></tbody>
+    </table>
   </div>
 </section>
 
@@ -129,6 +166,47 @@ tabs.forEach(btn => btn.addEventListener('click', () => {
   btn.classList.add('active');
   document.getElementById(btn.dataset.view).classList.add('active');
 }));
+
+// --- Fleet: resizable split between the Pi table and the command panel ----
+
+(function setupFleetGutter() {
+  const fleet = document.getElementById('fleet');
+  const gutter = document.getElementById('fleetGutter');
+  const MIN_RIGHT = 260;
+  const MAX_RIGHT = 800;
+
+  function applyRightWidth(px) {
+    fleet.style.gridTemplateColumns = `1fr 6px ${px}px`;
+  }
+
+  const saved = parseInt(localStorage.getItem('fleetRightWidth'), 10);
+  if (saved && saved >= MIN_RIGHT && saved <= MAX_RIGHT) applyRightWidth(saved);
+
+  gutter.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    fleet.classList.add('dragging');
+    gutter.classList.add('active');
+
+    function onMove(moveEvent) {
+      const fleetRect = fleet.getBoundingClientRect();
+      let rightWidth = fleetRect.right - moveEvent.clientX;
+      rightWidth = Math.max(MIN_RIGHT, Math.min(MAX_RIGHT, rightWidth));
+      applyRightWidth(rightWidth);
+    }
+
+    function onUp() {
+      fleet.classList.remove('dragging');
+      gutter.classList.remove('active');
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      const currentRight = fleet.style.gridTemplateColumns.split(' ')[2];
+      if (currentRight) localStorage.setItem('fleetRightWidth', parseInt(currentRight, 10));
+    }
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+})();
 
 // --- Fleet: Pi list -------------------------------------------------------
 
@@ -185,6 +263,140 @@ function anyExpanded(entry) {
   return PANELS.some(p => entry[p.expandedKey]);
 }
 
+async function loadPanelHistory(piId, entry, spec) {
+  const panel = entry[spec.panelKey];
+  try {
+    const res = await fetch(`${API}/pis/${encodeURIComponent(piId)}/logs?category=${encodeURIComponent(spec.kind)}&limit=200`);
+    if (!res.ok) return;
+    const items = await res.json();
+    if (!items.length) return;
+    const empty = panel.querySelector('.pi-log-empty');
+    if (empty) empty.remove();
+    items.forEach(item => appendLineTo(panel, item.payload));
+  } catch {
+    // backend unreachable; leave the "waiting for messages" placeholder
+  }
+}
+
+function formatPayloadLine(payload) {
+  if (typeof payload === 'string') return payload;
+  const ts = payload.timestamp || '';
+  const lvl = payload.loglevel || payload.level;
+  const msg = payload.message !== undefined ? payload.message : JSON.stringify(payload);
+  return [ts, lvl, msg].filter(Boolean).join(' ');
+}
+
+// Start/stop capture reads from the backend's persisted LogEntry rows for
+// the [since, now) window rather than the DOM or the live WebSocket feed,
+// so it can't miss anything the Pi published while the panel was collapsed,
+// the WebSocket was disconnected, or capture was armed before streaming
+// even began.
+async function toggleCapture(piId, spec, entry, btn) {
+  entry.captureState = entry.captureState || {};
+  const active = entry.captureState[spec.kind];
+
+  if (!active) {
+    const name = prompt('Capture name:', `${piId}-${spec.kind}-${new Date().toISOString().slice(0, 19)}`);
+    if (!name) return;
+    let startedAt;
+    try {
+      const res = await fetch(`${API}/server-time`);
+      startedAt = (await res.json()).now;
+    } catch {
+      startedAt = new Date().toISOString();
+    }
+    entry.captureState[spec.kind] = { name, startedAt };
+    btn.innerHTML = '&#9209;';
+    btn.title = 'Stop Capture';
+    btn.classList.add('recording');
+    return;
+  }
+
+  entry.captureState[spec.kind] = null;
+  btn.innerHTML = '&#9210;';
+  btn.title = 'Start Capture';
+  btn.classList.remove('recording');
+  btn.disabled = true;
+  try {
+    const res = await fetch(
+      `${API}/pis/${encodeURIComponent(piId)}/logs?category=${encodeURIComponent(spec.kind)}` +
+      `&since=${encodeURIComponent(active.startedAt)}&limit=20000`
+    );
+    if (!res.ok) {
+      alert('Failed to fetch captured logs.');
+      return;
+    }
+    const items = await res.json();
+    const lines = items.map(item => formatPayloadLine(item.payload));
+    if (!lines.length) {
+      alert('No logs arrived during that capture window.');
+      return;
+    }
+    const res2 = await fetch(`${API}/captures`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pi_id: piId, category: spec.kind, name: active.name, lines }),
+    });
+    if (!res2.ok) {
+      alert('Captured the logs but failed to save the file on the server.');
+      return;
+    }
+    await loadCaptures();
+  } catch {
+    alert('Failed to fetch captured logs.');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function clearPanel(piId, spec, panel) {
+  if (!confirm(`Clear ${spec.label} for ${piId}? This removes the saved history too.`)) return;
+  try {
+    await fetch(`${API}/pis/${encodeURIComponent(piId)}/logs?category=${encodeURIComponent(spec.kind)}`, {
+      method: 'DELETE',
+    });
+  } catch {
+    // ignore; still clear locally so the UI reflects the user's intent
+  }
+  panel.innerHTML = '<div class="pi-log-empty">waiting for messages…</div>';
+}
+
+const STREAM_START_ACTION = { logs: 'stream_logs', tcpdump: 'tcpdump' };
+const STREAM_STOP_ACTION = { logs: 'stop_logs', tcpdump: 'stop_tcpdump' };
+
+function postCmd(piId, action, params) {
+  return fetch(`${API}/pis/${encodeURIComponent(piId)}/cmd`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, params }),
+  });
+}
+
+// Switching the interface filter re-issues the stream command for the new
+// interface and wipes the panel locally - otherwise old lines from the
+// previous interface's filter would sit alongside (or ahead of) new ones,
+// making it look like nothing changed while waiting for the next matching event.
+// Both streams are always scoped to exactly one interface - no unfiltered/
+// "all interfaces" mode - so a panel never mixes lines from two NICs together.
+// tcpdump can additionally run several interfaces at once server-side, so
+// switching here also explicitly stops the previously selected one.
+async function setStreamInterface(piId, entry, spec, interface_) {
+  const panel = entry[spec.panelKey];
+  panel.innerHTML = '<div class="pi-log-empty">waiting for messages…</div>';
+  const prevIfaceKey = spec.kind + 'ActiveIface';
+  const prevIface = entry[prevIfaceKey];
+  try {
+    if (prevIface && (spec.kind === 'tcpdump' ? prevIface !== interface_ : !interface_)) {
+      await postCmd(piId, STREAM_STOP_ACTION[spec.kind], { interface: prevIface });
+    }
+    entry[prevIfaceKey] = interface_ || null;
+    if (!interface_) return; // no interface selected - stream stays stopped
+    await postCmd(piId, STREAM_START_ACTION[spec.kind], { interface: interface_ });
+  } catch {
+    // backend unreachable; panel is cleared locally regardless, next refresh will retry
+  }
+}
+
 function togglePanel(piId, kind) {
   const entry = piRows.get(piId);
   if (!entry) return;
@@ -196,6 +408,10 @@ function togglePanel(piId, kind) {
 
   if (entry[spec.expandedKey] && !entry[spec.panelKey].children.length) {
     entry[spec.panelKey].innerHTML = '<div class="pi-log-empty">waiting for messages…</div>';
+    if (!entry[spec.expandedKey + 'Loaded']) {
+      entry[spec.expandedKey + 'Loaded'] = true;
+      loadPanelHistory(piId, entry, spec);
+    }
   }
 
   const isAnyExpanded = anyExpanded(entry);
@@ -276,13 +492,40 @@ function createPiRow(piId) {
     row.className = 'pi-log-row hidden';
     const cell = document.createElement('td');
     cell.colSpan = 6;
-    cell.innerHTML = `<div class="pi-log-heading">${spec.label}</div><div class="pi-log-panel"></div>`;
+    cell.innerHTML = `
+      <div class="pi-log-heading">
+        <span>${spec.label}</span>
+        <span class="pi-log-actions">
+          <select class="pi-stream-iface"><option value="">select interface</option></select>
+          <button class="pi-log-capture icon-btn" type="button" title="Start Capture">&#9210;</button>
+          <button class="pi-log-clear icon-btn" type="button" title="Clear">&#128465;</button>
+        </span>
+      </div>
+      <div class="pi-log-panel"></div>
+    `;
     row.appendChild(cell);
 
     entry[spec.rowKey] = row;
     entry[spec.panelKey] = cell.querySelector('.pi-log-panel');
     entry[spec.toggleKey] = toolbarCell.querySelector(`.pi-toggle[data-kind="${spec.kind}"]`);
     entry[spec.expandedKey] = false;
+
+    const ifaceSelect = cell.querySelector('.pi-stream-iface');
+    entry[spec.kind + 'IfaceSelect'] = ifaceSelect;
+    ifaceSelect.addEventListener('click', (e) => e.stopPropagation());
+    ifaceSelect.addEventListener('change', (e) => {
+      setStreamInterface(piId, entry, spec, e.target.value);
+    });
+
+    const captureBtn = cell.querySelector('.pi-log-capture');
+    captureBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleCapture(piId, spec, entry, captureBtn);
+    });
+    cell.querySelector('.pi-log-clear').addEventListener('click', (e) => {
+      e.stopPropagation();
+      clearPanel(piId, spec, entry[spec.panelKey]);
+    });
   });
 
   return entry;
@@ -308,6 +551,19 @@ function renderPis() {
     entry.summaryRow.querySelector('.c-role').textContent = p.role || '';
     entry.summaryRow.querySelector('.c-status').innerHTML = statusBadge(p.status);
     entry.summaryRow.querySelector('.c-seen').textContent = p.last_seen ? new Date(p.last_seen).toLocaleString() : '';
+
+    const interfaces = (p.metadata && Array.isArray(p.metadata.interfaces)) ? p.metadata.interfaces : [];
+    const key = JSON.stringify(interfaces);
+    PANELS.forEach(spec => {
+      const select = entry[spec.kind + 'IfaceSelect'];
+      const keyProp = spec.kind + 'IfaceKey';
+      if (!select || entry[keyProp] === key) return;
+      entry[keyProp] = key;
+      const current = select.value;
+      select.innerHTML = '<option value="">select interface</option>' +
+        interfaces.map(i => `<option value="${i}">${i}</option>`).join('');
+      if (interfaces.includes(current)) select.value = current;
+    });
   });
 
   // Drop rows for Pis that disappeared, closing any open log socket.
@@ -326,6 +582,8 @@ function renderPis() {
   targetSelect.innerHTML = '<option value="all">all (broadcast)</option>' +
     pis.map(p => `<option value="${p.pi_id}">${p.pi_id}</option>`).join('');
   if ([...targetSelect.options].some(o => o.value === current)) targetSelect.value = current;
+
+  if (typeof refreshInterfaceOptions === 'function') refreshInterfaceOptions();
 }
 
 async function refreshPis() {
@@ -342,6 +600,53 @@ async function refreshPis() {
 refreshPis();
 setInterval(refreshPis, 5000);
 
+// --- Fleet: saved captures ---------------------------------------------
+
+const capturesTableBody = document.getElementById('capturesTableBody');
+
+async function loadCaptures() {
+  try {
+    const res = await fetch(`${API}/captures`);
+    if (!res.ok) return;
+    const captures = await res.json();
+    capturesTableBody.innerHTML = captures.map(c => `
+      <tr data-capture-id="${c.id}">
+        <td>${c.pi_id}</td>
+        <td>${c.category}</td>
+        <td>${c.name}</td>
+        <td>${c.line_count}</td>
+        <td>${new Date(c.created_at).toLocaleString()}</td>
+        <td class="capture-actions">
+          <a href="${API}/captures/${c.id}/download" class="icon-btn" title="Download">&#8681;</a>
+          <button class="icon-btn capture-delete" data-capture-id="${c.id}" title="Delete">&#128465;</button>
+        </td>
+      </tr>
+    `).join('') || '<tr><td colspan="6" class="pi-log-empty">no captures yet</td></tr>';
+
+    capturesTableBody.querySelectorAll('.capture-delete').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          const res = await fetch(`${API}/captures/${btn.dataset.captureId}`, { method: 'DELETE', keepalive: true });
+          if (!res.ok && res.status !== 404) {
+            alert('Failed to delete capture on the server; it may reappear on reload.');
+            btn.disabled = false;
+            return;
+          }
+          btn.closest('tr').remove();
+        } catch {
+          alert('Failed to delete capture on the server; it may reappear on reload.');
+          btn.disabled = false;
+        }
+      });
+    });
+  } catch {
+    // backend unreachable; leave the last known list in place
+  }
+}
+
+loadCaptures();
+
 // --- Fleet: command builder ------------------------------------------------
 
 const actionSelect = document.getElementById('actionSelect');
@@ -350,26 +655,70 @@ const sendCmdBtn = document.getElementById('sendCmdBtn');
 const cmdResults = document.getElementById('cmdResults');
 
 const ACTION_PARAMS = {
-  ping: [{ name: 'interface', label: 'Interface (optional)', type: 'text' }],
+  ping: [{ name: 'interface', label: 'Interface (optional)', type: 'interface' }],
   signal_stats: [],
   throughput_test: [{ name: 'duration', label: 'Duration (s)', type: 'number', default: 10 }],
   set_channel: [{ name: 'channel', label: 'Channel', type: 'number' }],
   syslog: [{ name: 'lines', label: 'Lines', type: 'number', default: 100 }],
-  stream_logs: [{ name: 'interface', label: 'Interface (optional)', type: 'text' }],
+  stream_logs: [{ name: 'interface', label: 'Interface', type: 'interface', required: true }],
   stop_logs: [],
-  tcpdump: [{ name: 'interface', label: 'Interface', type: 'text', required: true }],
-  stop_tcpdump: [{ name: 'interface', label: 'Interface', type: 'text', required: true }],
+  tcpdump: [{ name: 'interface', label: 'Interface', type: 'interface', required: true }],
+  stop_tcpdump: [{ name: 'interface', label: 'Interface', type: 'interface', required: true }],
+  connect_wifi: [
+    { name: 'ssid', label: 'SSID', type: 'text', required: true },
+    { name: 'password', label: 'Password (optional)', type: 'password' },
+    { name: 'interface', label: 'Interface', type: 'interface', required: true },
+  ],
+  disconnect_wifi: [{ name: 'interface', label: 'Interface', type: 'interface', required: true }],
+  list_interfaces: [],
+  list_interface_ips: [],
 };
+
+function currentTargetInterfaces() {
+  const target = targetSelect.value;
+  if (!target || target === 'all') return [];
+  const pi = pis.find(p => p.pi_id === target);
+  return (pi && pi.metadata && Array.isArray(pi.metadata.interfaces)) ? pi.metadata.interfaces : [];
+}
 
 function renderParamFields() {
   const fields = ACTION_PARAMS[actionSelect.value] || [];
-  paramFields.innerHTML = fields.map(f => `
-    <label>${f.label}</label>
-    <input class="field" data-param="${f.name}" type="${f.type}" ${f.default !== undefined ? `value="${f.default}"` : ''}>
-  `).join('');
+  const interfaces = currentTargetInterfaces();
+  paramFields.innerHTML = fields.map(f => {
+    if (f.type === 'interface') {
+      const options = ['<option value="">' + (f.required ? 'select interface' : '(none)') + '</option>']
+        .concat(interfaces.map(i => `<option value="${i}">${i}</option>`));
+      return `<label>${f.label}</label><select class="field" data-param="${f.name}">${options.join('')}</select>`;
+    }
+    return `
+      <label>${f.label}</label>
+      <input class="field" data-param="${f.name}" type="${f.type}" ${f.default !== undefined ? `value="${f.default}"` : ''}>
+    `;
+  }).join('');
+}
+
+let lastRenderedInterfacesKey = null;
+
+function refreshInterfaceOptions() {
+  const interfaces = currentTargetInterfaces();
+  const key = JSON.stringify(interfaces);
+  if (key === lastRenderedInterfacesKey) return;
+  lastRenderedInterfacesKey = key;
+
+  paramFields.querySelectorAll('select[data-param]').forEach(select => {
+    const fields = ACTION_PARAMS[actionSelect.value] || [];
+    const field = fields.find(f => f.name === select.dataset.param);
+    if (!field || field.type !== 'interface') return;
+    const current = select.value;
+    const options = ['<option value="">' + (field.required ? 'select interface' : '(none)') + '</option>']
+      .concat(interfaces.map(i => `<option value="${i}">${i}</option>`));
+    select.innerHTML = options.join('');
+    if (interfaces.includes(current)) select.value = current;
+  });
 }
 
 actionSelect.addEventListener('change', renderParamFields);
+targetSelect.addEventListener('change', renderParamFields);
 renderParamFields();
 
 function collectParams() {
@@ -381,21 +730,65 @@ function collectParams() {
   return params;
 }
 
-function addCommandEntry(commandId, piId, action) {
+function addCommandEntry(commandId, piId, action, restored) {
   const entry = document.createElement('div');
   entry.className = 'cmd-entry';
   entry.dataset.commandId = commandId;
   entry.innerHTML = `
-    <div class="hdr"><span><span class="toggle">&#9660;</span>${action} &rarr; ${piId}</span><span class="cmd-status pending">pending</span></div>
+    <div class="hdr"><span><span class="toggle">&#9660;</span>${action} &rarr; ${piId}</span><span><span class="cmd-status pending">pending</span><button class="icon-btn cmd-delete" title="Delete">&#128465;</button></span></div>
     <div class="result"></div>
   `;
-  entry.querySelector('.hdr').addEventListener('click', () => {
+  entry.querySelector('.hdr').addEventListener('click', (e) => {
+    if (e.target.closest('.cmd-delete')) return;
     entry.classList.toggle('collapsed');
     entry.querySelector('.toggle').innerHTML = entry.classList.contains('collapsed') ? '&#9654;' : '&#9660;';
   });
+  entry.querySelector('.cmd-delete').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    try {
+      // keepalive so the request still lands even if the page reloads/closes
+      // right after the click - otherwise a quick reload can beat the DELETE
+      // to the server and the "deleted" command reappears on next load.
+      const res = await fetch(`${API}/commands/${commandId}`, { method: 'DELETE', keepalive: true });
+      if (!res.ok && res.status !== 404) {
+        alert('Failed to delete command on the server; it may reappear on reload.');
+        return;
+      }
+    } catch {
+      alert('Failed to delete command on the server; it may reappear on reload.');
+      return;
+    }
+    entry.remove();
+  });
   cmdResults.prepend(entry);
-  pollCommand(commandId, entry, piId, action);
+
+  if (restored && restored.status !== 'pending') {
+    const statusEl = entry.querySelector('.cmd-status');
+    statusEl.textContent = restored.status;
+    statusEl.className = `cmd-status ${restored.status}`;
+    if (restored.result) renderResultTable(entry.querySelector('.result'), restored.result);
+  } else {
+    pollCommand(commandId, entry, piId, action);
+  }
 }
+
+async function loadCommandHistory() {
+  try {
+    const res = await fetch(`${API}/commands?limit=50`);
+    if (!res.ok) return;
+    const commands = await res.json();
+    // Server returns newest-first; add oldest-to-newest so repeated
+    // prepend() calls land the newest command back on top, as if each
+    // had just been issued in that order.
+    commands.slice().reverse().forEach(c => {
+      addCommandEntry(c.command_id, c.pi_id, c.action, c);
+    });
+  } catch {
+    // backend unreachable; command feed just starts empty
+  }
+}
+
+loadCommandHistory();
 
 function formatResultValue(value) {
   if (value === null || value === undefined) return '';

@@ -35,6 +35,16 @@ class LogEntry(SQLModel, table=True):
     timestamp: datetime = Field(default_factory=utcnow)
 
 
+class Capture(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    pi_id: str
+    category: str          # "logs" | "tcpdump"
+    name: str
+    filename: str           # name of the file under CAPTURES_DIR holding the lines
+    line_count: int = 0
+    created_at: datetime = Field(default_factory=utcnow)
+
+
 class Command(SQLModel, table=True):
     command_id: str = Field(primary_key=True)   # uuid, echoed back by the Pi
     pi_id: str                                    # or "all" for broadcast

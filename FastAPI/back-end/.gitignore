@@ -1,3 +1,4 @@
 .env
 *.db
 .venv
+captures_data/
