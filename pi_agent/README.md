@@ -4,6 +4,18 @@ MQTT-controlled agent for network testing/diagnostics on a Raspberry Pi
 (iperf3 throughput, syslog/tcpdump streaming, wifi connect/disconnect,
 hostapd channel changes, ping).
 
+## Setup
+
+```bash
+./install-deps.sh                          # system tools: iperf3, tcpdump, iw, etc.
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt  # python deps: paho-mqtt, python-dotenv
+```
+
+`install-deps.sh` installs the command-line tools Pi_agent.py shells out to
+(apt-based, e.g. Raspberry Pi OS): `iperf3`, `tcpdump`, `iw`,
+`network-manager` (`nmcli`), `hostapd`, `iputils-ping`, `iproute2`.
+
 ## Configuration
 
 All configuration lives in `.env` (loaded via `python-dotenv`), not hardcoded
