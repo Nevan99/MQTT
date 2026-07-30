@@ -13,6 +13,7 @@
   nav button.tab { background: transparent; border: 1px solid transparent; }
   nav button.tab.active { background: #2a2a2a; border-color: #444; }
   input, select { padding: 0.4rem 0.6rem; background: #222; border: 1px solid #444; color: #eee; border-radius: 4px; }
+  input[type="checkbox"] { width: 1rem; height: 1rem; accent-color: #4a7; color-scheme: dark; }
   button { padding: 0.4rem 0.9rem; border: 1px solid #444; background: #2a2a2a; color: #eee; border-radius: 4px; cursor: pointer; }
   button:hover { background: #333; }
   button:disabled { opacity: 0.5; cursor: default; }
@@ -104,7 +105,7 @@
   <div class="panel">
     <table>
       <thead>
-        <tr><th></th><th>Pi ID</th><th>IP</th><th>Role</th><th>Status</th><th>Last seen</th></tr>
+        <tr><th></th><th></th><th>Pi ID</th><th>IP</th><th>Role</th><th>Status</th><th>Last seen</th><th>Primary IF</th></tr>
       </thead>
       <tbody id="piTableBody"></tbody>
     </table>
@@ -117,6 +118,7 @@
     <select id="targetSelect" class="field">
       <option value="all">all (broadcast)</option>
     </select>
+    <div id="targetHint" class="hint" style="display: none;"></div>
 
     <label>Action</label>
     <select id="actionSelect" class="field">
@@ -212,8 +214,54 @@ tabs.forEach(btn => btn.addEventListener('click', () => {
 
 const piTableBody = document.getElementById('piTableBody');
 const targetSelect = document.getElementById('targetSelect');
+const targetHint = document.getElementById('targetHint');
 let pis = [];
 let selectedPiId = null;
+
+// Pi ids checked in the fleet table's select column. Independent of
+// targetSelect's own value/DOM - this is what actually drives "multicast".
+const checkedPiIds = new Set();
+
+// Rebuilds the Target dropdown's options (all / multicast / one per Pi) and
+// auto-switches to "multicast" the moment more than one Pi is checked in the
+// table, per the requirement that multi-selecting Pis there should drive the
+// dropdown rather than the other way around.
+//
+// Called on every 5s refreshPis() poll (fleet composition can change at any
+// time), so this only touches the DOM - and only calls renderParamFields(),
+// which wipes the whole param form - when something actually changed.
+// Otherwise a field mid-edit (e.g. wifi SSID/password) gets reset out from
+// under the user's typing every single poll.
+let lastTargetOptionsKey = null;
+
+function renderTargetSelect() {
+  const current = targetSelect.value;
+  const optionsKey = JSON.stringify([pis.map(p => p.pi_id), checkedPiIds.size > 1]);
+
+  if (optionsKey !== lastTargetOptionsKey) {
+    lastTargetOptionsKey = optionsKey;
+    const options = ['<option value="all">all (broadcast)</option>'];
+    if (checkedPiIds.size > 1) {
+      options.push(`<option value="multicast">multicast (${checkedPiIds.size} selected)</option>`);
+    }
+    options.push(...pis.map(p => `<option value="${p.pi_id}">${p.pi_id}</option>`));
+    targetSelect.innerHTML = options.join('');
+
+    if (checkedPiIds.size > 1) {
+      targetSelect.value = 'multicast';
+    } else if ([...targetSelect.options].some(o => o.value === current)) {
+      targetSelect.value = current;
+    }
+  }
+
+  const isMulticast = targetSelect.value === 'multicast';
+  targetHint.style.display = isMulticast ? 'block' : 'none';
+  targetHint.textContent = isMulticast
+    ? `Sends to the ${checkedPiIds.size} Pi(s) checked in the table above, each on its own configured primary interface.`
+    : '';
+
+  if (targetSelect.value !== current) renderParamFields();
+}
 
 // One entry per Pi: { summaryRow, logRow, logPanel, expanded, ws }.
 // Kept alive across refreshPis() calls so expanding a row and its live
@@ -243,10 +291,22 @@ function connectPiLog(piId, entry) {
     }
     const panelKey = CATEGORY_PANEL[msg.category];
     if (!panelKey) return;
+    const payload = msg.payload !== undefined ? msg.payload : msg;
+    // tcpdump lines arrive batched (the Pi agent groups up to 50 lines or
+    // 200ms of output into one MQTT message instead of publishing per
+    // packet, to avoid flooding the MQTT client on busy interfaces) - other
+    // categories still send one record per message.
+    const lines = Array.isArray(payload) ? payload : [payload];
+
     const panel = entry[panelKey];
     const empty = panel.querySelector('.pi-log-empty');
     if (empty) empty.remove();
-    appendLineTo(panel, msg.payload !== undefined ? msg.payload : msg);
+    lines.forEach(line => appendLineTo(panel, line));
+
+    // Nothing is persisted server-side for these streams anymore, so a
+    // capture in progress buffers lines here, live, as they arrive.
+    const active = entry.captureState && entry.captureState[msg.category];
+    if (active) lines.forEach(line => active.lines.push(line));
   };
 
   return ws;
@@ -263,49 +323,43 @@ function anyExpanded(entry) {
   return PANELS.some(p => entry[p.expandedKey]);
 }
 
-async function loadPanelHistory(piId, entry, spec) {
-  const panel = entry[spec.panelKey];
-  try {
-    const res = await fetch(`${API}/pis/${encodeURIComponent(piId)}/logs?category=${encodeURIComponent(spec.kind)}&limit=200`);
-    if (!res.ok) return;
-    const items = await res.json();
-    if (!items.length) return;
-    const empty = panel.querySelector('.pi-log-empty');
-    if (empty) empty.remove();
-    items.forEach(item => appendLineTo(panel, item.payload));
-  } catch {
-    // backend unreachable; leave the "waiting for messages" placeholder
+// Polls a command until it's no longer pending and returns its result (or
+// throws on failure/timeout), mirroring pollCommand() below but returning
+// instead of rendering into the command-builder feed.
+async function awaitCommandResult(commandId, maxAttempts = 30) {
+  for (let i = 0; i < maxAttempts; i++) {
+    const res = await fetch(`${API}/commands/${commandId}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.status === 'complete') return data.result;
+      if (data.status === 'failed' || data.status === 'timeout') {
+        throw new Error(data.result?.error || `command ${data.status}`);
+      }
+    }
+    await new Promise(r => setTimeout(r, 1000));
   }
+  throw new Error('timed out waiting for the Pi');
 }
 
-function formatPayloadLine(payload) {
-  if (typeof payload === 'string') return payload;
-  const ts = payload.timestamp || '';
-  const lvl = payload.loglevel || payload.level;
-  const msg = payload.message !== undefined ? payload.message : JSON.stringify(payload);
-  return [ts, lvl, msg].filter(Boolean).join(' ');
-}
-
-// Start/stop capture reads from the backend's persisted LogEntry rows for
-// the [since, now) window rather than the DOM or the live WebSocket feed,
-// so it can't miss anything the Pi published while the panel was collapsed,
-// the WebSocket was disconnected, or capture was armed before streaming
-// even began.
+// Start/stop capture. Nothing is persisted server-side for either live
+// stream until a capture is actually armed - for the tcpdump panel this
+// records a real pcap file on the Pi (tcpdump -w, a separate process from
+// the parsed-line stream that's only for on-page monitoring) and ships it
+// back base64-encoded once stopped. For the syslog panel, lines are buffered
+// client-side (see connectPiLog's ws.onmessage) for exactly the window
+// between Start and Stop, then saved as a text capture - so the panel must
+// stay expanded (WebSocket connected) for the whole capture, unlike the old
+// DB-backed [since, now) approach.
 async function toggleCapture(piId, spec, entry, btn) {
+  if (spec.kind === 'tcpdump') return togglePcapCapture(piId, entry, btn);
+
   entry.captureState = entry.captureState || {};
   const active = entry.captureState[spec.kind];
 
   if (!active) {
     const name = prompt('Capture name:', `${piId}-${spec.kind}-${new Date().toISOString().slice(0, 19)}`);
     if (!name) return;
-    let startedAt;
-    try {
-      const res = await fetch(`${API}/server-time`);
-      startedAt = (await res.json()).now;
-    } catch {
-      startedAt = new Date().toISOString();
-    }
-    entry.captureState[spec.kind] = { name, startedAt };
+    entry.captureState[spec.kind] = { name, lines: [] };
     btn.innerHTML = '&#9209;';
     btn.title = 'Stop Capture';
     btn.classList.add('recording');
@@ -318,32 +372,86 @@ async function toggleCapture(piId, spec, entry, btn) {
   btn.classList.remove('recording');
   btn.disabled = true;
   try {
-    const res = await fetch(
-      `${API}/pis/${encodeURIComponent(piId)}/logs?category=${encodeURIComponent(spec.kind)}` +
-      `&since=${encodeURIComponent(active.startedAt)}&limit=20000`
-    );
-    if (!res.ok) {
-      alert('Failed to fetch captured logs.');
-      return;
-    }
-    const items = await res.json();
-    const lines = items.map(item => formatPayloadLine(item.payload));
-    if (!lines.length) {
+    if (!active.lines.length) {
       alert('No logs arrived during that capture window.');
       return;
     }
-    const res2 = await fetch(`${API}/captures`, {
+    const res = await fetch(`${API}/captures`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pi_id: piId, category: spec.kind, name: active.name, lines }),
+      body: JSON.stringify({ pi_id: piId, category: spec.kind, name: active.name, lines: active.lines }),
     });
-    if (!res2.ok) {
+    if (!res.ok) {
       alert('Captured the logs but failed to save the file on the server.');
       return;
     }
     await loadCaptures();
   } catch {
-    alert('Failed to fetch captured logs.');
+    alert('Failed to save the capture.');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function togglePcapCapture(piId, entry, btn) {
+  const iface = entry.tcpdumpIfaceSelect ? entry.tcpdumpIfaceSelect.value : '';
+
+  if (!entry.pcapState) {
+    if (!iface) {
+      alert('Select an interface for the tcpdump panel first.');
+      return;
+    }
+    const name = prompt('Capture name:', `${piId}-pcap-${new Date().toISOString().slice(0, 19)}`);
+    if (!name) return;
+
+    btn.disabled = true;
+    try {
+      const res = await postCmd(piId, 'start_pcap_capture', { interface: iface, name });
+      if (!res.ok) {
+        alert('Failed to start PCAP capture.');
+        return;
+      }
+      const data = await res.json();
+      await awaitCommandResult(data.command_id);
+    } catch (err) {
+      alert(`Failed to start PCAP capture: ${err.message}`);
+      return;
+    } finally {
+      btn.disabled = false;
+    }
+
+    entry.pcapState = { name, interface: iface };
+    btn.innerHTML = '&#9209;';
+    btn.title = 'Stop Capture';
+    btn.classList.add('recording');
+    return;
+  }
+
+  const { interface: capturedIface } = entry.pcapState;
+  entry.pcapState = null;
+  btn.innerHTML = '&#9210;';
+  btn.title = 'Start Capture';
+  btn.classList.remove('recording');
+  btn.disabled = true;
+  try {
+    // The pcap has been streaming live to the backend since Start was
+    // clicked (see start_pcap_capture on the Pi), so stopping only has to
+    // tear down tcpdump and flush whatever's left in flight - not upload an
+    // entire finished file - and should resolve quickly.
+    const res = await postCmd(piId, 'stop_pcap_capture', { interface: capturedIface });
+    if (!res.ok) {
+      alert('Failed to stop PCAP capture.');
+      return;
+    }
+    const data = await res.json();
+    const result = await awaitCommandResult(data.command_id, 30);
+    if (!result || !result.saved) {
+      alert('PCAP capture stopped but was not saved on the server.');
+      return;
+    }
+    await loadCaptures();
+  } catch (err) {
+    alert(`Failed to stop PCAP capture: ${err.message}`);
   } finally {
     btn.disabled = false;
   }
@@ -372,14 +480,15 @@ function postCmd(piId, action, params) {
   });
 }
 
-// Switching the interface filter re-issues the stream command for the new
-// interface and wipes the panel locally - otherwise old lines from the
-// previous interface's filter would sit alongside (or ahead of) new ones,
-// making it look like nothing changed while waiting for the next matching event.
+// Called only from the explicit Watch/Stop button, never from picking an
+// interface in the dropdown - selecting an interface is just choosing a
+// target, it has no side effects on its own. Wipes the panel locally on
+// every call, since re-pointing at a new interface would otherwise leave
+// old lines from the previous one sitting alongside (or ahead of) new ones.
 // Both streams are always scoped to exactly one interface - no unfiltered/
 // "all interfaces" mode - so a panel never mixes lines from two NICs together.
 // tcpdump can additionally run several interfaces at once server-side, so
-// switching here also explicitly stops the previously selected one.
+// switching here also explicitly stops the previously watched one.
 async function setStreamInterface(piId, entry, spec, interface_) {
   const panel = entry[spec.panelKey];
   panel.innerHTML = '<div class="pi-log-empty">waiting for messages…</div>';
@@ -408,10 +517,6 @@ function togglePanel(piId, kind) {
 
   if (entry[spec.expandedKey] && !entry[spec.panelKey].children.length) {
     entry[spec.panelKey].innerHTML = '<div class="pi-log-empty">waiting for messages…</div>';
-    if (!entry[spec.expandedKey + 'Loaded']) {
-      entry[spec.expandedKey + 'Loaded'] = true;
-      loadPanelHistory(piId, entry, spec);
-    }
   }
 
   const isAnyExpanded = anyExpanded(entry);
@@ -451,12 +556,14 @@ function createPiRow(piId) {
   summaryRow.className = 'pi-row';
   summaryRow.dataset.piId = piId;
   summaryRow.innerHTML = `
+    <td><input type="checkbox" class="pi-select-checkbox" title="Select for multicast"></td>
     <td><span class="pi-toggle main-toggle">&#9654;</span></td>
     <td class="c-id"></td>
     <td class="c-ip"></td>
     <td class="c-role"></td>
     <td class="c-status"></td>
     <td class="c-seen"></td>
+    <td class="c-primary-if"><select class="field primary-if-select"><option value="">(none)</option></select></td>
   `;
   const mainToggle = summaryRow.querySelector('.main-toggle');
   mainToggle.addEventListener('click', (e) => {
@@ -466,7 +573,45 @@ function createPiRow(piId) {
   summaryRow.addEventListener('click', () => {
     selectedPiId = piId;
     targetSelect.value = piId;
+    renderParamFields();
     piRows.forEach((entry, id) => entry.summaryRow.classList.toggle('selected', id === selectedPiId));
+  });
+
+  // Multi-select checkbox: independent of the row-click single target above,
+  // this drives the "multicast" target - checking more than one Pi here
+  // auto-switches the Target dropdown to multicast (see renderTargetSelect).
+  const selectCheckbox = summaryRow.querySelector('.pi-select-checkbox');
+  selectCheckbox.addEventListener('click', (e) => e.stopPropagation());
+  selectCheckbox.addEventListener('change', () => {
+    if (selectCheckbox.checked) checkedPiIds.add(piId);
+    else checkedPiIds.delete(piId);
+    renderTargetSelect();
+  });
+
+  // Per-Pi primary interface, used as the target interface when this Pi is
+  // included in a multicast command - configured here, not per-command.
+  const primaryIfaceSelect = summaryRow.querySelector('.primary-if-select');
+  primaryIfaceSelect.addEventListener('click', (e) => e.stopPropagation());
+  primaryIfaceSelect.addEventListener('change', async () => {
+    primaryIfaceSelect.disabled = true;
+    try {
+      const res = await fetch(`${API}/pis/${encodeURIComponent(piId)}/primary-interface`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ primary_interface: primaryIfaceSelect.value || null }),
+      });
+      if (!res.ok) {
+        alert('Failed to set primary interface.');
+        return;
+      }
+      const updated = await res.json();
+      const pi = pis.find(p => p.pi_id === piId);
+      if (pi) pi.primary_interface = updated.primary_interface;
+    } catch {
+      alert('Failed to set primary interface.');
+    } finally {
+      primaryIfaceSelect.disabled = false;
+    }
   });
 
   // Toolbar row: only visible once the Pi row itself is expanded; holds the
@@ -474,7 +619,7 @@ function createPiRow(piId) {
   const toolbarRow = document.createElement('tr');
   toolbarRow.className = 'pi-toolbar-row hidden';
   const toolbarCell = document.createElement('td');
-  toolbarCell.colSpan = 6;
+  toolbarCell.colSpan = 8;
   toolbarCell.innerHTML = PANELS.map(spec =>
     `<span class="pi-toggle" data-kind="${spec.kind}">&#9654; ${spec.short}</span>`
   ).join('');
@@ -486,12 +631,12 @@ function createPiRow(piId) {
     });
   });
 
-  const entry = { summaryRow, mainToggle, toolbarRow, rowExpanded: false, ws: null };
+  const entry = { summaryRow, mainToggle, toolbarRow, primaryIfaceSelect, rowExpanded: false, ws: null };
   PANELS.forEach(spec => {
     const row = document.createElement('tr');
     row.className = 'pi-log-row hidden';
     const cell = document.createElement('td');
-    cell.colSpan = 6;
+    cell.colSpan = 8;
     cell.innerHTML = `
       <div class="pi-log-heading">
         <span>${spec.label}</span>
@@ -513,9 +658,16 @@ function createPiRow(piId) {
     const ifaceSelect = cell.querySelector('.pi-stream-iface');
     entry[spec.kind + 'IfaceSelect'] = ifaceSelect;
     ifaceSelect.addEventListener('click', (e) => e.stopPropagation());
-    ifaceSelect.addEventListener('change', (e) => {
-      setStreamInterface(piId, entry, spec, e.target.value);
-    });
+    if (spec.kind === 'tcpdump') {
+      // tcpdump streaming is only ever started/stopped through the Action
+      // command builder now - this select exists purely to pick which
+      // interface a PCAP capture (Start Capture button) targets, it has no
+      // side effects of its own.
+    } else {
+      ifaceSelect.addEventListener('change', (e) => {
+        setStreamInterface(piId, entry, spec, e.target.value);
+      });
+    }
 
     const captureBtn = cell.querySelector('.pi-log-capture');
     captureBtn.addEventListener('click', (e) => {
@@ -551,6 +703,7 @@ function renderPis() {
     entry.summaryRow.querySelector('.c-role').textContent = p.role || '';
     entry.summaryRow.querySelector('.c-status').innerHTML = statusBadge(p.status);
     entry.summaryRow.querySelector('.c-seen').textContent = p.last_seen ? new Date(p.last_seen).toLocaleString() : '';
+    entry.summaryRow.querySelector('.pi-select-checkbox').checked = checkedPiIds.has(p.pi_id);
 
     const interfaces = (p.metadata && Array.isArray(p.metadata.interfaces)) ? p.metadata.interfaces : [];
     const key = JSON.stringify(interfaces);
@@ -564,6 +717,18 @@ function renderPis() {
         interfaces.map(i => `<option value="${i}">${i}</option>`).join('');
       if (interfaces.includes(current)) select.value = current;
     });
+
+    // The primary-interface select is config, not a live filter - its value
+    // always mirrors the server's p.primary_interface, options rebuilt only
+    // when the underlying interface list actually changes.
+    if (entry.primaryIfaceKey !== key) {
+      entry.primaryIfaceKey = key;
+      entry.primaryIfaceSelect.innerHTML = '<option value="">(none)</option>' +
+        interfaces.map(i => `<option value="${i}">${i}</option>`).join('');
+    }
+    if (entry.primaryIfaceSelect.value !== (p.primary_interface || '')) {
+      entry.primaryIfaceSelect.value = p.primary_interface || '';
+    }
   });
 
   // Drop rows for Pis that disappeared, closing any open log socket.
@@ -578,10 +743,8 @@ function renderPis() {
     piRows.delete(id);
   });
 
-  const current = targetSelect.value;
-  targetSelect.innerHTML = '<option value="all">all (broadcast)</option>' +
-    pis.map(p => `<option value="${p.pi_id}">${p.pi_id}</option>`).join('');
-  if ([...targetSelect.options].some(o => o.value === current)) targetSelect.value = current;
+  [...checkedPiIds].forEach(id => { if (!seen.has(id)) checkedPiIds.delete(id); });
+  renderTargetSelect();
 
   if (typeof refreshInterfaceOptions === 'function') refreshInterfaceOptions();
 }
@@ -614,7 +777,7 @@ async function loadCaptures() {
         <td>${c.pi_id}</td>
         <td>${c.category}</td>
         <td>${c.name}</td>
-        <td>${c.line_count}</td>
+        <td>${c.category === 'pcap' ? '—' : c.line_count}</td>
         <td>${new Date(c.created_at).toLocaleString()}</td>
         <td class="capture-actions">
           <a href="${API}/captures/${c.id}/download" class="icon-btn" title="Download">&#8681;</a>
@@ -655,7 +818,11 @@ const sendCmdBtn = document.getElementById('sendCmdBtn');
 const cmdResults = document.getElementById('cmdResults');
 
 const ACTION_PARAMS = {
-  ping: [{ name: 'interface', label: 'Interface (optional)', type: 'interface' }],
+  ping: [
+    { name: 'interface', label: 'Interface (optional)', type: 'interface' },
+    { name: 'target', label: 'IP to ping', type: 'text', default: '8.8.8.8' },
+    { name: 'count', label: 'Count', type: 'number', default: 5 },
+  ],
   signal_stats: [],
   throughput_test: [{ name: 'duration', label: 'Duration (s)', type: 'number', default: 10 }],
   set_channel: [{ name: 'channel', label: 'Channel', type: 'number' }],
@@ -676,7 +843,7 @@ const ACTION_PARAMS = {
 
 function currentTargetInterfaces() {
   const target = targetSelect.value;
-  if (!target || target === 'all') return [];
+  if (!target || target === 'all' || target === 'multicast') return [];
   const pi = pis.find(p => p.pi_id === target);
   return (pi && pi.metadata && Array.isArray(pi.metadata.interfaces)) ? pi.metadata.interfaces : [];
 }
@@ -684,8 +851,14 @@ function currentTargetInterfaces() {
 function renderParamFields() {
   const fields = ACTION_PARAMS[actionSelect.value] || [];
   const interfaces = currentTargetInterfaces();
+  const isMulticast = targetSelect.value === 'multicast';
   paramFields.innerHTML = fields.map(f => {
     if (f.type === 'interface') {
+      // In multicast mode the interface isn't picked here at all - each
+      // targeted Pi's own configured primary interface is used instead.
+      if (isMulticast) {
+        return `<label>${f.label}</label><div class="hint">Auto: each Pi's configured primary interface</div>`;
+      }
       const options = ['<option value="">' + (f.required ? 'select interface' : '(none)') + '</option>']
         .concat(interfaces.map(i => `<option value="${i}">${i}</option>`));
       return `<label>${f.label}</label><select class="field" data-param="${f.name}">${options.join('')}</select>`;
@@ -719,6 +892,7 @@ function refreshInterfaceOptions() {
 
 actionSelect.addEventListener('change', renderParamFields);
 targetSelect.addEventListener('change', renderParamFields);
+renderTargetSelect();
 renderParamFields();
 
 function collectParams() {
@@ -797,7 +971,8 @@ function formatResultValue(value) {
     if (allPrimitive && value.length <= 5) return value.join(', ') || '(empty)';
     return `${value.length} item${value.length === 1 ? '' : 's'}`;
   }
-  return String(value);
+  const str = String(value);
+  return str.length > 200 ? `${str.slice(0, 200)}… (${str.length} chars)` : str;
 }
 
 function renderResultTable(container, obj) {
@@ -858,25 +1033,57 @@ async function pollCommand(commandId, entry, piId, action) {
   }
 }
 
+async function sendOneCommand(url, action, params) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, params }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`${res.status} ${text}`);
+  }
+  const data = await res.json();
+  addCommandEntry(data.command_id, data.pi_id, data.action);
+}
+
 sendCmdBtn.addEventListener('click', async () => {
   const target = targetSelect.value;
   const action = actionSelect.value;
   const params = collectParams();
+
   sendCmdBtn.disabled = true;
   try {
-    const url = target === 'all' ? `${API}/pis/broadcast` : `${API}/pis/${encodeURIComponent(target)}/cmd`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action, params }),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      alert(`Command failed: ${res.status} ${text}`);
-      return;
+    if (target === 'all') {
+      await sendOneCommand(`${API}/pis/broadcast`, action, params);
+    } else if (target === 'multicast') {
+      const targetIds = [...checkedPiIds];
+      if (!targetIds.length) {
+        alert('No Pis checked in the table for multicast.');
+        return;
+      }
+      const needsInterface = (ACTION_PARAMS[action] || []).some(f => f.type === 'interface');
+      // One command per checked Pi, dispatched independently (no backend
+      // concept of "send to this subset" to piggyback on), each using that
+      // Pi's own configured primary interface rather than one shared value.
+      const results = await Promise.allSettled(targetIds.map(piId => {
+        const pi = pis.find(p => p.pi_id === piId);
+        if (needsInterface && !(pi && pi.primary_interface)) {
+          return Promise.reject(new Error(`${piId}: no primary interface configured`));
+        }
+        const perPiParams = needsInterface ? { ...params, interface: pi.primary_interface } : params;
+        return sendOneCommand(`${API}/pis/${encodeURIComponent(piId)}/cmd`, action, perPiParams);
+      }));
+      const failed = results.filter(r => r.status === 'rejected');
+      if (failed.length) {
+        alert(`${failed.length} of ${targetIds.length} command(s) failed to send:\n` +
+          failed.map(r => r.reason.message).join('\n'));
+      }
+    } else {
+      await sendOneCommand(`${API}/pis/${encodeURIComponent(target)}/cmd`, action, params);
     }
-    const data = await res.json();
-    addCommandEntry(data.command_id, data.pi_id, data.action);
+  } catch (err) {
+    alert(`Command failed: ${err.message}`);
   } finally {
     sendCmdBtn.disabled = false;
   }
@@ -889,7 +1096,7 @@ function levelClass(level) {
   return ['info', 'warning', 'error'].includes(l) ? `lvl-${l}` : 'lvl-unknown';
 }
 
-function appendLineTo(container, payload) {
+function buildLineElement(payload) {
   const div = document.createElement('div');
   div.className = 'line';
 
@@ -915,7 +1122,39 @@ function appendLineTo(container, payload) {
 
     div.append(ts, lvl, msg);
   }
-  container.appendChild(div);
+  return div;
+}
+
+// A busy tcpdump/syslog stream can push many messages per second; appending
+// and re-measuring scroll position (a forced synchronous reflow) on every
+// single one causes layout thrashing bad enough to stall the main thread and
+// make unrelated UI (button clicks) feel like they hung. Instead, lines are
+// queued and flushed together at most once per animation frame, so a burst
+// of N messages costs one DOM batch + one layout read instead of N of each.
+const linePanelQueues = new WeakMap();
+
+function appendLineTo(container, payload) {
+  let state = linePanelQueues.get(container);
+  if (!state) {
+    state = { queue: [], scheduled: false };
+    linePanelQueues.set(container, state);
+  }
+  state.queue.push(payload);
+  if (!state.scheduled) {
+    state.scheduled = true;
+    requestAnimationFrame(() => flushLineQueue(container, state));
+  }
+}
+
+function flushLineQueue(container, state) {
+  state.scheduled = false;
+  const lines = state.queue;
+  state.queue = [];
+  if (!lines.length) return;
+
+  const frag = document.createDocumentFragment();
+  lines.forEach(payload => frag.appendChild(buildLineElement(payload)));
+  container.appendChild(frag);
 
   // Cap growth so a long-running stream (tcpdump, syslog) doesn't leak memory.
   while (container.children.length > 500) container.removeChild(container.firstChild);

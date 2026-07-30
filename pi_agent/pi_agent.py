@@ -15,16 +15,24 @@ BROKER_HOST = os.environ["BROKER_HOST"]
 BROKER_PORT = int(os.environ["BROKER_PORT"])
 PI_ID = os.environ["PI_ID"]
 ROLE = os.environ["ROLE"]
+# Where the backend's pcap capture socket server listens - a pcap capture is
+# piped there live as tcpdump produces it (see start_pcap_capture), instead
+# of being written to a local file first and uploaded as a whole after stop.
+CAPTURE_SOCKET_HOST = os.environ["CAPTURE_SOCKET_HOST"]
+CAPTURE_SOCKET_PORT = int(os.environ["CAPTURE_SOCKET_PORT"])
 
 
 class PiAgent:
     TCPDUMP_LINE_RE = re.compile(r'^(?P<timestamp>\d{2}:\d{2}:\d{2}\.\d+)\s+(?P<message>.*)$')
 
-    def __init__(self, broker_host=BROKER_HOST, broker_port=BROKER_PORT, pi_id=PI_ID, role=ROLE):
+    def __init__(self, broker_host=BROKER_HOST, broker_port=BROKER_PORT, pi_id=PI_ID, role=ROLE,
+                 capture_socket_host=CAPTURE_SOCKET_HOST, capture_socket_port=CAPTURE_SOCKET_PORT):
         self.broker_host = broker_host
         self.broker_port = broker_port
         self.pi_id = pi_id
         self.role = role
+        self.capture_socket_host = capture_socket_host
+        self.capture_socket_port = capture_socket_port
 
         self.cmd_topic_mine = f'test/{pi_id}/cmd'
         self.cmd_topic_all = 'test/all/cmd'
@@ -42,7 +50,17 @@ class PiAgent:
         self._tcpdump_procs = {}
         self._tcpdump_lock = threading.Lock()
 
-        self.client = mqtt.Client(client_id=pi_id, protocol=mqtt.MQTTv5)
+        self._pcap_procs = {}
+        self._pcap_state = {}
+        self._pcap_lock = threading.Lock()
+
+        # The broker (mosquitto 1.6.9) only speaks MQTT 3.1.1 - v5 broker
+        # support wasn't added until mosquitto 2.0. Connecting as v5 anyway
+        # is undefined behavior against this broker; clean_session=True here
+        # is the unambiguous v3.1.1 way to guarantee every (re)connect starts
+        # a fresh session, so no stale/queued command (like an old tcpdump
+        # start) ever gets replayed on reconnect or agent restart.
+        self.client = mqtt.Client(client_id=pi_id, protocol=mqtt.MQTTv311, clean_session=True)
         self.client.on_connect = self.on_connect
         self.client.on_message = self.on_message
 
@@ -134,22 +152,27 @@ class PiAgent:
             "interface": interface,
         }
 
-    def stream_tcpdump(self, interface):
-        """Follow tcpdump on one interface forever, publishing each captured line."""
+    def stream_tcpdump(self, interface, proc):
         topic = f'devices/{self.pi_id}/tcpdump/{interface}'
-        proc = subprocess.Popen(
-            ["tcpdump", "-i", interface, "-l", "-n", "-q"],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-        )
-        with self._tcpdump_lock:
-            self._tcpdump_procs[interface] = proc
+        batch = []
+        last_flush = time.monotonic()
+
+        def flush():
+            nonlocal batch, last_flush
+            if batch:
+                self.client.publish(topic, json.dumps(batch), qos=1)
+                batch = []
+            last_flush = time.monotonic()
+
         try:
             for line in proc.stdout:
                 line = line.strip()
                 if not line:
                     continue
-                record = self.parse_tcpdump_line(line, interface)
-                self.client.publish(topic, json.dumps(record), qos=1)
+                batch.append(self.parse_tcpdump_line(line, interface))
+                if len(batch) >= 50 or time.monotonic() - last_flush >= 0.2:
+                    flush()
+            flush()
         finally:
             # If tcpdump dies unexpectedly, clear the flag so a future
             # start_tcpdump_stream() call for this interface isn't a
@@ -163,8 +186,13 @@ class PiAgent:
         with self._tcpdump_lock:
             if interface in self._tcpdump_running:
                 return False
+            proc = subprocess.Popen(
+                ["tcpdump", "-i", interface, "-l", "-n", "-q"],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            )
             self._tcpdump_running.add(interface)
-        threading.Thread(target=self.stream_tcpdump, args=(interface,), daemon=True).start()
+            self._tcpdump_procs[interface] = proc
+        threading.Thread(target=self.stream_tcpdump, args=(interface, proc), daemon=True).start()
         return True
 
     def stop_tcpdump_stream(self, interface):
@@ -178,6 +206,106 @@ class PiAgent:
             proc.terminate()
         return True
 
+    def start_pcap_capture(self, interface, name=None):
+        """Start a pcap capture for one interface, piped live to the backend's
+        capture socket server as tcpdump produces it - independent of the
+        parsed-line tcpdump stream (both can run on the same interface at
+        once). Streaming continuously instead of writing to a local file
+        means stop only has to close a socket, not upload a whole finished
+        file - that upload-at-the-end approach was why stopping a capture
+        used to take so long."""
+        with self._pcap_lock:
+            if interface in self._pcap_procs:
+                return False
+            proc = subprocess.Popen(
+                ["tcpdump", "-i", interface, "-w", "-", "-U"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            # tcpdump fails fast on a bad interface or missing capture
+            # permissions (needs root or cap_net_raw+cap_net_admin). Without
+            # this check, start would report success even though tcpdump
+            # already died.
+            time.sleep(0.3)
+            if proc.poll() is not None:
+                output = proc.stderr.read().decode(errors="replace").strip() if proc.stderr else ""
+                raise RuntimeError(output or f"tcpdump exited immediately (code {proc.returncode})")
+
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect((self.capture_socket_host, self.capture_socket_port))
+            capture_name = name or f"{self.pi_id}-pcap-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}"
+            sock.sendall((json.dumps({"pi_id": self.pi_id, "name": capture_name}) + "\n").encode())
+
+            state = {"error": None, "capture_id": None, "byte_count": 0, "done": threading.Event()}
+            thread = threading.Thread(target=self._relay_pcap, args=(proc, sock, state), daemon=True)
+            thread.start()
+
+            self._pcap_procs[interface] = proc
+            self._pcap_state[interface] = state
+        return True
+
+    def _relay_pcap(self, proc, sock, state):
+        """Pump tcpdump's stdout into the capture socket until tcpdump exits
+        (stdout hits EOF), then half-close the socket and read the backend's
+        ack off the same connection."""
+        try:
+            while True:
+                chunk = proc.stdout.read(65536)
+                if not chunk:
+                    break
+                sock.sendall(chunk)
+        except Exception as e:
+            state["error"] = str(e)
+        finally:
+            try:
+                sock.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
+            try:
+                ack_line = sock.makefile("r").readline()
+                ack = json.loads(ack_line) if ack_line else {}
+                state["capture_id"] = ack.get("capture_id")
+                state["byte_count"] = ack.get("byte_count", 0)
+                if ack.get("error"):
+                    state["error"] = state["error"] or ack["error"]
+            except Exception as e:
+                state["error"] = state["error"] or str(e)
+            finally:
+                sock.close()
+                state["done"].set()
+
+    def stop_pcap_capture(self, interface):
+        """Stop the pcap capture for an interface and return the saved
+        capture's metadata once the relay thread's socket stream finishes."""
+        with self._pcap_lock:
+            proc = self._pcap_procs.pop(interface, None)
+            state = self._pcap_state.pop(interface, None)
+        if proc is None:
+            return {"error": f"no pcap capture running on {interface}"}
+
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+
+        # tcpdump exiting closes its stdout, which is what makes the relay
+        # thread's read() return EOF, finish sending, and get the backend's
+        # ack - by now there's only a small tail left to flush, not a whole
+        # capture's worth of bytes, so this should resolve quickly.
+        if not state["done"].wait(timeout=15):
+            return {"error": "timed out waiting for the capture upload to finish", "interface": interface}
+
+        if state["error"]:
+            return {"error": state["error"], "interface": interface}
+
+        return {
+            "interface": interface,
+            "byte_count": state["byte_count"],
+            "capture_id": state["capture_id"],
+            "saved": True,
+        }
+
     def get_signal_stats(self):
         """Pull RSSI / link stats for connected stations (Pi acting as AP)."""
         out = subprocess.run(
@@ -186,15 +314,19 @@ class PiAgent:
         ).stdout
         return out.strip()
 
-    def ping_internet(self, interface=None):
-        cmd = ["ping", "8.8.8.8", "-c", "5"]
+    def ping_internet(self, interface=None, target=None, count=5):
+        target = target or "8.8.8.8"
+        count = int(count) if count else 5
+        cmd = ["ping", target, "-c", str(count)]
         if interface:
             cmd += ["-I", f"{interface}"]
-        ret = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        ret = subprocess.run(cmd, capture_output=True, text=True, timeout=count * 2 + 5)
         match = re.search(r'(\d+)% packet loss', ret.stdout)
         return {
             "packet_lost": int(match.group(1)) if match else None,
             "interface": interface,
+            "target": target,
+            "count": count,
         }
 
     def connect_wifi(self, ssid, password=None, interface=None):
@@ -308,7 +440,9 @@ class PiAgent:
             elif action == "list_interface_ips":
                 result = {"interfaces": self.get_interface_ips()}
             elif action == "ping":
-                result = self.ping_internet(payload.get("interface"))
+                result = self.ping_internet(
+                    payload.get("interface"), payload.get("target"), payload.get("count"),
+                )
             elif action == "syslog":
                 result = {"logs": self.get_syslog(payload.get("lines", 100))}
             elif action == "stream_logs":
@@ -345,6 +479,24 @@ class PiAgent:
                 else:
                     stopped = self.stop_tcpdump_stream(interface)
                     result = {"streaming": False, "interface": interface, "stopped": stopped}
+            elif action == "start_pcap_capture":
+                interface = payload.get("interface")
+                if not interface:
+                    result = {"error": "interface is required"}
+                else:
+                    started = self.start_pcap_capture(interface, payload.get("name"))
+                    result = {
+                        "capturing": True,
+                        "already_running": not started,
+                        "interface": interface,
+                    }
+            elif action == "stop_pcap_capture":
+                interface = payload.get("interface")
+                if not interface:
+                    result = {"error": "interface is required"}
+                else:
+                    result = self.stop_pcap_capture(interface)
+                    result["capturing"] = False
             else:
                 result = {"error": f"unknown action: {action}"}
         except Exception as e:
@@ -355,7 +507,15 @@ class PiAgent:
         result["pi_id"] = self.pi_id
         result["timestamp"] = datetime.now(timezone.utc).isoformat()
 
-        self.client.publish(self.result_topic, json.dumps(result), qos=1)
+        try:
+            self.client.publish(self.result_topic, json.dumps(result), qos=1)
+        except Exception as e:
+            # A pcap result in particular can be tens of MB of base64 - if
+            # serializing/publishing that blows up, don't let it escape into
+            # paho's network thread. Better to drop this one result than take
+            # down the whole agent and leave every future command "pending"
+            # forever until someone notices and restarts the process.
+            print(f"[pi_agent] failed to publish result for {action}: {e}")
 
     def get_network_interfaces(self):
         """List local network interface names (excluding loopback)."""
@@ -419,12 +579,23 @@ class PiAgent:
             payload = json.loads(msg.payload.decode())
         except json.JSONDecodeError:
             return
-        self.handle_command(payload)
+        try:
+            self.handle_command(payload)
+        except Exception as e:
+            # Whatever this command was, a bug in handling it shouldn't be
+            # able to kill the paho network thread and leave every command
+            # after it stuck "pending" until the process is restarted by hand.
+            print(f"[pi_agent] unhandled error processing {payload.get('action')}: {e}")
 
     def run(self):
         self.client.will_set(self.status_topic, payload="offline", qos=1, retain=True)
-        self.client.connect(self.broker_host, self.broker_port, keepalive=30)
-        self.client.loop_forever()
+        while True:
+            try:
+                self.client.connect(self.broker_host, self.broker_port, keepalive=30)
+                self.client.loop_forever()
+            except Exception as e:
+                print(f"[pi_agent] connection loop crashed, reconnecting in 5s: {e}")
+                time.sleep(5)
 
 
 if __name__ == "__main__":

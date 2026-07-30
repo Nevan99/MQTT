@@ -16,13 +16,26 @@ load_dotenv()
 MQTT_BROKER_HOST = os.environ["MQTT_BROKER_HOST"]
 MQTT_BROKER_PORT = int(os.environ["MQTT_BROKER_PORT"])
 
+# Live-only categories: relayed to the browser over WebSocket for on-page
+# monitoring but never persisted. Both are high-volume streams, and captures
+# are now built purely from what the browser saw live while "Start Capture"
+# was armed, rather than replayed out of a DB history window - so nothing
+# here needs to survive past the WebSocket relay.
+NO_LOG_CATEGORIES = {"tcpdump", "logs"}
+
 
 class MQTTService:
     def __init__(self):
+        # The broker (mosquitto 1.6.9) only speaks MQTT 3.1.1 - v5 broker
+        # support wasn't added until mosquitto 2.0. Connecting as v5 anyway
+        # is undefined behavior against this broker; clean_session=True is
+        # the unambiguous v3.1.1 way to guarantee every (re)connect starts a
+        # fresh session instead of risking a stale queued message replay.
         self.client = mqtt.Client(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
             client_id="backend-controller",
-            protocol=mqtt.MQTTv5,
+            protocol=mqtt.MQTTv311,
+            clean_session=True,
         )
         self.client.on_connect = self._on_connect
         self.client.on_message = self._on_message
@@ -70,7 +83,8 @@ class MQTTService:
             elif category == "result":
                 self._update_command_result(session, pi_id, payload)
 
-            session.add(LogEntry(pi_id=pi_id, category=category, payload_json=json.dumps(payload)))
+            if category not in NO_LOG_CATEGORIES:
+                session.add(LogEntry(pi_id=pi_id, category=category, payload_json=json.dumps(payload)))
             session.commit()
 
         # Relay to any connected browsers - schedule onto the asyncio loop

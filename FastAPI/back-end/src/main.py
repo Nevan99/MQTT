@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from database.database import init_db
 from service.mqtt_service import mqtt_service
+from service import capture_socket_server
 from routers import Pis, Commands, Ws, Captures
 
 
@@ -16,7 +17,9 @@ async def lifespan(app: FastAPI):
     init_db()
     loop = asyncio.get_running_loop()
     mqtt_service.start(loop)
+    capture_socket_server.start()
     yield
+    capture_socket_server.stop()
     mqtt_service.stop()
 
 

@@ -11,6 +11,11 @@ class PiOut(BaseModel):
     status: str
     last_seen: datetime
     metadata: dict = {}
+    primary_interface: Optional[str] = None
+
+
+class PrimaryInterfaceRequest(BaseModel):
+    primary_interface: Optional[str] = None
 
 
 class CommandRequest(BaseModel):
@@ -39,7 +44,7 @@ class CaptureRequest(BaseModel):
     pi_id: str
     category: str
     name: str
-    lines: list[Any]
+    lines: list[Any] = []
 
 
 class CaptureOut(BaseModel):

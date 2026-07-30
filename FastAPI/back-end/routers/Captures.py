@@ -23,9 +23,13 @@ def _line_to_text(line) -> str:
     return json.dumps(line)
 
 
+def _extension(category: str) -> str:
+    return ".pcap" if category == "pcap" else ".txt"
+
+
 def _safe_download_name(capture: Capture) -> str:
     base = f"{capture.pi_id}_{capture.category}_{capture.name}"
-    return re.sub(r'[^A-Za-z0-9_.-]+', '_', base) + ".txt"
+    return re.sub(r'[^A-Za-z0-9_.-]+', '_', base) + _extension(capture.category)
 
 
 def _to_out(capture: Capture) -> CaptureOut:
@@ -38,7 +42,7 @@ def _to_out(capture: Capture) -> CaptureOut:
 
 @router.post("", response_model=CaptureOut)
 def create_capture(req: CaptureRequest, session: Session = Depends(get_session)):
-    filename = f"{uuid.uuid4().hex}.txt"
+    filename = f"{uuid.uuid4().hex}{_extension(req.category)}"
     text = "\n".join(_line_to_text(line) for line in req.lines)
     (CAPTURES_DIR / filename).write_text(text, encoding="utf-8")
 
@@ -72,8 +76,9 @@ def download_capture(capture_id: int, session: Session = Depends(get_session)):
     path = CAPTURES_DIR / capture.filename
     if not path.exists():
         raise HTTPException(status_code=404, detail="Capture file missing on disk")
+    media_type = "application/vnd.tcpdump.pcap" if capture.category == "pcap" else "text/plain"
     return FileResponse(
-        path, media_type="text/plain", filename=_safe_download_name(capture),
+        path, media_type=media_type, filename=_safe_download_name(capture),
     )
 
 

@@ -17,6 +17,7 @@ class Pi(SQLModel, table=True):
     status: str = "offline"          # "online" | "offline"
     last_seen: datetime = Field(default_factory=utcnow)
     metadata_json: str = "{}"         # role-specific config, e.g. {"target_ssid": "..."}
+    primary_interface: Optional[str] = None  # used as the target interface for multicast commands
 
     @property
     def topics(self) -> list:
