@@ -314,6 +314,78 @@ class PiAgent:
         ).stdout
         return out.strip()
 
+    @staticmethod
+    def _band_label(freq_mhz):
+        if 2400 <= freq_mhz <= 2495:
+            return "2.4GHz"
+        if 5150 <= freq_mhz <= 5895:
+            return "5GHz"
+        if 5925 <= freq_mhz <= 7125:
+            return "6GHz"
+        return "unknown"
+
+    def get_band_channel_info(self, interface):
+        """Current channel/frequency plus every band+channel the interface's
+        radio (wiphy) supports, so an interface's capability and its live
+        setting can both be inspected from the web UI."""
+        if not interface:
+            return {"error": "interface is required"}
+
+        info_out = subprocess.run(
+            ["iw", "dev", interface, "info"], capture_output=True, text=True,
+        ).stdout
+
+        current = None
+        m = re.search(r'channel (\d+) \(([\d.]+) MHz\), width: ([\w.]+ MHz)', info_out)
+        if m:
+            freq = int(float(m.group(2)))
+            current = {
+                "channel": int(m.group(1)),
+                "frequency_mhz": freq,
+                "width": m.group(3),
+                "band": self._band_label(freq),
+            }
+
+        wiphy_match = re.search(r'wiphy (\d+)', info_out)
+        if not wiphy_match:
+            return {
+                "interface": interface,
+                "current": current,
+                "error": "could not determine this interface's wiphy (is it a wireless interface?)",
+            }
+        phy = f"phy{wiphy_match.group(1)}"
+
+        phy_out = subprocess.run(
+            ["iw", "phy", phy, "info"], capture_output=True, text=True,
+        ).stdout
+
+        bands = []
+        band = None
+        for line in phy_out.splitlines():
+            band_match = re.match(r'\s*Band (\d+):', line)
+            if band_match:
+                band = {"band": int(band_match.group(1)), "channels": []}
+                bands.append(band)
+                continue
+            if band is None:
+                continue
+            chan_match = re.match(r'\s*\*\s+([\d.]+) MHz \[(\d+)\](.*)$', line)
+            if chan_match:
+                freq = int(float(chan_match.group(1)))
+                flags = chan_match.group(3)
+                power_match = re.search(r'\(([\d.]+) dBm\)', flags)
+                band["channels"].append({
+                    "channel": int(chan_match.group(2)),
+                    "frequency_mhz": freq,
+                    "band": self._band_label(freq),
+                    "max_tx_power_dbm": float(power_match.group(1)) if power_match else None,
+                    "disabled": "disabled" in flags,
+                    "no_ir": "no IR" in flags,
+                    "radar_detection": "radar detection" in flags,
+                })
+
+        return {"interface": interface, "wiphy": phy, "current": current, "bands": bands}
+
     def ping_internet(self, interface=None, target=None, count=5):
         target = target or "8.8.8.8"
         count = int(count) if count else 5
@@ -321,17 +393,38 @@ class PiAgent:
         if interface:
             cmd += ["-I", f"{interface}"]
         ret = subprocess.run(cmd, capture_output=True, text=True, timeout=count * 2 + 5)
-        match = re.search(r'(\d+)% packet loss', ret.stdout)
-        return {
-            "packet_lost": int(match.group(1)) if match else None,
+
+        stats_match = re.search(
+            r'(\d+) packets transmitted, (\d+) (?:packets )?received, '
+            r'(?:\+\d+ errors, )?(\d+)% packet loss(?:, time (\d+)ms)?',
+            ret.stdout,
+        )
+        rtt_match = re.search(
+            r'(?:rtt|round-trip) min/avg/max/mdev = '
+            r'([\d.]+)/([\d.]+)/([\d.]+)/([\d.]+) ms',
+            ret.stdout,
+        )
+
+        result = {
             "interface": interface,
             "target": target,
             "count": count,
+            "packet_lost": int(stats_match.group(3)) if stats_match else None,
+            "packets_transmitted": int(stats_match.group(1)) if stats_match else None,
+            "packets_received": int(stats_match.group(2)) if stats_match else None,
+            "time_ms": int(stats_match.group(4)) if stats_match and stats_match.group(4) else None,
+            "rtt_min_ms": float(rtt_match.group(1)) if rtt_match else None,
+            "rtt_avg_ms": float(rtt_match.group(2)) if rtt_match else None,
+            "rtt_max_ms": float(rtt_match.group(3)) if rtt_match else None,
+            "rtt_mdev_ms": float(rtt_match.group(4)) if rtt_match else None,
         }
+        if not stats_match:
+            result["raw_output"] = ret.stdout.strip() or ret.stderr.strip()
+        return result
 
-    def connect_wifi(self, ssid, password=None, interface=None):
+    def connect_wifi(self, ssid, password=None, interface=None, bssid=None, channel=None):
         """Connect to a wifi hotspot via NetworkManager, using a connection
-        profile scoped to this interface (con-name "<ssid>-<interface>").
+        profile scoped to this interface (con-name "<ssid-or-bssid>-<interface>").
 
         Plain `nmcli device wifi connect <ssid>` keys its profile off the SSID
         name alone, so a second NIC joining the same SSID collides with the
@@ -339,7 +432,17 @@ class PiAgent:
         complete security section, failing with
         "802-11-wireless-security.key-mgmt: property is missing". Giving each
         interface its own profile name sidesteps that collision entirely.
+
+        If bssid is given, it takes over as the connection target instead of
+        ssid - useful when multiple APs share the same SSID and a specific
+        one needs to be targeted. If channel is given, the profile is pinned
+        to that exact channel (and its band, inferred from the channel
+        number) - useful when the same SSID is broadcast on multiple
+        bands/channels and a specific one needs to be tested.
         """
+        if bssid:
+            return self._connect_wifi_by_bssid(bssid, password, interface)
+
         if not ssid:
             return {"error": "ssid is required"}
         if not interface:
@@ -361,6 +464,9 @@ class PiAgent:
         ]
         if password:
             add_cmd += ["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password]
+        if channel:
+            band = "bg" if int(channel) <= 14 else "a"
+            add_cmd += ["802-11-wireless.band", band, "802-11-wireless.channel", str(channel)]
         add_ret = subprocess.run(add_cmd, capture_output=True, text=True, timeout=30)
         if add_ret.returncode != 0:
             return {
@@ -378,9 +484,48 @@ class PiAgent:
         return {
             "ssid": ssid,
             "interface": interface,
+            "channel": channel,
             "connected": connected,
             "ip_address": self.get_interface_ip(interface) if connected else None,
             "output": (up_ret.stdout or up_ret.stderr).strip(),
+        }
+
+    def _connect_wifi_by_bssid(self, bssid, password=None, interface=None):
+        """Connect to a specific access point by BSSID (MAC address) instead
+        of SSID. `nmcli device wifi connect` resolves the SSID itself from
+        scan results matching that BSSID, so the caller never has to supply
+        it. Mirrors connect_wifi's per-interface profile naming to avoid the
+        same NetworkManager collision a second NIC on the same target would
+        otherwise hit."""
+        if not interface:
+            return {"error": "interface is required"}
+
+        con_name = f"{bssid}-{interface}"
+
+        # Drop any stale profile under this name so nmcli builds a fresh one.
+        subprocess.run(["nmcli", "connection", "delete", con_name],
+                        capture_output=True, text=True)
+
+        # A stale scan cache can hide the target AP even though it's in
+        # range, causing a spurious "No network with BSSID ... found".
+        subprocess.run(["nmcli", "device", "wifi", "rescan", "ifname", interface],
+                        capture_output=True, text=True, timeout=15)
+        time.sleep(2)
+
+        connect_cmd = [
+            "nmcli", "device", "wifi", "connect", bssid,
+            "ifname", interface, "name", con_name,
+        ]
+        if password:
+            connect_cmd += ["password", password]
+        ret = subprocess.run(connect_cmd, capture_output=True, text=True, timeout=30)
+        connected = ret.returncode == 0
+        return {
+            "bssid": bssid,
+            "interface": interface,
+            "connected": connected,
+            "ip_address": self.get_interface_ip(interface) if connected else None,
+            "output": (ret.stdout or ret.stderr).strip(),
         }
 
     def disconnect_wifi(self, interface=None):
@@ -424,6 +569,8 @@ class PiAgent:
                 result = self.run_iperf_server_test(payload.get("duration", 10))
             elif action == "signal_stats":
                 result = {"stations": self.get_signal_stats()}
+            elif action == "band_channel_info":
+                result = self.get_band_channel_info(payload.get("interface"))
             elif action == "set_channel":
                 result = self.restart_hostapd(channel=payload.get("channel"))
             elif action == "connect_wifi":
@@ -431,6 +578,8 @@ class PiAgent:
                     payload.get("ssid"),
                     payload.get("password"),
                     payload.get("interface"),
+                    payload.get("bssid"),
+                    payload.get("channel"),
                 )
             elif action == "disconnect_wifi":
                 result = self.disconnect_wifi(payload.get("interface"))

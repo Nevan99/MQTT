@@ -89,6 +89,10 @@
   table.result-table .result-key { color: #888; width: 40%; }
   table.result-table .result-value { color: #ddd; }
   table.result-table table.result-table { margin: 0; }
+  table.result-array-table th { padding: 0.15rem 0.4rem; border-bottom: 1px solid #444; color: #888; text-align: left; white-space: nowrap; }
+  table.result-array-table td { white-space: nowrap; }
+  td.result-nested-label { padding-top: 0.5rem; font-weight: 600; }
+  td.result-nested { padding: 0 0 0.4rem 0.75rem; }
   .hint { color: #777; font-size: 0.75rem; margin-top: 0.5rem; }
 </style>
 </head>
@@ -124,6 +128,7 @@
     <select id="actionSelect" class="field">
       <option value="ping">ping</option>
       <option value="signal_stats">signal_stats</option>
+      <option value="band_channel_info">band_channel_info</option>
       <option value="throughput_test">throughput_test</option>
       <option value="set_channel">set_channel</option>
       <option value="syslog">syslog</option>
@@ -824,6 +829,7 @@ const ACTION_PARAMS = {
     { name: 'count', label: 'Count', type: 'number', default: 5 },
   ],
   signal_stats: [],
+  band_channel_info: [{ name: 'interface', label: 'Interface', type: 'interface', required: true }],
   throughput_test: [{ name: 'duration', label: 'Duration (s)', type: 'number', default: 10 }],
   set_channel: [{ name: 'channel', label: 'Channel', type: 'number' }],
   syslog: [{ name: 'lines', label: 'Lines', type: 'number', default: 100 }],
@@ -832,8 +838,10 @@ const ACTION_PARAMS = {
   tcpdump: [{ name: 'interface', label: 'Interface', type: 'interface', required: true }],
   stop_tcpdump: [{ name: 'interface', label: 'Interface', type: 'interface', required: true }],
   connect_wifi: [
-    { name: 'ssid', label: 'SSID', type: 'text', required: true },
+    { name: 'ssid', label: 'SSID (ignored if BSSID is set)', type: 'text' },
+    { name: 'bssid', label: 'BSSID (optional - overrides SSID)', type: 'text' },
     { name: 'password', label: 'Password (optional)', type: 'password' },
+    { name: 'channel', label: 'Channel (optional - pins band+channel, ignored with BSSID)', type: 'number' },
     { name: 'interface', label: 'Interface', type: 'interface', required: true },
   ],
   disconnect_wifi: [{ name: 'interface', label: 'Interface', type: 'interface', required: true }],
@@ -975,28 +983,91 @@ function formatResultValue(value) {
   return str.length > 200 ? `${str.slice(0, 200)}… (${str.length} chars)` : str;
 }
 
+// A "flat" object has no nested objects/arrays of its own - safe to put on
+// one table row without recursing further.
+function isFlatObject(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v) &&
+    Object.values(v).every(x => x === null || typeof x !== 'object');
+}
+
+// Arrays of flat objects (e.g. band_channel_info's channel lists) render as
+// one compact table with a column per key, instead of one full indexed
+// key-value sub-table per element - the latter is unreadable for anything
+// more than 2-3 items (a 40-channel list becomes ~200 rows of noise).
+function renderCompactArrayTable(container, arr) {
+  const keys = [...new Set(arr.flatMap(o => Object.keys(o)))];
+  const table = document.createElement('table');
+  table.className = 'result-table result-array-table';
+  const headRow = document.createElement('tr');
+  keys.forEach(k => {
+    const th = document.createElement('th');
+    th.textContent = k;
+    headRow.appendChild(th);
+  });
+  table.appendChild(headRow);
+  arr.forEach(obj => {
+    const row = document.createElement('tr');
+    keys.forEach(k => {
+      const td = document.createElement('td');
+      td.textContent = formatResultValue(obj[k]);
+      row.appendChild(td);
+    });
+    table.appendChild(row);
+  });
+  container.appendChild(table);
+}
+
 function renderResultTable(container, obj) {
   container.innerHTML = '';
-  if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
+  if (obj === null || typeof obj !== 'object') {
     container.textContent = JSON.stringify(obj);
+    return;
+  }
+  if (Array.isArray(obj) && obj.length && obj.every(isFlatObject)) {
+    renderCompactArrayTable(container, obj);
     return;
   }
   const table = document.createElement('table');
   table.className = 'result-table';
-  Object.entries(obj).forEach(([key, value]) => {
-    const row = document.createElement('tr');
-    const keyCell = document.createElement('td');
-    keyCell.className = 'result-key';
-    keyCell.textContent = key;
-    const valCell = document.createElement('td');
-    valCell.className = 'result-value';
-    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-      renderResultTable(valCell, value);
+  // Arrays of objects (e.g. band_channel_info's bands) get their own indexed
+  // rows instead of collapsing to "N items" - otherwise nested structured
+  // data like that is invisible in the result view.
+  const entries = Array.isArray(obj) ? obj.map((v, i) => [i, v]) : Object.entries(obj);
+  entries.forEach(([key, value]) => {
+    const isExpandable = value !== null && typeof value === 'object' &&
+      (!Array.isArray(value) || value.some(v => v !== null && typeof v === 'object'));
+
+    if (isExpandable) {
+      // A nested table (e.g. a band's channel list) needs the full row
+      // width to be readable - cramming it into a value cell next to its
+      // label produces a squeezed, unreadable mess. Give the label its own
+      // full-width row, then the nested content its own full-width row.
+      const labelRow = document.createElement('tr');
+      const labelCell = document.createElement('td');
+      labelCell.className = 'result-key result-nested-label';
+      labelCell.colSpan = 2;
+      labelCell.textContent = key;
+      labelRow.appendChild(labelCell);
+      table.appendChild(labelRow);
+
+      const nestedRow = document.createElement('tr');
+      const nestedCell = document.createElement('td');
+      nestedCell.className = 'result-nested';
+      nestedCell.colSpan = 2;
+      renderResultTable(nestedCell, value);
+      nestedRow.appendChild(nestedCell);
+      table.appendChild(nestedRow);
     } else {
+      const row = document.createElement('tr');
+      const keyCell = document.createElement('td');
+      keyCell.className = 'result-key';
+      keyCell.textContent = key;
+      const valCell = document.createElement('td');
+      valCell.className = 'result-value';
       valCell.textContent = formatResultValue(value);
+      row.append(keyCell, valCell);
+      table.appendChild(row);
     }
-    row.append(keyCell, valCell);
-    table.appendChild(row);
   });
   container.appendChild(table);
 }
