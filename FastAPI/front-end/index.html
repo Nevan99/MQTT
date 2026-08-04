@@ -94,15 +94,40 @@
   td.result-nested-label { padding-top: 0.5rem; font-weight: 600; }
   td.result-nested { padding: 0 0 0.4rem 0.75rem; }
   .hint { color: #777; font-size: 0.75rem; margin-top: 0.5rem; }
+
+  #loginOverlay { position: fixed; inset: 0; background: #111; display: none; align-items: center; justify-content: center; z-index: 100; }
+  #loginOverlay.active { display: flex; }
+  #appRoot.auth-hidden { display: none; }
+  .login-box { width: 280px; background: #1a1a1a; border: 1px solid #333; border-radius: 8px; padding: 1.5rem; }
+  .login-box h2 { margin: 0 0 1rem; font-size: 1.1rem; }
+  .login-error { color: #f66; font-size: 0.8rem; min-height: 1.2em; margin-top: 0.5rem; }
+  #logoutBtn { margin-left: auto; }
 </style>
 </head>
 <body>
+<div id="loginOverlay">
+  <div class="login-box">
+    <h2>Pi Fleet Controller</h2>
+    <form id="loginForm">
+      <label>Username</label>
+      <input id="loginUsername" class="field" type="text" autocomplete="username" required>
+      <label>Password</label>
+      <input id="loginPassword" class="field" type="password" autocomplete="current-password" required>
+      <div class="login-error" id="loginError"></div>
+      <div class="row" style="margin-top: 0.75rem;">
+        <button id="loginSubmit" type="submit">Log in</button>
+      </div>
+    </form>
+  </div>
+</div>
+<div id="appRoot" class="auth-hidden">
 <header>
   <h1>Pi Fleet Controller</h1>
   <nav>
     <button class="tab active" data-view="fleet">Fleet</button>
     <button class="tab" data-view="captures">Captures</button>
   </nav>
+  <button id="logoutBtn" type="button">Log out</button>
 </header>
 
 <section id="fleet" class="view active">
@@ -162,9 +187,107 @@
     </table>
   </div>
 </section>
+</div>
 
 <script>
 const API = '';
+
+// --- Auth ------------------------------------------------------------------
+
+const AUTH_TOKEN_KEY = 'pi_fleet_token';
+let authToken = localStorage.getItem(AUTH_TOKEN_KEY);
+
+function setAuthToken(token) {
+  authToken = token;
+  if (token) localStorage.setItem(AUTH_TOKEN_KEY, token);
+  else localStorage.removeItem(AUTH_TOKEN_KEY);
+}
+
+// A plain-navigation link (capture download) or a WebSocket URL can't carry
+// an Authorization header, so the backend also accepts the token as a query
+// param for exactly those two cases - this appends it.
+function withToken(url) {
+  if (!authToken) return url;
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}token=${encodeURIComponent(authToken)}`;
+}
+
+function showLoginScreen(message) {
+  document.getElementById('loginOverlay').classList.add('active');
+  document.getElementById('appRoot').classList.add('auth-hidden');
+  document.getElementById('loginError').textContent = message || '';
+}
+
+function hideLoginScreen() {
+  document.getElementById('loginOverlay').classList.remove('active');
+  document.getElementById('appRoot').classList.remove('auth-hidden');
+}
+
+// Every API call in this app goes through here instead of calling fetch()
+// directly, so the bearer token and 401 handling (session expired/invalid -
+// drop the token and force a fresh login) are applied uniformly in one place.
+async function apiFetch(url, options = {}) {
+  const headers = new Headers(options.headers || {});
+  if (authToken) headers.set('Authorization', `Bearer ${authToken}`);
+  const res = await fetch(url, { ...options, headers });
+  if (res.status === 401) {
+    setAuthToken(null);
+    showLoginScreen('Session expired - please log in again.');
+    throw new Error('Not authenticated');
+  }
+  return res;
+}
+
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const username = document.getElementById('loginUsername').value;
+  const password = document.getElementById('loginPassword').value;
+  const errEl = document.getElementById('loginError');
+  const btn = document.getElementById('loginSubmit');
+  errEl.textContent = '';
+  btn.disabled = true;
+  try {
+    const res = await fetch(`${API}/auth/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ username, password }),
+    });
+    if (!res.ok) {
+      errEl.textContent = 'Incorrect username or password.';
+      return;
+    }
+    const data = await res.json();
+    setAuthToken(data.access_token);
+    document.getElementById('loginPassword').value = '';
+    hideLoginScreen();
+    // The initial data loads below already ran once (and failed with 401
+    // before login) - re-trigger them now instead of waiting up to 5s for
+    // the next refreshPis() poll to happen to succeed.
+    refreshPis();
+    loadCaptures();
+    loadCommandHistory();
+  } catch {
+    errEl.textContent = 'Could not reach the server.';
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('logoutBtn').addEventListener('click', () => {
+  setAuthToken(null);
+  showLoginScreen();
+});
+
+// appRoot starts hidden (class="auth-hidden" in the markup) so it's never
+// visible for even a flash before we know whether there's a token. If one
+// exists from a previous session, reveal the app optimistically - if it's
+// actually expired/invalid, the first API call's 401 (via apiFetch) will
+// send the user back to the login screen anyway.
+if (authToken) {
+  hideLoginScreen();
+} else {
+  showLoginScreen();
+}
 const tabs = document.querySelectorAll('nav .tab');
 const views = document.querySelectorAll('.view');
 tabs.forEach(btn => btn.addEventListener('click', () => {
@@ -285,7 +408,7 @@ const CATEGORY_PANEL = { logs: 'logPanel', tcpdump: 'tcpdumpPanel' };
 function connectPiLog(piId, entry) {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   // Server-side filtered: the backend only forwards messages for this device_id.
-  const ws = new WebSocket(`${proto}://${location.host}/ws/live/${encodeURIComponent(piId)}`);
+  const ws = new WebSocket(withToken(`${proto}://${location.host}/ws/live/${encodeURIComponent(piId)}`));
 
   ws.onmessage = (event) => {
     let msg;
@@ -333,7 +456,7 @@ function anyExpanded(entry) {
 // instead of rendering into the command-builder feed.
 async function awaitCommandResult(commandId, maxAttempts = 30) {
   for (let i = 0; i < maxAttempts; i++) {
-    const res = await fetch(`${API}/commands/${commandId}`);
+    const res = await apiFetch(`${API}/commands/${commandId}`);
     if (res.ok) {
       const data = await res.json();
       if (data.status === 'complete') return data.result;
@@ -381,7 +504,7 @@ async function toggleCapture(piId, spec, entry, btn) {
       alert('No logs arrived during that capture window.');
       return;
     }
-    const res = await fetch(`${API}/captures`, {
+    const res = await apiFetch(`${API}/captures`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pi_id: piId, category: spec.kind, name: active.name, lines: active.lines }),
@@ -465,7 +588,7 @@ async function togglePcapCapture(piId, entry, btn) {
 async function clearPanel(piId, spec, panel) {
   if (!confirm(`Clear ${spec.label} for ${piId}? This removes the saved history too.`)) return;
   try {
-    await fetch(`${API}/pis/${encodeURIComponent(piId)}/logs?category=${encodeURIComponent(spec.kind)}`, {
+    await apiFetch(`${API}/pis/${encodeURIComponent(piId)}/logs?category=${encodeURIComponent(spec.kind)}`, {
       method: 'DELETE',
     });
   } catch {
@@ -478,7 +601,7 @@ const STREAM_START_ACTION = { logs: 'stream_logs', tcpdump: 'tcpdump' };
 const STREAM_STOP_ACTION = { logs: 'stop_logs', tcpdump: 'stop_tcpdump' };
 
 function postCmd(piId, action, params) {
-  return fetch(`${API}/pis/${encodeURIComponent(piId)}/cmd`, {
+  return apiFetch(`${API}/pis/${encodeURIComponent(piId)}/cmd`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action, params }),
@@ -600,7 +723,7 @@ function createPiRow(piId) {
   primaryIfaceSelect.addEventListener('change', async () => {
     primaryIfaceSelect.disabled = true;
     try {
-      const res = await fetch(`${API}/pis/${encodeURIComponent(piId)}/primary-interface`, {
+      const res = await apiFetch(`${API}/pis/${encodeURIComponent(piId)}/primary-interface`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ primary_interface: primaryIfaceSelect.value || null }),
@@ -756,7 +879,7 @@ function renderPis() {
 
 async function refreshPis() {
   try {
-    const res = await fetch(`${API}/pis`);
+    const res = await apiFetch(`${API}/pis`);
     if (!res.ok) return;
     pis = await res.json();
     renderPis();
@@ -774,7 +897,7 @@ const capturesTableBody = document.getElementById('capturesTableBody');
 
 async function loadCaptures() {
   try {
-    const res = await fetch(`${API}/captures`);
+    const res = await apiFetch(`${API}/captures`);
     if (!res.ok) return;
     const captures = await res.json();
     capturesTableBody.innerHTML = captures.map(c => `
@@ -785,7 +908,7 @@ async function loadCaptures() {
         <td>${c.category === 'pcap' ? '—' : c.line_count}</td>
         <td>${new Date(c.created_at).toLocaleString()}</td>
         <td class="capture-actions">
-          <a href="${API}/captures/${c.id}/download" class="icon-btn" title="Download">&#8681;</a>
+          <a href="${withToken(`${API}/captures/${c.id}/download`)}" class="icon-btn" title="Download">&#8681;</a>
           <button class="icon-btn capture-delete" data-capture-id="${c.id}" title="Delete">&#128465;</button>
         </td>
       </tr>
@@ -795,7 +918,7 @@ async function loadCaptures() {
       btn.addEventListener('click', async () => {
         btn.disabled = true;
         try {
-          const res = await fetch(`${API}/captures/${btn.dataset.captureId}`, { method: 'DELETE', keepalive: true });
+          const res = await apiFetch(`${API}/captures/${btn.dataset.captureId}`, { method: 'DELETE', keepalive: true });
           if (!res.ok && res.status !== 404) {
             alert('Failed to delete capture on the server; it may reappear on reload.');
             btn.disabled = false;
@@ -931,7 +1054,7 @@ function addCommandEntry(commandId, piId, action, restored) {
       // keepalive so the request still lands even if the page reloads/closes
       // right after the click - otherwise a quick reload can beat the DELETE
       // to the server and the "deleted" command reappears on next load.
-      const res = await fetch(`${API}/commands/${commandId}`, { method: 'DELETE', keepalive: true });
+      const res = await apiFetch(`${API}/commands/${commandId}`, { method: 'DELETE', keepalive: true });
       if (!res.ok && res.status !== 404) {
         alert('Failed to delete command on the server; it may reappear on reload.');
         return;
@@ -956,7 +1079,7 @@ function addCommandEntry(commandId, piId, action, restored) {
 
 async function loadCommandHistory() {
   try {
-    const res = await fetch(`${API}/commands?limit=50`);
+    const res = await apiFetch(`${API}/commands?limit=50`);
     if (!res.ok) return;
     const commands = await res.json();
     // Server returns newest-first; add oldest-to-newest so repeated
@@ -1086,7 +1209,7 @@ async function pollCommand(commandId, entry, piId, action) {
   const resultEl = entry.querySelector('.result');
   for (let i = 0; i < 30; i++) {
     try {
-      const res = await fetch(`${API}/commands/${commandId}`);
+      const res = await apiFetch(`${API}/commands/${commandId}`);
       if (res.ok) {
         const data = await res.json();
         statusEl.textContent = data.status;
@@ -1105,7 +1228,7 @@ async function pollCommand(commandId, entry, piId, action) {
 }
 
 async function sendOneCommand(url, action, params) {
-  const res = await fetch(url, {
+  const res = await apiFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action, params }),

@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from database.database import init_db
 from service.mqtt_service import mqtt_service
 from service import capture_socket_server
-from routers import Pis, Commands, Ws, Captures
+from routers import Pis, Commands, Ws, Captures, Auth
 
 
 @asynccontextmanager
@@ -25,6 +25,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Pi Fleet Controller", lifespan=lifespan)
 
+app.include_router(Auth.router)
 app.include_router(Pis.router)
 app.include_router(Commands.router)
 app.include_router(Ws.router)

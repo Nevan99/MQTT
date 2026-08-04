@@ -8,8 +8,9 @@ from sqlmodel import Session, select
 from database.database import get_session
 from database.models import Pi, LogEntry
 from schemas.schemas import PiOut, LogEntryOut, PrimaryInterfaceRequest
+from service.auth import get_current_user
 
-router = APIRouter(prefix="/pis", tags=["pis"])
+router = APIRouter(prefix="/pis", tags=["pis"], dependencies=[Depends(get_current_user)])
 
 
 def _to_out(p: Pi) -> PiOut:

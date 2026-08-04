@@ -8,8 +8,9 @@ from database.database import get_session
 from database.models import Command, Pi
 from schemas.schemas import CommandRequest, CommandOut
 from service.mqtt_service import mqtt_service
+from service.auth import get_current_user
 
-router = APIRouter(tags=["commands"])
+router = APIRouter(tags=["commands"], dependencies=[Depends(get_current_user)])
 
 
 def _dispatch(pi_id: str, req: CommandRequest, session: Session) -> CommandOut:

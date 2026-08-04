@@ -1,6 +1,7 @@
 import re
 import uuid
 from pathlib import Path
+import json
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
@@ -9,8 +10,9 @@ from sqlmodel import Session, select
 from database.database import get_session
 from database.models import Capture
 from schemas.schemas import CaptureRequest, CaptureOut
+from service.auth import get_current_user
 
-router = APIRouter(prefix="/captures", tags=["captures"])
+router = APIRouter(prefix="/captures", tags=["captures"], dependencies=[Depends(get_current_user)])
 
 CAPTURES_DIR = Path(__file__).resolve().parent.parent / "captures_data"
 CAPTURES_DIR.mkdir(exist_ok=True)
@@ -19,7 +21,6 @@ CAPTURES_DIR.mkdir(exist_ok=True)
 def _line_to_text(line) -> str:
     if isinstance(line, str):
         return line
-    import json
     return json.dumps(line)
 
 
