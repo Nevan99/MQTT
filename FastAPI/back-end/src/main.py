@@ -17,7 +17,7 @@ async def lifespan(app: FastAPI):
     init_db()
     loop = asyncio.get_running_loop()
     mqtt_service.start(loop)
-    capture_socket_server.start()
+    capture_socket_server.start(loop)
     yield
     capture_socket_server.stop()
     mqtt_service.stop()

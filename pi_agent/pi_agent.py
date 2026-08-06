@@ -4,6 +4,7 @@ import socket
 import subprocess
 import threading
 import time
+import zlib
 from datetime import datetime, timezone
 import paho.mqtt.client as mqtt
 import re
@@ -23,8 +24,6 @@ CAPTURE_SOCKET_PORT = int(os.environ["CAPTURE_SOCKET_PORT"])
 
 
 class PiAgent:
-    TCPDUMP_LINE_RE = re.compile(r'^(?P<timestamp>\d{2}:\d{2}:\d{2}\.\d+)\s+(?P<message>.*)$')
-
     def __init__(self, broker_host=BROKER_HOST, broker_port=BROKER_PORT, pi_id=PI_ID, role=ROLE,
                  capture_socket_host=CAPTURE_SOCKET_HOST, capture_socket_port=CAPTURE_SOCKET_PORT):
         self.broker_host = broker_host
@@ -38,9 +37,15 @@ class PiAgent:
         self.cmd_topic_all = 'test/all/cmd'
         self.result_topic = f'test/{pi_id}/result'
         self.status_topic = f'test/{pi_id}/status'
-        self.mqtt_log_topic = f'devices/{pi_id}/logs/'
         self.registration_topic = f'devices/{pi_id}/registration'
 
+        self._pcap_procs = {}
+        self._pcap_state = {}
+        self._pcap_lock = threading.Lock()
+
+        # Live view only (see start_tcpdump_stream/start_syslog_stream) -
+        # separate processes/sockets from the pcap recording above, so a
+        # view and a recording can run concurrently on the same interface.
         self._streaming_started = False
         self._streaming_lock = threading.Lock()
         self._syslog_proc = None
@@ -49,10 +54,6 @@ class PiAgent:
         self._tcpdump_running = set()
         self._tcpdump_procs = {}
         self._tcpdump_lock = threading.Lock()
-
-        self._pcap_procs = {}
-        self._pcap_state = {}
-        self._pcap_lock = threading.Lock()
 
         # The broker (mosquitto 1.6.9) only speaks MQTT 3.1.1 - v5 broker
         # support wasn't added until mosquitto 2.0. Connecting as v5 anyway
@@ -83,129 +84,6 @@ class PiAgent:
         ).stdout
         return out.splitlines()
 
-    def stream_syslog(self, interface=None):
-        """Follow the journal forever, publishing each new line as it appears.
-        If interface is given, journalctl itself filters to lines mentioning it."""
-        cmd = ["journalctl", "-u", "NetworkManager", "-n", "50", "-f"]
-        if interface:
-            cmd += ["-g", interface]
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
-        with self._streaming_lock:
-            self._syslog_proc = proc
-        try:
-            for line in proc.stdout:
-                self.client.publish(self.mqtt_log_topic, line.rstrip("\n"), qos=1)
-        finally:
-            # journalctl -f should never exit on its own, but if it does
-            # (crash, killed externally, or superseded by a switch to a
-            # different interface), only clear the flag if we're still the
-            # current stream - otherwise this old thread's cleanup would
-            # clobber the state of whatever stream replaced it.
-            with self._streaming_lock:
-                if self._syslog_proc is proc:
-                    self._streaming_started = False
-                    self._syslog_proc = None
-                    self._syslog_interface = None
-
-    def start_syslog_stream(self, interface=None):
-        """Start the syslog streaming thread for the given interface filter.
-
-        No-op if already streaming that exact interface. If a stream for a
-        *different* interface is running, it's stopped and replaced - previously
-        this was a blanket no-op whenever any stream was active, so switching
-        from wlan1 to wlan0 silently kept the old wlan1-filtered stream running.
-        """
-        old_proc = None
-        with self._streaming_lock:
-            if self._streaming_started and self._syslog_interface == interface:
-                return False
-            if self._streaming_started:
-                old_proc = self._syslog_proc
-            self._streaming_started = True
-            self._syslog_interface = interface
-        if old_proc:
-            old_proc.terminate()
-        threading.Thread(target=self.stream_syslog, args=(interface,), daemon=True).start()
-        return True
-
-    def stop_syslog_stream(self):
-        """Stop the syslog streaming thread, if running."""
-        with self._streaming_lock:
-            if not self._streaming_started:
-                return False
-            self._streaming_started = False
-            self._syslog_interface = None
-            proc = self._syslog_proc
-            self._syslog_proc = None
-        if proc:
-            proc.terminate()
-        return True
-
-    def parse_tcpdump_line(self, line, interface):
-        """Parse one tcpdump output line into a structured record."""
-        m = self.TCPDUMP_LINE_RE.match(line)
-        return {
-            "timestamp": m.group("timestamp") if m else None,
-            "loglevel": "packet" if m else "error",
-            "message": m.group("message") if m else line,
-            "device_id": self.pi_id,
-            "interface": interface,
-        }
-
-    def stream_tcpdump(self, interface, proc):
-        topic = f'devices/{self.pi_id}/tcpdump/{interface}'
-        batch = []
-        last_flush = time.monotonic()
-
-        def flush():
-            nonlocal batch, last_flush
-            if batch:
-                self.client.publish(topic, json.dumps(batch), qos=1)
-                batch = []
-            last_flush = time.monotonic()
-
-        try:
-            for line in proc.stdout:
-                line = line.strip()
-                if not line:
-                    continue
-                batch.append(self.parse_tcpdump_line(line, interface))
-                if len(batch) >= 50 or time.monotonic() - last_flush >= 0.2:
-                    flush()
-            flush()
-        finally:
-            # If tcpdump dies unexpectedly, clear the flag so a future
-            # start_tcpdump_stream() call for this interface isn't a
-            # permanent no-op.
-            with self._tcpdump_lock:
-                self._tcpdump_running.discard(interface)
-                self._tcpdump_procs.pop(interface, None)
-
-    def start_tcpdump_stream(self, interface):
-        """Start the tcpdump streaming thread for one interface once, no-op if already running."""
-        with self._tcpdump_lock:
-            if interface in self._tcpdump_running:
-                return False
-            proc = subprocess.Popen(
-                ["tcpdump", "-i", interface, "-l", "-n", "-q"],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-            )
-            self._tcpdump_running.add(interface)
-            self._tcpdump_procs[interface] = proc
-        threading.Thread(target=self.stream_tcpdump, args=(interface, proc), daemon=True).start()
-        return True
-
-    def stop_tcpdump_stream(self, interface):
-        """Stop the tcpdump streaming thread for one interface, if running."""
-        with self._tcpdump_lock:
-            if interface not in self._tcpdump_running:
-                return False
-            self._tcpdump_running.discard(interface)
-            proc = self._tcpdump_procs.pop(interface, None)
-        if proc:
-            proc.terminate()
-        return True
-
     def start_pcap_capture(self, interface, name=None):
         """Start a pcap capture for one interface, piped live to the backend's
         capture socket server as tcpdump produces it - independent of the
@@ -233,7 +111,9 @@ class PiAgent:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.connect((self.capture_socket_host, self.capture_socket_port))
             capture_name = name or f"{self.pi_id}-pcap-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}"
-            sock.sendall((json.dumps({"pi_id": self.pi_id, "name": capture_name}) + "\n").encode())
+            sock.sendall((json.dumps({
+                "kind": "record", "pi_id": self.pi_id, "name": capture_name, "interface": interface,
+            }) + "\n").encode())
 
             state = {"error": None, "capture_id": None, "byte_count": 0, "done": threading.Event()}
             thread = threading.Thread(target=self._relay_pcap, args=(proc, sock, state), daemon=True)
@@ -289,10 +169,6 @@ class PiAgent:
             proc.kill()
             proc.wait(timeout=5)
 
-        # tcpdump exiting closes its stdout, which is what makes the relay
-        # thread's read() return EOF, finish sending, and get the backend's
-        # ack - by now there's only a small tail left to flush, not a whole
-        # capture's worth of bytes, so this should resolve quickly.
         if not state["done"].wait(timeout=15):
             return {"error": "timed out waiting for the capture upload to finish", "interface": interface}
 
@@ -306,6 +182,131 @@ class PiAgent:
             "saved": True,
         }
 
+    def _stream_tcpdump_socket(self, interface, proc, state):
+        """Pump this view-only tcpdump process's stdout to the backend over
+        a socket connection tagged kind=stream_tcpdump - decoded to text and
+        relayed live by the backend, never written to a capture file (that's
+        start_pcap_capture's job, a wholly separate tcpdump process)."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            sock.connect((self.capture_socket_host, self.capture_socket_port))
+            sock.sendall((json.dumps({
+                "kind": "stream_tcpdump", "pi_id": self.pi_id, "interface": interface,
+            }) + "\n").encode())
+            while True:
+                chunk = proc.stdout.read(65536)
+                if not chunk:
+                    break
+                sock.sendall(chunk)
+        except Exception as e:
+            state["error"] = str(e)
+        finally:
+            try:
+                sock.close()
+            except OSError:
+                pass
+            with self._tcpdump_lock:
+                self._tcpdump_running.discard(interface)
+                self._tcpdump_procs.pop(interface, None)
+
+    def start_tcpdump_stream(self, interface):
+        """Start a live decoded-tcpdump view for one interface, no-op if
+        already running. Independent of start_pcap_capture - both can run
+        on the same interface at once, one for viewing, one for saving."""
+        with self._tcpdump_lock:
+            if interface in self._tcpdump_running:
+                return False
+            proc = subprocess.Popen(
+                ["tcpdump", "-i", interface, "-w", "-", "-U"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            time.sleep(0.3)
+            if proc.poll() is not None:
+                output = proc.stderr.read().decode(errors="replace").strip() if proc.stderr else ""
+                raise RuntimeError(output or f"tcpdump exited immediately (code {proc.returncode})")
+            state = {"error": None}
+            self._tcpdump_running.add(interface)
+            self._tcpdump_procs[interface] = proc
+        threading.Thread(target=self._stream_tcpdump_socket, args=(interface, proc, state), daemon=True).start()
+        return True
+
+    def stop_tcpdump_stream(self, interface):
+        """Stop the tcpdump view for one interface, if running."""
+        with self._tcpdump_lock:
+            if interface not in self._tcpdump_running:
+                return False
+            self._tcpdump_running.discard(interface)
+            proc = self._tcpdump_procs.pop(interface, None)
+        if proc:
+            proc.terminate()
+        return True
+
+    def _stream_syslog_socket(self, interface, proc):
+        """Pump journalctl -f's output to the backend over a socket
+        connection tagged kind=stream_syslog - relayed live as text lines,
+        never persisted (same "view only" contract as stream_tcpdump)."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            sock.connect((self.capture_socket_host, self.capture_socket_port))
+            sock.sendall((json.dumps({
+                "kind": "stream_syslog", "pi_id": self.pi_id, "interface": interface,
+            }) + "\n").encode())
+            for line in proc.stdout:
+                sock.sendall((line.rstrip("\n") + "\n").encode())
+        except Exception:
+            pass
+        finally:
+            try:
+                sock.close()
+            except OSError:
+                pass
+            with self._streaming_lock:
+                if self._syslog_proc is proc:
+                    self._streaming_started = False
+                    self._syslog_proc = None
+                    self._syslog_interface = None
+
+    def start_syslog_stream(self, interface=None):
+        """Start the syslog streaming thread for the given interface filter.
+
+        No-op if already streaming that exact interface. If a stream for a
+        *different* interface is running, it's stopped and replaced - only
+        one syslog stream runs per Pi at a time.
+        """
+        cmd = ["journalctl", "-u", "NetworkManager", "-n", "50", "-f"]
+        if interface:
+            cmd += ["-g", interface]
+
+        old_proc = None
+        with self._streaming_lock:
+            if self._streaming_started and self._syslog_interface == interface:
+                return False
+            if self._streaming_started:
+                old_proc = self._syslog_proc
+            self._streaming_started = True
+            self._syslog_interface = interface
+        if old_proc:
+            old_proc.terminate()
+
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
+        with self._streaming_lock:
+            self._syslog_proc = proc
+        threading.Thread(target=self._stream_syslog_socket, args=(interface, proc), daemon=True).start()
+        return True
+
+    def stop_syslog_stream(self):
+        """Stop the syslog streaming thread, if running."""
+        with self._streaming_lock:
+            if not self._streaming_started:
+                return False
+            self._streaming_started = False
+            self._syslog_interface = None
+            proc = self._syslog_proc
+            self._syslog_proc = None
+        if proc:
+            proc.terminate()
+        return True
+
     def get_signal_stats(self):
         """Pull RSSI / link stats for connected stations (Pi acting as AP)."""
         out = subprocess.run(
@@ -313,6 +314,41 @@ class PiAgent:
             capture_output=True, text=True,
         ).stdout
         return out.strip()
+
+    def get_link_info(self, interface):
+        """Current association info for an interface (Pi acting as a station):
+        connected BSSID, SSID, signal strength, bitrates, etc."""
+        if not interface:
+            return {"error": "interface is required"}
+
+        out = subprocess.run(
+            ["iw", "dev", interface, "link"], capture_output=True, text=True,
+        ).stdout
+
+        if out.startswith("Not connected"):
+            return {"interface": interface, "connected": False}
+
+        m = re.match(r'Connected to ([0-9a-fA-F:]+)', out)
+        bssid = m.group(1) if m else None
+
+        ssid_m = re.search(r'SSID:\s*(.+)', out)
+        freq_m = re.search(r'freq:\s*(\d+)', out)
+        signal_m = re.search(r'signal:\s*(-?\d+)\s*dBm', out)
+        rx_bitrate_m = re.search(r'rx bitrate:\s*([\d.]+)\s*MBit/s', out)
+        tx_bitrate_m = re.search(r'tx bitrate:\s*([\d.]+)\s*MBit/s', out)
+
+        return {
+            "interface": interface,
+            "connected": True,
+            "bssid": bssid,
+            "ssid": ssid_m.group(1).strip() if ssid_m else None,
+            "frequency_mhz": int(freq_m.group(1)) if freq_m else None,
+            "band": self._band_label(int(freq_m.group(1))) if freq_m else None,
+            "signal_dbm": int(signal_m.group(1)) if signal_m else None,
+            "rx_bitrate_mbps": float(rx_bitrate_m.group(1)) if rx_bitrate_m else None,
+            "tx_bitrate_mbps": float(tx_bitrate_m.group(1)) if tx_bitrate_m else None,
+            "raw_output": out.strip(),
+        }
 
     @staticmethod
     def _band_label(freq_mhz):
@@ -389,9 +425,15 @@ class PiAgent:
     def ping_internet(self, interface=None, target=None, count=5):
         target = target or "8.8.8.8"
         count = int(count) if count else 5
-        cmd = ["ping", target, "-c", str(count)]
+
         if interface:
-            cmd += ["-I", f"{interface}"]
+            subprocess.run(["ip", "neigh", "flush", "dev", interface],
+                            capture_output=True, text=True, timeout=10)
+
+        cmd = ["ping", target]
+        if interface:
+            cmd += ["-I", interface]
+        cmd += ["-c", str(count)]
         ret = subprocess.run(cmd, capture_output=True, text=True, timeout=count * 2 + 5)
 
         stats_match = re.search(
@@ -421,6 +463,51 @@ class PiAgent:
         if not stats_match:
             result["raw_output"] = ret.stdout.strip() or ret.stderr.strip()
         return result
+
+    @staticmethod
+    def _routing_table_for(interface):
+        """Deterministic, stable per-interface routing table id (100-1099),
+        so repeated connects on the same interface always reuse the same
+        table instead of leaking a new rule/table every time."""
+        return 100 + (zlib.crc32(interface.encode()) % 1000)
+
+    def _apply_policy_routing(self, con_name, interface, ip_address):
+        """Give this interface its own routing table plus a source-based ip
+        rule, so traffic sourced from (or explicitly bound to, e.g.
+        `ping -I <interface>`) this interface always routes via its own
+        gateway. Without this, multiple wifi interfaces associated to APs on
+        the same subnet can end up sharing one default route, so a packet
+        forced out one NIC gets addressed to a *different* interface's
+        gateway MAC - the AP silently drops it, and `ping -I <iface>` fails
+        intermittently with 100% loss even though the interface is fine.
+        Confirmed as the fix by manually reproducing and resolving this on
+        pi01. Best-effort: failure here doesn't fail the connect itself."""
+        if not ip_address:
+            return {"applied": False, "reason": "no IP address yet"}
+
+        table = self._routing_table_for(interface)
+        modify_ret = subprocess.run(
+            [
+                "nmcli", "connection", "modify", con_name,
+                "ipv4.route-table", str(table),
+                "ipv4.routing-rules", f"priority {table} from {ip_address} table {table}",
+            ],
+            capture_output=True, text=True, timeout=15,
+        )
+        if modify_ret.returncode != 0:
+            return {"applied": False, "reason": (modify_ret.stdout or modify_ret.stderr).strip()}
+
+        # routing-rules only takes effect on (re)activation, not just from
+        # `connection modify` - this briefly cycles the interface's link.
+        up_ret = subprocess.run(
+            ["nmcli", "connection", "up", con_name],
+            capture_output=True, text=True, timeout=30,
+        )
+        return {
+            "applied": up_ret.returncode == 0,
+            "table": table,
+            "reason": None if up_ret.returncode == 0 else (up_ret.stdout or up_ret.stderr).strip(),
+        }
 
     def connect_wifi(self, ssid, password=None, interface=None, bssid=None, channel=None):
         """Connect to a wifi hotspot via NetworkManager, using a connection
@@ -481,13 +568,15 @@ class PiAgent:
             capture_output=True, text=True, timeout=30,
         )
         connected = up_ret.returncode == 0
+        ip_address = self.get_interface_ip(interface) if connected else None
         return {
             "ssid": ssid,
             "interface": interface,
             "channel": channel,
             "connected": connected,
-            "ip_address": self.get_interface_ip(interface) if connected else None,
+            "ip_address": ip_address,
             "output": (up_ret.stdout or up_ret.stderr).strip(),
+            "policy_routing": None,
         }
 
     def _connect_wifi_by_bssid(self, bssid, password=None, interface=None):
@@ -506,8 +595,6 @@ class PiAgent:
         subprocess.run(["nmcli", "connection", "delete", con_name],
                         capture_output=True, text=True)
 
-        # A stale scan cache can hide the target AP even though it's in
-        # range, causing a spurious "No network with BSSID ... found".
         subprocess.run(["nmcli", "device", "wifi", "rescan", "ifname", interface],
                         capture_output=True, text=True, timeout=15)
         time.sleep(2)
@@ -520,12 +607,14 @@ class PiAgent:
             connect_cmd += ["password", password]
         ret = subprocess.run(connect_cmd, capture_output=True, text=True, timeout=30)
         connected = ret.returncode == 0
+        ip_address = self.get_interface_ip(interface) if connected else None
         return {
             "bssid": bssid,
             "interface": interface,
             "connected": connected,
-            "ip_address": self.get_interface_ip(interface) if connected else None,
+            "ip_address": ip_address,
             "output": (ret.stdout or ret.stderr).strip(),
+            "policy_routing": None,
         }
 
     def disconnect_wifi(self, interface=None):
@@ -541,6 +630,47 @@ class PiAgent:
             "disconnected": ret.returncode == 0,
             "output": (ret.stdout or ret.stderr).strip(),
         }
+
+    def get_wifi_scan(self, interface):
+        """Scan for nearby wifi APs via nmcli (Pi acting as a station).
+
+        Uses nmcli's terse (-t) mode, which escapes literal colons inside a
+        field (e.g. the BSSID) as "\\:" - split on unescaped colons only,
+        then unescape, to avoid splitting a BSSID's own colons apart.
+        """
+        if not interface:
+            return {"error": "interface is required"}
+
+        fields = "SSID,BSSID,MODE,CHAN,FREQ,RATE,SIGNAL,SECURITY"
+        ret = subprocess.run(
+            ["nmcli", "-t", "-f", fields, "dev", "wifi", "list", "ifname", interface, "--rescan", "yes"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if ret.returncode != 0:
+            return {"interface": interface, "error": (ret.stderr or ret.stdout).strip()}
+
+        networks = []
+        for line in ret.stdout.splitlines():
+            if not line.strip():
+                continue
+            parts = [p.replace("\\:", ":") for p in re.split(r'(?<!\\):', line)]
+            if len(parts) < 8:
+                continue
+            ssid, bssid, mode, chan, freq, rate, signal, security = parts[:8]
+            freq_m = re.match(r'(\d+)', freq)
+            freq_mhz = int(freq_m.group(1)) if freq_m else None
+            networks.append({
+                "ssid": ssid or None,
+                "bssid": bssid or None,
+                "mode": mode or None,
+                "channel": int(chan) if chan.isdigit() else None,
+                "frequency_mhz": freq_mhz,
+                "band": self._band_label(freq_mhz) if freq_mhz else None,
+                "rate": rate or None,
+                "signal_percent": int(signal) if signal.isdigit() else None,
+                "security": security or None,
+            })
+        return {"interface": interface, "networks": networks}
 
     def restart_hostapd(self, channel=None):
         if channel:
@@ -571,6 +701,8 @@ class PiAgent:
                 result = {"stations": self.get_signal_stats()}
             elif action == "band_channel_info":
                 result = self.get_band_channel_info(payload.get("interface"))
+            elif action == "link_info":
+                result = self.get_link_info(payload.get("interface"))
             elif action == "set_channel":
                 result = self.restart_hostapd(channel=payload.get("channel"))
             elif action == "connect_wifi":
@@ -583,11 +715,11 @@ class PiAgent:
                 )
             elif action == "disconnect_wifi":
                 result = self.disconnect_wifi(payload.get("interface"))
+            elif action == "scan_wifi":
+                result = self.get_wifi_scan(payload.get("interface"))
             elif action == "list_interfaces":
                 self.publish_registration()
-                result = {"interfaces": self.get_network_interfaces()}
-            elif action == "list_interface_ips":
-                result = {"interfaces": self.get_interface_ips()}
+                result = {"interfaces": self.get_interface_details()}
             elif action == "ping":
                 result = self.ping_internet(
                     payload.get("interface"), payload.get("target"), payload.get("count"),
@@ -600,24 +732,14 @@ class PiAgent:
                     result = {"error": "interface is required"}
                 else:
                     started = self.start_syslog_stream(interface)
-                    result = {
-                        "streaming": True,
-                        "already_running": not started,
-                        "topic": self.mqtt_log_topic,
-                        "interface": interface,
-                    }
+                    result = {"streaming": True, "already_running": not started, "interface": interface}
             elif action == "tcpdump":
                 interface = payload.get("interface")
                 if not interface:
                     result = {"error": "interface is required"}
                 else:
                     started = self.start_tcpdump_stream(interface)
-                    result = {
-                        "streaming": True,
-                        "already_running": not started,
-                        "interface": interface,
-                        "topic": f'devices/{self.pi_id}/tcpdump/{interface}',
-                    }
+                    result = {"streaming": True, "already_running": not started, "interface": interface}
             elif action == "stop_logs":
                 stopped = self.stop_syslog_stream()
                 result = {"streaming": False, "stopped": stopped}
@@ -679,6 +801,39 @@ class PiAgent:
                 interfaces.append(m.group(1))
         return interfaces
 
+    def get_interface_details(self):
+        """Per-interface details (excluding loopback): MAC, link state, MTU,
+        and type (wifi/ethernet/other) - richer than get_network_interfaces's
+        plain name list, for the list_interfaces UI table."""
+        out = subprocess.run(
+            ["ip", "-o", "link", "show"],
+            capture_output=True, text=True,
+        ).stdout
+        details = []
+        for line in out.splitlines():
+            head = re.match(r'^\d+:\s+([^:@]+)(?:@\S+)?:\s+<(\S*)>', line)
+            if not head:
+                continue
+            name = head.group(1)
+            if name == "lo":
+                continue
+            flags = head.group(2).split(",") if head.group(2) else []
+
+            state_m = re.search(r'\bstate (\S+)', line)
+            link_m = re.search(r'link/(\S+)\s+([0-9a-fA-F:]{17})?', line)
+            link_type = link_m.group(1) if link_m else None
+
+            details.append({
+                "name": name,
+                "mac_address": link_m.group(2) if link_m else None,
+                "state": state_m.group(1) if state_m else ("UP" if "UP" in flags else "DOWN"),
+                "flags": flags,
+                "type": "wifi" if name.startswith(("wl", "wlan")) else
+                        ("ethernet" if link_type == "ether" else link_type),
+                "ip_address": self.get_interface_ip(name),
+            })
+        return details
+
     def get_interface_ip(self, interface):
         """Best-effort IPv4 address currently assigned to a given interface."""
         if not interface:
@@ -689,13 +844,6 @@ class PiAgent:
         ).stdout
         m = re.search(r'inet (\d+\.\d+\.\d+\.\d+)', out)
         return m.group(1) if m else None
-
-    def get_interface_ips(self):
-        """Map of interface name -> IPv4 address for every non-loopback interface."""
-        return {
-            interface: self.get_interface_ip(interface)
-            for interface in self.get_network_interfaces()
-        }
 
     def get_ip_address(self):
         """Best-effort local IP: the address used to reach the broker."""

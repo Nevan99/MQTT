@@ -11,11 +11,11 @@ class PiOut(BaseModel):
     status: str
     last_seen: datetime
     metadata: dict = {}
-    primary_interface: Optional[str] = None
+    primary_interfaces: list[str] = []
 
 
 class PrimaryInterfaceRequest(BaseModel):
-    primary_interface: Optional[str] = None
+    primary_interfaces: list[str] = []
 
 
 class CommandRequest(BaseModel):

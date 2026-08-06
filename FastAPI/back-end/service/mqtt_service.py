@@ -23,6 +23,20 @@ MQTT_BROKER_PORT = int(os.environ["MQTT_BROKER_PORT"])
 # here needs to survive past the WebSocket relay.
 NO_LOG_CATEGORIES = {"tcpdump", "logs"}
 
+# link_info is polled constantly (wifi status icons, connected marks,
+# interface detail cards, wifi scan "connected" checks - all over the fleet
+# table and Pi detail page), far more often than a user-initiated action.
+# Persisting every one of those as a Command row would flood the command
+# history and the DB with rows nobody ever wants to see or keep - so these
+# are tracked purely in memory, correlated by command_id the same way, but
+# never written to the database or surfaced by GET /commands.
+TRANSIENT_ACTIONS = {"link_info"}
+
+# How long a transient command's result stays available for polling before
+# being pruned - comfortably longer than the ~1s poll interval the frontend
+# uses while awaiting a result.
+TRANSIENT_TTL_SECONDS = 30
+
 
 class MQTTService:
     def __init__(self):
@@ -40,6 +54,7 @@ class MQTTService:
         self.client.on_connect = self._on_connect
         self.client.on_message = self._on_message
         self.main_loop: asyncio.AbstractEventLoop | None = None
+        self._transient_commands: dict[str, dict] = {}
 
     # --- lifecycle -----------------------------------------------------
 
@@ -123,6 +138,12 @@ class MQTTService:
         command_id = payload.get("command_id")
         if not command_id:
             return
+        transient = self._transient_commands.get(command_id)
+        if transient is not None:
+            transient["status"] = "failed" if "error" in payload else "complete"
+            transient["result"] = payload
+            transient["completed_at"] = datetime.now(timezone.utc)
+            return
         command = session.get(Command, command_id)
         if command is None:
             return
@@ -130,6 +151,30 @@ class MQTTService:
         command.result_json = json.dumps(payload)
         command.completed_at = datetime.now(timezone.utc)
         session.add(command)
+
+    # --- transient (non-persisted) commands -----------------------------
+
+    def register_transient_command(self, command_id: str, pi_id: str, action: str) -> dict:
+        self._prune_transient_commands()
+        entry = {
+            "command_id": command_id, "pi_id": pi_id, "action": action,
+            "status": "pending", "result": None,
+            "created_at": datetime.now(timezone.utc), "completed_at": None,
+        }
+        self._transient_commands[command_id] = entry
+        return entry
+
+    def get_transient_command(self, command_id: str) -> dict | None:
+        return self._transient_commands.get(command_id)
+
+    def pop_transient_command(self, command_id: str) -> bool:
+        return self._transient_commands.pop(command_id, None) is not None
+
+    def _prune_transient_commands(self):
+        cutoff = datetime.now(timezone.utc).timestamp() - TRANSIENT_TTL_SECONDS
+        stale = [cid for cid, c in self._transient_commands.items() if c["created_at"].timestamp() < cutoff]
+        for cid in stale:
+            self._transient_commands.pop(cid, None)
 
     # --- publishing --------------------------------------------------------
 

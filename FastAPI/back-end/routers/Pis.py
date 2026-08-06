@@ -17,7 +17,7 @@ def _to_out(p: Pi) -> PiOut:
     return PiOut(
         pi_id=p.pi_id, ip_address=p.ip_address, role=p.role,
         status=p.status, last_seen=p.last_seen, metadata=p.metadata_dict,
-        primary_interface=p.primary_interface,
+        primary_interfaces=p.primary_interfaces,
     )
 
 
@@ -40,9 +40,11 @@ def set_primary_interface(pi_id: str, req: PrimaryInterfaceRequest, session: Ses
     pi = session.get(Pi, pi_id)
     if pi is None:
         raise HTTPException(status_code=404, detail="Pi not found")
-    if req.primary_interface and req.primary_interface not in pi.metadata_dict.get("interfaces", []):
-        raise HTTPException(status_code=400, detail="Not one of this Pi's known interfaces")
-    pi.primary_interface = req.primary_interface
+    known = pi.metadata_dict.get("interfaces", [])
+    unknown = [i for i in req.primary_interfaces if i not in known]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Not one of this Pi's known interfaces: {unknown}")
+    pi.primary_interfaces_json = json.dumps(req.primary_interfaces)
     session.add(pi)
     session.commit()
     session.refresh(pi)

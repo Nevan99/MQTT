@@ -5,6 +5,7 @@
 <title>Pi Fleet Controller</title>
 <style>
   * { box-sizing: border-box; }
+  html { color-scheme: dark; }
   html, body { height: 100%; }
   body { font-family: system-ui, sans-serif; margin: 0; background: #111; color: #eee; display: flex; flex-direction: column; }
   header { flex: 0 0 auto; display: flex; gap: 0.5rem; align-items: center; padding: 0.75rem 1rem; background: #1a1a1a; border-bottom: 1px solid #333; }
@@ -14,6 +15,31 @@
   nav button.tab.active { background: #2a2a2a; border-color: #444; }
   input, select { padding: 0.4rem 0.6rem; background: #222; border: 1px solid #444; color: #eee; border-radius: 4px; }
   input[type="checkbox"] { width: 1rem; height: 1rem; accent-color: #4a7; color-scheme: dark; }
+  .password-wrap { position: relative; }
+  .password-wrap input { width: 100%; padding-right: 2.2rem; }
+  .password-toggle {
+    position: absolute; right: 0.2rem; top: 50%; transform: translateY(-50%);
+    background: transparent; border: none; padding: 0.3rem; font-size: 0.95rem;
+    line-height: 1; cursor: pointer; color: #888;
+  }
+  .password-toggle:hover { color: #eee; background: transparent; }
+  .iface-dropdown { position: relative; }
+  .iface-dropdown-toggle {
+    width: 100%; text-align: left; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; display: block;
+  }
+  .iface-dropdown-panel {
+    position: absolute; top: 100%; left: 0; margin-top: 0.2rem; z-index: 20;
+    width: 100%; min-width: 160px; max-height: 180px; overflow-y: auto; box-sizing: border-box;
+    background: #222; border: 1px solid #444; border-radius: 4px; padding: 0.3rem;
+  }
+  .iface-dropdown-panel.hidden { display: none; }
+  .iface-dropdown-panel label.iface-row {
+    display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: #ddd;
+    padding: 0.2rem; cursor: pointer; white-space: nowrap; border-radius: 3px;
+  }
+  .iface-dropdown-panel label.iface-row:hover { background: #2a2a2a; }
+  .iface-dropdown-panel label.iface-row-all { font-weight: 600; border-bottom: 1px solid #444; margin-bottom: 0.25rem; padding-bottom: 0.35rem; }
   button { padding: 0.4rem 0.9rem; border: 1px solid #444; background: #2a2a2a; color: #eee; border-radius: 4px; cursor: pointer; }
   button:hover { background: #333; }
   button:disabled { opacity: 0.5; cursor: default; }
@@ -23,6 +49,52 @@
   .view { display: none; flex: 1 1 auto; min-height: 0; }
   #fleet.active { display: grid; }
   #captures.active { display: flex; flex-direction: column; }
+  #history.active { display: flex; flex-direction: column; }
+  .history-detail-row.hidden { display: none; }
+  .history-detail-row td { background: #141414; padding: 0.5rem 0.75rem; }
+  #piDetail.active { display: flex; flex-direction: column; gap: 1rem; }
+  .pi-id-link { color: #6cf; text-decoration: none; cursor: pointer; }
+  .pi-id-link:hover { text-decoration: underline; }
+  #piDetailGrid { display: grid; grid-template-columns: 280px 6px 1fr 6px 380px; gap: 1rem; flex: 1 1 auto; min-height: 0; }
+  #piDetailGrid.dragging { user-select: none; cursor: col-resize; }
+  #piDetailGrid .gutter { margin: 0 -0.5rem; }
+  #piDetailGrid .panel { display: flex; flex-direction: column; min-height: 0; }
+  .pd-info-row { display: flex; justify-content: space-between; gap: 0.5rem; padding: 0.3rem 0; border-bottom: 1px solid #222; font-size: 0.85rem; }
+  .pd-info-row .k { color: #888; }
+  .pd-info-row .v { color: #ddd; text-align: right; }
+  .pd-log-block { display: flex; flex-direction: column; min-height: 0; flex: 1 1 50%; }
+  .pd-log-block + .pd-log-block { margin-top: 0.75rem; border-top: 1px solid #262626; padding-top: 0.75rem; }
+  .pd-log-block .pi-log-panel { flex: 1 1 auto; min-height: 80px; max-height: none; }
+  .pd-results-panel { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; margin-top: 0.75rem; border: 1px solid #333; border-radius: 6px; overflow: hidden; }
+  .pd-results-heading { flex: 0 0 auto; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; color: #888; padding: 0.4rem 0.6rem; border-bottom: 1px solid #262626; background: #181818; }
+  .pd-results-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0.5rem; }
+  .pd-iface-card { border: 1px solid #333; border-radius: 6px; margin-bottom: 0.5rem; overflow: hidden; }
+  .pd-iface-card.hidden { display: none; }
+  .pd-iface-header { display: flex; align-items: center; gap: 0.4rem; padding: 0.4rem 0.5rem; font-size: 0.85rem; color: #ddd; cursor: pointer; }
+  .pd-iface-header:hover { background: #202020; }
+  .pd-iface-name { flex: 1 1 auto; }
+  .pd-iface-toggle { color: #888; font-size: 0.7rem; }
+  .pd-iface-body { padding: 0 0.6rem 0.6rem; border-top: 1px solid #262626; }
+  .pd-iface-body.hidden { display: none; border-top: none; }
+  .pd-iface-connected-mark { font-size: 0.7rem; }
+  .pd-iface-connected-mark.hidden { display: none; }
+  .pd-wifi-scan-heading { display: flex; align-items: center; justify-content: space-between; margin-top: 0.5rem; font-size: 0.78rem; color: #aaa; }
+  .pd-scan-wifi-toggle svg { transition: transform 0.15s; }
+  .pd-scan-wifi-toggle.open svg { transform: rotate(90deg); }
+  .pd-wifi-scan-results { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.4rem; }
+  .pd-wifi-scan-results.hidden { display: none; }
+  .pd-wifi-search-wrap { display: flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.5rem; background: #222; border: 1px solid #444; border-radius: 4px; color: #888; }
+  .pd-wifi-search-wrap svg { flex: 0 0 auto; }
+  .pd-wifi-search-input { flex: 1 1 auto; background: transparent; border: none; color: #eee; font-size: 0.82rem; padding: 0; }
+  .pd-wifi-search-input:focus { outline: none; }
+  .pd-wifi-scan-list { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.4rem; }
+  .wifi-connect-row { display: flex; gap: 0.4rem; align-items: center; margin-top: 0.5rem; }
+  .wifi-connect-row .password-wrap { flex: 1 1 auto; }
+  .wifi-connect-status { margin-top: 0.3rem; min-height: 1em; }
+  .wifi-icon { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; }
+  .wifi-icon.wifi-connected { color: #6f6; }
+  .wifi-icon.wifi-disconnected { color: #666; opacity: 0.6; }
+  .wifi-icon.wifi-unknown { color: #999; }
 
   .line { padding: 0.25rem 0; border-bottom: 1px solid #222; font-family: ui-monospace, monospace; font-size: 0.85rem; white-space: pre-wrap; word-break: break-word; }
   .ts { color: #888; margin-right: 0.6rem; }
@@ -48,10 +120,13 @@
   tr.pi-row.selected { background: #263a2a; }
   .pi-toggle { display: inline-block; padding: 0.05rem 0.3rem; margin-right: 0.2rem; font-size: 0.7rem; color: #999; cursor: pointer; border: 1px solid #333; border-radius: 3px; }
   .pi-toggle:hover { background: #222; color: #eee; }
-  tr.pi-toolbar-row td { background: #181818; padding: 0.4rem 0.5rem; }
-  tr.pi-toolbar-row.hidden { display: none; }
-  tr.pi-log-row td { background: #141414; padding: 0; }
-  tr.pi-log-row.hidden { display: none; }
+  tr.pi-ifaces-row td { background: #181818; padding: 0.5rem; }
+  tr.pi-ifaces-row.hidden { display: none; }
+  .fleet-iface-list .pd-iface-card { background: #141414; }
+  .pd-iface-log-toggles { margin-top: 0.4rem; }
+  .pd-iface-log-row { margin-top: 0.3rem; border-top: 1px solid #262626; }
+  .pd-iface-log-row.hidden { display: none; }
+  .fleet-iface-primary-checkbox { margin-right: 0.1rem; }
   .pi-log-heading { display: flex; justify-content: space-between; align-items: center; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; color: #888; padding: 0.4rem 0.75rem 0.2rem; }
   .pi-log-actions { display: flex; gap: 0.4rem; text-transform: none; letter-spacing: normal; }
   .pi-log-actions button.icon-btn { border: 1px solid #333; }
@@ -97,6 +172,7 @@
 
   #loginOverlay { position: fixed; inset: 0; background: #111; display: none; align-items: center; justify-content: center; z-index: 100; }
   #loginOverlay.active { display: flex; }
+  #appRoot { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
   #appRoot.auth-hidden { display: none; }
   .login-box { width: 280px; background: #1a1a1a; border: 1px solid #333; border-radius: 8px; padding: 1.5rem; }
   .login-box h2 { margin: 0 0 1rem; font-size: 1.1rem; }
@@ -112,7 +188,10 @@
       <label>Username</label>
       <input id="loginUsername" class="field" type="text" autocomplete="username" required>
       <label>Password</label>
-      <input id="loginPassword" class="field" type="password" autocomplete="current-password" required>
+      <div class="password-wrap">
+        <input id="loginPassword" class="field" type="password" autocomplete="current-password" required>
+        <button type="button" class="password-toggle" title="Show password">&#128065;</button>
+      </div>
       <div class="login-error" id="loginError"></div>
       <div class="row" style="margin-top: 0.75rem;">
         <button id="loginSubmit" type="submit">Log in</button>
@@ -126,6 +205,7 @@
   <nav>
     <button class="tab active" data-view="fleet">Fleet</button>
     <button class="tab" data-view="captures">Captures</button>
+    <button class="tab" data-view="history">History</button>
   </nav>
   <button id="logoutBtn" type="button">Log out</button>
 </header>
@@ -134,7 +214,7 @@
   <div class="panel">
     <table>
       <thead>
-        <tr><th></th><th></th><th>Pi ID</th><th>IP</th><th>Role</th><th>Status</th><th>Last seen</th><th>Primary IF</th></tr>
+        <tr><th></th><th></th><th>Pi ID</th><th>IP</th><th>Role</th><th>Status</th><th>Last seen</th></tr>
       </thead>
       <tbody id="piTableBody"></tbody>
     </table>
@@ -152,19 +232,20 @@
     <label>Action</label>
     <select id="actionSelect" class="field">
       <option value="ping">ping</option>
-      <option value="signal_stats">signal_stats</option>
-      <option value="band_channel_info">band_channel_info</option>
-      <option value="throughput_test">throughput_test</option>
-      <option value="set_channel">set_channel</option>
+      <option value="signal_stats">signal stats</option>
+      <option value="band_channel_info">band channel info</option>
+      <option value="link_info">link info</option>
+      <option value="throughput_test">throughput test</option>
+      <option value="set_channel">set channel</option>
       <option value="syslog">syslog</option>
-      <option value="stream_logs">stream_logs</option>
-      <option value="stop_logs">stop_logs</option>
+      <option value="stream_logs">stream logs</option>
+      <option value="stop_logs">stop logs</option>
       <option value="tcpdump">tcpdump</option>
-      <option value="stop_tcpdump">stop_tcpdump</option>
-      <option value="connect_wifi">connect_wifi</option>
-      <option value="disconnect_wifi">disconnect_wifi</option>
-      <option value="list_interfaces">list_interfaces</option>
-      <option value="list_interface_ips">list_interface_ips</option>
+      <option value="stop_tcpdump">stop tcpdump</option>
+      <option value="connect_wifi">connect wifi</option>
+      <option value="disconnect_wifi">disconnect wifi</option>
+      <option value="list_interfaces">list interfaces</option>
+      <option value="scan_wifi">scan wifi</option>
     </select>
 
     <div id="paramFields"></div>
@@ -185,6 +266,83 @@
       </thead>
       <tbody id="capturesTableBody"></tbody>
     </table>
+  </div>
+</section>
+
+<section id="history" class="view">
+  <div class="panel captures-panel">
+    <div class="row" style="margin-bottom: 0.5rem; align-items: center;">
+      <button id="historyDeleteSelectedBtn" type="button" class="icon-btn" disabled style="flex: 0 0 auto;" title="Delete selected">&#128465;</button>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th><input type="checkbox" id="historySelectAll" title="Select all"></th>
+          <th>Pi</th><th>Action</th><th>Status</th><th>Created</th><th></th>
+        </tr>
+      </thead>
+      <tbody id="historyTableBody"></tbody>
+    </table>
+  </div>
+</section>
+
+<section id="piDetail" class="view">
+  <div class="panel" style="margin-bottom:0;">
+    <div class="row" style="align-items:center;">
+      <button id="piDetailBack" type="button" style="flex: 0 0 auto; padding: 0.2rem 0.5rem; font-size: 0.75rem;" title="Back to fleet">&larr; Back</button>
+      <h2 id="piDetailTitle" style="margin:0 0 0 0.75rem; font-size:1rem;"></h2>
+    </div>
+  </div>
+  <div id="piDetailGrid">
+    <div class="panel" id="pdInfoPanel">
+      <h3 style="margin-top:0;">Pi info</h3>
+      <div id="pdInfoFields"></div>
+      <label>Interfaces</label>
+      <div id="pdInterfaceList"></div>
+    </div>
+
+    <div class="gutter" id="pdGutterLeft"></div>
+
+    <div class="panel" id="pdLogPanel">
+      <div class="pd-log-block" data-kind="logs">
+        <div class="pi-log-heading">
+          <span>syslog / stream_logs</span>
+          <span class="pi-log-actions">
+            <select class="pi-stream-iface"><option value="">select interface</option></select>
+            <button class="pi-log-capture icon-btn" type="button" title="Start Capture">&#9210;</button>
+            <button class="pi-log-clear icon-btn" type="button" title="Clear">&#128465;</button>
+          </span>
+        </div>
+        <div class="pi-log-panel"></div>
+      </div>
+      <div class="pd-log-block" data-kind="tcpdump">
+        <div class="pi-log-heading">
+          <span>tcpdump</span>
+          <span class="pi-log-actions">
+            <select class="pi-stream-iface"><option value="">select interface</option></select>
+            <button class="pi-log-capture icon-btn" type="button" title="Start Capture">&#9210;</button>
+            <button class="pi-log-clear icon-btn" type="button" title="Clear">&#128465;</button>
+          </span>
+        </div>
+        <div class="pi-log-panel"></div>
+      </div>
+    </div>
+
+    <div class="gutter" id="pdGutterRight"></div>
+
+    <div class="panel" id="pdActionPanel" style="overflow-y: hidden;">
+      <h3 style="margin-top:0;">Actions</h3>
+      <label>Action</label>
+      <select id="pdAction" class="field"></select>
+      <div id="pdActionParams"></div>
+      <div class="row" style="margin-top: 0.75rem;">
+        <button id="pdActionSendBtn">Send command</button>
+      </div>
+      <div class="pd-results-panel">
+        <div class="pd-results-heading">Results</div>
+        <div id="pdActionResults" class="pd-results-body"></div>
+      </div>
+    </div>
   </div>
 </section>
 </div>
@@ -265,7 +423,7 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
     // the next refreshPis() poll to happen to succeed.
     refreshPis();
     loadCaptures();
-    loadCommandHistory();
+    loadHistory();
   } catch {
     errEl.textContent = 'Could not reach the server.';
   } finally {
@@ -291,6 +449,7 @@ if (authToken) {
 const tabs = document.querySelectorAll('nav .tab');
 const views = document.querySelectorAll('.view');
 tabs.forEach(btn => btn.addEventListener('click', () => {
+  if (location.hash) location.hash = '';
   tabs.forEach(b => b.classList.remove('active'));
   views.forEach(v => v.classList.remove('active'));
   btn.classList.add('active');
@@ -336,6 +495,60 @@ tabs.forEach(btn => btn.addEventListener('click', () => {
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
   });
+})();
+
+// --- Pi detail page: resizable 3-column split (info / logs / actions) -----
+
+(function setupPiDetailGutters() {
+  const grid = document.getElementById('piDetailGrid');
+  const gutterLeft = document.getElementById('pdGutterLeft');
+  const gutterRight = document.getElementById('pdGutterRight');
+  const MIN_LEFT = 200, MAX_LEFT = 480;
+  const MIN_RIGHT = 260, MAX_RIGHT = 600;
+
+  let leftWidth = parseInt(localStorage.getItem('pdLeftWidth'), 10);
+  if (!(leftWidth >= MIN_LEFT && leftWidth <= MAX_LEFT)) leftWidth = 280;
+  let rightWidth = parseInt(localStorage.getItem('pdRightWidth'), 10);
+  if (!(rightWidth >= MIN_RIGHT && rightWidth <= MAX_RIGHT)) rightWidth = 380;
+
+  function apply() {
+    grid.style.gridTemplateColumns = `${leftWidth}px 6px 1fr 6px ${rightWidth}px`;
+  }
+  apply();
+
+  function startDrag(which) {
+    return (e) => {
+      e.preventDefault();
+      grid.classList.add('dragging');
+      const gutterEl = which === 'left' ? gutterLeft : gutterRight;
+      gutterEl.classList.add('active');
+
+      function onMove(moveEvent) {
+        const rect = grid.getBoundingClientRect();
+        if (which === 'left') {
+          leftWidth = Math.max(MIN_LEFT, Math.min(MAX_LEFT, moveEvent.clientX - rect.left));
+        } else {
+          rightWidth = Math.max(MIN_RIGHT, Math.min(MAX_RIGHT, rect.right - moveEvent.clientX));
+        }
+        apply();
+      }
+
+      function onUp() {
+        grid.classList.remove('dragging');
+        gutterEl.classList.remove('active');
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        localStorage.setItem('pdLeftWidth', leftWidth);
+        localStorage.setItem('pdRightWidth', rightWidth);
+      }
+
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    };
+  }
+
+  gutterLeft.addEventListener('mousedown', startDrag('left'));
+  gutterRight.addEventListener('mousedown', startDrag('right'));
 })();
 
 // --- Fleet: Pi list -------------------------------------------------------
@@ -385,7 +598,7 @@ function renderTargetSelect() {
   const isMulticast = targetSelect.value === 'multicast';
   targetHint.style.display = isMulticast ? 'block' : 'none';
   targetHint.textContent = isMulticast
-    ? `Sends to the ${checkedPiIds.size} Pi(s) checked in the table above, each on its own configured primary interface.`
+    ? `Sends to the ${checkedPiIds.size} Pi(s) checked in the table above, one command per each Pi's own configured primary interface(s).`
     : '';
 
   if (targetSelect.value !== current) renderParamFields();
@@ -401,8 +614,116 @@ function statusBadge(status) {
   return `<span class="badge ${cls}">${status}</span>`;
 }
 
+// Shared toggle-dropdown-of-checkboxes widget, used for both the fleet
+// table's Primary IF column and the Action panel's Interface param - lets a
+// Pi have several primary interfaces, and a command target several
+// interfaces at once, presented closed (a one-line summary) until clicked,
+// rather than a native <select multiple> permanently taking up space.
+function buildIfaceDropdown() {
+  const wrap = document.createElement('div');
+  wrap.className = 'iface-dropdown field';
+  wrap.innerHTML = `
+    <button type="button" class="iface-dropdown-toggle">select interface(s)</button>
+    <div class="iface-dropdown-panel hidden"></div>
+  `;
+  const toggle = wrap.querySelector('.iface-dropdown-toggle');
+  const panel = wrap.querySelector('.iface-dropdown-panel');
+  toggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const wasOpen = !panel.classList.contains('hidden');
+    // Only one dropdown open at a time, anywhere on the page.
+    document.querySelectorAll('.iface-dropdown-panel').forEach(p => p.classList.add('hidden'));
+    if (!wasOpen) panel.classList.remove('hidden');
+  });
+  // Keeps clicks inside the panel (checkbox rows) from bubbling to the
+  // document-level listener below, which would immediately close it, and
+  // from bubbling to a Pi row's own click handler (which sets the target).
+  wrap.addEventListener('click', (e) => e.stopPropagation());
+  return wrap;
+}
+
+// One global listener closes whatever dropdown is open when clicking
+// anywhere else on the page - registered once, not per widget instance.
+document.addEventListener('click', () => {
+  document.querySelectorAll('.iface-dropdown-panel').forEach(p => p.classList.add('hidden'));
+});
+
+// Delegated show/hide toggle for every password field on the page (login
+// form and any dynamically-built Action panel password param) - one
+// listener instead of wiring each toggle button individually, so newly
+// rendered password fields (e.g. after switching actions) work for free.
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.password-toggle');
+  if (!btn) return;
+  const input = btn.closest('.password-wrap')?.querySelector('input');
+  if (!input) return;
+  const showing = input.type === 'text';
+  input.type = showing ? 'password' : 'text';
+  btn.innerHTML = showing ? '&#128065;' : '&#128584;';
+  btn.title = showing ? 'Show password' : 'Hide password';
+});
+
+function setDropdownOptions(wrap, interfaces, selectedValues, onChange) {
+  const panel = wrap.querySelector('.iface-dropdown-panel');
+  if (!interfaces.length) {
+    panel.innerHTML = '<div class="pi-log-empty">no interfaces</div>';
+    updateDropdownLabel(wrap);
+    return;
+  }
+
+  panel.innerHTML = `
+    <label class="iface-row iface-row-all">
+      <input type="checkbox" class="iface-select-all">
+      Select all
+    </label>
+  ` + interfaces.map(i => `<label class="iface-row"><input type="checkbox" value="${i}">${i}</label>`).join('');
+
+  const selectAllCb = panel.querySelector('.iface-select-all');
+  const itemCbs = [...panel.querySelectorAll('input[type="checkbox"]:not(.iface-select-all)')];
+  itemCbs.forEach(cb => { cb.checked = selectedValues.includes(cb.value); });
+
+  function syncSelectAll() {
+    const checkedCount = itemCbs.filter(cb => cb.checked).length;
+    selectAllCb.checked = checkedCount === itemCbs.length;
+    selectAllCb.indeterminate = checkedCount > 0 && checkedCount < itemCbs.length;
+  }
+  syncSelectAll();
+
+  // Assigning .onchange (not addEventListener) so rebuilding this panel in
+  // place doesn't accumulate duplicate listeners across renderPis() polls.
+  itemCbs.forEach(cb => {
+    cb.onchange = () => {
+      syncSelectAll();
+      updateDropdownLabel(wrap);
+      if (onChange) onChange();
+    };
+  });
+  selectAllCb.onchange = () => {
+    itemCbs.forEach(cb => { cb.checked = selectAllCb.checked; });
+    selectAllCb.indeterminate = false;
+    updateDropdownLabel(wrap);
+    if (onChange) onChange();
+  };
+
+  updateDropdownLabel(wrap);
+}
+
+function updateDropdownLabel(wrap) {
+  const selected = getDropdownSelected(wrap);
+  wrap.querySelector('.iface-dropdown-toggle').textContent = selected.length ? selected.join(', ') : 'select interface(s)';
+}
+
+// Excludes the "select all" checkbox itself - only real interface values.
+function getDropdownSelected(wrap) {
+  return [...wrap.querySelectorAll('input[type="checkbox"]:checked:not(.iface-select-all)')].map(cb => cb.value);
+}
+
 // Category -> which panel it's routed to. registration/status/result are
 // command acks and fleet metadata, not something to show in a log feed.
+// Both categories now arrive via capture_socket_server.py's view-only
+// socket connections (stream_syslog/stream_tcpdump) instead of MQTT, but
+// the category names and this routing are unchanged - only the transport
+// on the backend moved.
 const CATEGORY_PANEL = { logs: 'logPanel', tcpdump: 'tcpdumpPanel' };
 
 function connectPiLog(piId, entry) {
@@ -420,10 +741,10 @@ function connectPiLog(piId, entry) {
     const panelKey = CATEGORY_PANEL[msg.category];
     if (!panelKey) return;
     const payload = msg.payload !== undefined ? msg.payload : msg;
-    // tcpdump lines arrive batched (the Pi agent groups up to 50 lines or
-    // 200ms of output into one MQTT message instead of publishing per
-    // packet, to avoid flooding the MQTT client on busy interfaces) - other
-    // categories still send one record per message.
+    // tcpdump lines arrive batched (capture_socket_server groups whatever
+    // decoded from one read-chunk into one message instead of publishing
+    // per packet, to avoid flooding the browser on busy interfaces) - logs
+    // lines still arrive one per message.
     const lines = Array.isArray(payload) ? payload : [payload];
 
     const panel = entry[panelKey];
@@ -431,8 +752,8 @@ function connectPiLog(piId, entry) {
     if (empty) empty.remove();
     lines.forEach(line => appendLineTo(panel, line));
 
-    // Nothing is persisted server-side for these streams anymore, so a
-    // capture in progress buffers lines here, live, as they arrive.
+    // Nothing is persisted server-side for these streams, so a capture in
+    // progress buffers lines here, live, as they arrive.
     const active = entry.captureState && entry.captureState[msg.category];
     if (active) lines.forEach(line => active.lines.push(line));
   };
@@ -446,10 +767,6 @@ const PANELS = [
   { kind: 'logs', rowKey: 'logRow', panelKey: 'logPanel', toggleKey: 'logToggle', expandedKey: 'logExpanded', label: 'syslog / stream_logs', short: 'syslog / stream_logs' },
   { kind: 'tcpdump', rowKey: 'tcpdumpRow', panelKey: 'tcpdumpPanel', toggleKey: 'tcpdumpToggle', expandedKey: 'tcpdumpExpanded', label: 'tcpdump', short: 'tcpdump' },
 ];
-
-function anyExpanded(entry) {
-  return PANELS.some(p => entry[p.expandedKey]);
-}
 
 // Polls a command until it's no longer pending and returns its result (or
 // throws on failure/timeout), mirroring pollCommand() below but returning
@@ -469,15 +786,17 @@ async function awaitCommandResult(commandId, maxAttempts = 30) {
   throw new Error('timed out waiting for the Pi');
 }
 
-// Start/stop capture. Nothing is persisted server-side for either live
-// stream until a capture is actually armed - for the tcpdump panel this
-// records a real pcap file on the Pi (tcpdump -w, a separate process from
-// the parsed-line stream that's only for on-page monitoring) and ships it
-// back base64-encoded once stopped. For the syslog panel, lines are buffered
-// client-side (see connectPiLog's ws.onmessage) for exactly the window
-// between Start and Stop, then saved as a text capture - so the panel must
-// stay expanded (WebSocket connected) for the whole capture, unlike the old
-// DB-backed [since, now) approach.
+// Start/stop capture (the RECORDING feature - separate from the streaming
+// view toggle below). Nothing is persisted server-side for either live
+// stream until a capture is actually armed:
+//  - syslog: lines are buffered client-side (see connectPiLog's
+//    ws.onmessage) for exactly the window between Start and Stop, then
+//    saved as a text capture via POST /captures - so the panel must stay
+//    expanded (WebSocket connected) for the whole capture.
+//  - tcpdump: a wholly separate tcpdump process on the Pi (start_pcap_capture)
+//    pipes raw pcap bytes to capture_socket_server over its own socket
+//    connection, saved straight to a .pcap file - independent of the
+//    view-only decoded stream, both can run on the same interface at once.
 async function toggleCapture(piId, spec, entry, btn) {
   if (spec.kind === 'tcpdump') return togglePcapCapture(piId, entry, btn);
 
@@ -585,20 +904,10 @@ async function togglePcapCapture(piId, entry, btn) {
   }
 }
 
-async function clearPanel(piId, spec, panel) {
+function clearPanel(piId, spec, panel) {
   if (!confirm(`Clear ${spec.label} for ${piId}? This removes the saved history too.`)) return;
-  try {
-    await apiFetch(`${API}/pis/${encodeURIComponent(piId)}/logs?category=${encodeURIComponent(spec.kind)}`, {
-      method: 'DELETE',
-    });
-  } catch {
-    // ignore; still clear locally so the UI reflects the user's intent
-  }
   panel.innerHTML = '<div class="pi-log-empty">waiting for messages…</div>';
 }
-
-const STREAM_START_ACTION = { logs: 'stream_logs', tcpdump: 'tcpdump' };
-const STREAM_STOP_ACTION = { logs: 'stop_logs', tcpdump: 'stop_tcpdump' };
 
 function postCmd(piId, action, params) {
   return apiFetch(`${API}/pis/${encodeURIComponent(piId)}/cmd`, {
@@ -608,15 +917,17 @@ function postCmd(piId, action, params) {
   });
 }
 
-// Called only from the explicit Watch/Stop button, never from picking an
-// interface in the dropdown - selecting an interface is just choosing a
-// target, it has no side effects on its own. Wipes the panel locally on
-// every call, since re-pointing at a new interface would otherwise leave
-// old lines from the previous one sitting alongside (or ahead of) new ones.
-// Both streams are always scoped to exactly one interface - no unfiltered/
-// "all interfaces" mode - so a panel never mixes lines from two NICs together.
-// tcpdump can additionally run several interfaces at once server-side, so
-// switching here also explicitly stops the previously watched one.
+const STREAM_START_ACTION = { logs: 'stream_logs', tcpdump: 'tcpdump' };
+const STREAM_STOP_ACTION = { logs: 'stop_logs', tcpdump: 'stop_tcpdump' };
+
+// Called only from the explicit Watch/Stop toggle, never from picking an
+// interface in a dropdown by itself - selecting an interface is just
+// choosing a target, it has no side effects on its own. Wipes the panel
+// locally on every call, since re-pointing at a new interface would
+// otherwise leave old lines from the previous one sitting alongside (or
+// ahead of) new ones. tcpdump can run several interfaces at once
+// server-side, so switching here also explicitly stops the previously
+// watched one; syslog only ever runs one stream per Pi.
 async function setStreamInterface(piId, entry, spec, interface_) {
   const panel = entry[spec.panelKey];
   panel.innerHTML = '<div class="pi-log-empty">waiting for messages…</div>';
@@ -634,43 +945,355 @@ async function setStreamInterface(piId, entry, spec, interface_) {
   }
 }
 
-function togglePanel(piId, kind) {
-  const entry = piRows.get(piId);
-  if (!entry) return;
-  const spec = PANELS.find(p => p.kind === kind);
+// One shared WebSocket per Pi, routing incoming lines to whichever
+// *interface card's* panel they belong to instead of a single Pi-level
+// panel:
+//  - tcpdump: each line carries its own "interface" field (see
+//    capture_socket_server.py's stream_tcpdump handler), so lines route to
+//    the matching card - several interfaces can stream tcpdump concurrently.
+//  - logs (syslog): the agent only ever runs one syslog stream per Pi at a
+//    time (start_syslog_stream replaces any other), so lines route to
+//    whichever single card currently has its syslog panel open.
+function connectFleetPiLog(piId, entry) {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(withToken(`${proto}://${location.host}/ws/live/${encodeURIComponent(piId)}`));
 
-  entry[spec.expandedKey] = !entry[spec.expandedKey];
-  entry[spec.rowKey].classList.toggle('hidden', !entry[spec.expandedKey]);
-  entry[spec.toggleKey].innerHTML = entry[spec.expandedKey] ? '&#9660; ' + spec.short : '&#9654; ' + spec.short;
+  ws.onmessage = (event) => {
+    let msg;
+    try {
+      msg = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    const panelKey = CATEGORY_PANEL[msg.category];
+    if (!panelKey) return;
+    const payload = msg.payload !== undefined ? msg.payload : msg;
+    const lines = Array.isArray(payload) ? payload : [payload];
 
-  if (entry[spec.expandedKey] && !entry[spec.panelKey].children.length) {
-    entry[spec.panelKey].innerHTML = '<div class="pi-log-empty">waiting for messages…</div>';
+    const appendTo = (cardState, cardLines) => {
+      const panel = cardState[panelKey];
+      const empty = panel.querySelector('.pi-log-empty');
+      if (empty) empty.remove();
+      cardLines.forEach(line => appendLineTo(panel, line));
+      const active = cardState.captureState && cardState.captureState[msg.category];
+      if (active) cardLines.forEach(line => active.lines.push(line));
+    };
+
+    if (msg.category === 'tcpdump') {
+      const byIface = new Map();
+      lines.forEach(line => {
+        const iface = line && line.interface;
+        if (!byIface.has(iface)) byIface.set(iface, []);
+        byIface.get(iface).push(line);
+      });
+      byIface.forEach((ifaceLines, iface) => {
+        const cardState = entry.ifaceCards.get(iface);
+        if (cardState && cardState.tcpdumpExpanded) appendTo(cardState, ifaceLines);
+      });
+    } else {
+      let target = null;
+      entry.ifaceCards.forEach(cardState => { if (cardState.logExpanded) target = cardState; });
+      if (target) appendTo(target, lines);
+    }
+  };
+
+  return ws;
+}
+
+// Opens/closes one interface card's syslog or tcpdump viewing panel (the
+// STREAMING toggle - separate from the Start/Stop Capture recording
+// button above). syslog also starts/stops the actual stream on the Pi
+// (the agent only runs one at a time, so opening a different card's
+// syslog panel first closes whichever other card on this Pi had it open).
+// tcpdump stays view-only through its own dedicated stream_tcpdump
+// connection (see pi_agent.py's start_tcpdump_stream) - independent of the
+// separate recording process, both can run on the same interface at once.
+async function toggleFleetIfaceLogPanel(piId, entry, cardState, spec) {
+  const expanding = !cardState[spec.expandedKey];
+
+  if (spec.kind === 'logs' && expanding) {
+    entry.ifaceCards.forEach((other) => {
+      if (other !== cardState && other.logExpanded) {
+        other.logExpanded = false;
+        other.logRow.classList.add('hidden');
+        other.logToggle.innerHTML = '&#9654; ' + PANELS.find(p => p.kind === 'logs').short;
+      }
+    });
   }
 
-  const isAnyExpanded = anyExpanded(entry);
-  if (isAnyExpanded && !entry.ws) {
-    entry.ws = connectPiLog(piId, entry);
-  } else if (!isAnyExpanded && entry.ws) {
+  cardState[spec.expandedKey] = expanding;
+  cardState[spec.rowKey].classList.toggle('hidden', !expanding);
+  cardState[spec.toggleKey].innerHTML = expanding ? '&#9660; ' + spec.short : '&#9654; ' + spec.short;
+
+  if (expanding && !cardState[spec.panelKey].children.length) {
+    cardState[spec.panelKey].innerHTML = '<div class="pi-log-empty">waiting for messages…</div>';
+  }
+
+  try {
+    await postCmd(piId, expanding ? STREAM_START_ACTION[spec.kind] : STREAM_STOP_ACTION[spec.kind], { interface: cardState.iface });
+  } catch {
+    // backend unreachable; UI still reflects the toggle, next attempt will retry
+  }
+
+  const anyOpen = [...entry.ifaceCards.values()].some(c => c.logExpanded || c.tcpdumpExpanded);
+  if (anyOpen && !entry.ws) {
+    entry.ws = connectFleetPiLog(piId, entry);
+  } else if (!anyOpen && entry.ws) {
     entry.ws.close();
     entry.ws = null;
   }
+}
+
+// Expands/collapses one interface card's info body (list_interfaces +
+// link_info details), fetching on first expand and caching per Pi.
+async function toggleFleetIfaceCard(piId, entry, cardState) {
+  const body = cardState.card.querySelector('.pd-iface-body');
+  const toggleEl = cardState.card.querySelector('.pd-iface-toggle');
+  const expanding = body.classList.contains('hidden');
+  body.classList.toggle('hidden', !expanding);
+  toggleEl.innerHTML = expanding ? '&#9660;' : '&#9654;';
+  if (!expanding) return;
+  if (!cardState.infoEl.innerHTML.trim()) {
+    cardState.infoEl.innerHTML = '<div class="pi-log-empty">loading…</div>';
+    await loadFleetIfaceInfo(piId, entry, cardState.iface);
+  }
+  renderFleetIfaceBody(entry, cardState);
+}
+
+async function fetchFleetIfaceDetails(piId, entry) {
+  if (entry.ifaceDetailsCache !== null) return entry.ifaceDetailsCache;
+  if (!entry.ifaceDetailsPromise) {
+    entry.ifaceDetailsPromise = (async () => {
+      try {
+        const res = await postCmd(piId, 'list_interfaces', {});
+        if (res.ok) {
+          const data = await res.json();
+          const result = await awaitCommandResult(data.command_id, 10);
+          entry.ifaceDetailsCache = (result && result.interfaces) || [];
+        } else {
+          entry.ifaceDetailsCache = [];
+        }
+      } catch {
+        entry.ifaceDetailsCache = [];
+      }
+      return entry.ifaceDetailsCache;
+    })();
+  }
+  return entry.ifaceDetailsPromise;
+}
+
+async function loadFleetIfaceInfo(piId, entry, iface) {
+  await fetchFleetIfaceDetails(piId, entry);
+  if (isWifiInterface(iface) && !(iface in entry.linkInfoCache)) {
+    try {
+      const res = await postCmd(piId, 'link_info', { interface: iface });
+      if (res.ok) {
+        const data = await res.json();
+        entry.linkInfoCache[iface] = await awaitCommandResult(data.command_id, 10);
+      }
+    } catch {
+      // leave unset - body will just omit the wifi rows
+    }
+  }
+}
+
+function renderFleetIfaceBody(entry, cardState) {
+  const details = (entry.ifaceDetailsCache || []).find(d => d.name === cardState.iface);
+  const link = entry.linkInfoCache[cardState.iface];
+  const rows = [];
+  if (details) {
+    rows.push(['State', details.state]);
+    rows.push(['Type', details.type]);
+    rows.push(['MAC address', details.mac_address]);
+    rows.push(['IP address', details.ip_address || '—']);
+  }
+  if (link) {
+    rows.push(['Wi-Fi connected', link.connected ? 'yes' : 'no']);
+    if (link.ssid) rows.push(['SSID', link.ssid]);
+    if (link.bssid) rows.push(['BSSID', link.bssid]);
+    if (link.frequency_mhz != null) rows.push(['Frequency', `${link.frequency_mhz} MHz`]);
+    if (link.band) rows.push(['Band', link.band]);
+    if (link.signal_dbm != null) rows.push(['Signal', `${link.signal_dbm} dBm`]);
+    if (link.rx_bitrate_mbps != null) rows.push(['RX bitrate', `${link.rx_bitrate_mbps} Mbps`]);
+    if (link.tx_bitrate_mbps != null) rows.push(['TX bitrate', `${link.tx_bitrate_mbps} Mbps`]);
+  }
+  cardState.infoEl.innerHTML = rows.length
+    ? `<table class="result-table">${rows.map(([k, v]) =>
+        `<tr><td class="result-key">${k}</td><td class="result-value">${v ?? ''}</td></tr>`
+      ).join('')}</table>`
+    : '<div class="pi-log-empty">no data</div>';
+}
+
+// Colors one card's wifi icon and "connected — SSID" mark via link_info -
+// called for every wifi-capable interface card, not just primary ones, so
+// connection status is visible fleet-wide (mirrors the Pi detail page).
+async function refreshFleetWifiIcon(piId, entry, cardState) {
+  if (!isWifiInterface(cardState.iface) || !cardState.wifiIconEl) return;
+  try {
+    const res = await postCmd(piId, 'link_info', { interface: cardState.iface });
+    if (!res.ok) return;
+    const data = await res.json();
+    const result = await awaitCommandResult(data.command_id, 10);
+    entry.linkInfoCache[cardState.iface] = result;
+    const connected = !!(result && result.connected);
+    cardState.wifiIconEl.classList.remove('wifi-unknown');
+    cardState.wifiIconEl.classList.add(connected ? 'wifi-connected' : 'wifi-disconnected');
+    cardState.wifiIconEl.title = connected ? `Wi-Fi connected${result.ssid ? ' — ' + result.ssid : ''}` : 'Wi-Fi not connected';
+    cardState.connectedMarkEl.classList.toggle('hidden', !connected);
+    if (connected) cardState.connectedMarkEl.textContent = result.ssid ? `connected — ${result.ssid}` : 'connected';
+    if (!cardState.card.querySelector('.pd-iface-body').classList.contains('hidden')) {
+      renderFleetIfaceBody(entry, cardState);
+    }
+  } catch {
+    // leave as "unknown" - backend/Pi unreachable or command timed out
+  }
+}
+
+async function saveFleetPrimaryInterfaces(piId, entry) {
+  const checkboxes = [...entry.ifaceCards.values()].map(c => c.checkboxEl);
+  const selected = [...entry.ifaceCards.values()].filter(c => c.checkboxEl.checked).map(c => c.iface);
+  checkboxes.forEach(cb => cb.disabled = true);
+  try {
+    const res = await apiFetch(`${API}/pis/${encodeURIComponent(piId)}/primary-interface`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ primary_interfaces: selected }),
+    });
+    if (!res.ok) {
+      alert('Failed to set primary interfaces.');
+      return;
+    }
+    const updated = await res.json();
+    const pi = pis.find(p => p.pi_id === piId);
+    if (pi) pi.primary_interfaces = updated.primary_interfaces;
+  } catch {
+    alert('Failed to set primary interfaces.');
+  } finally {
+    checkboxes.forEach(cb => cb.disabled = false);
+  }
+}
+
+// One interface card in a Pi's expanded row: checkbox to mark it primary
+// (same PATCH endpoint/semantics as before, just moved out of a closed
+// dropdown), a wifi icon + "connected — SSID" mark, a toggle that reveals
+// list_interfaces/link_info details, and its own syslog/tcpdump viewers -
+// each with an independent streaming toggle (view, socket-based) and a
+// separate Start/Stop Capture button (recording, saved to the Captures tab).
+function buildFleetIfaceCard(piId, entry, iface) {
+  const isWifi = isWifiInterface(iface);
+  const card = document.createElement('div');
+  card.className = 'pd-iface-card';
+  card.dataset.iface = iface;
+  card.innerHTML = `
+    <div class="pd-iface-header">
+      <input type="checkbox" class="fleet-iface-primary-checkbox" title="Use as primary interface for multi-target actions">
+      <span class="pd-iface-name">${iface}</span>
+      ${isWifi ? `
+        <span class="wifi-icon wifi-unknown" title="checking…">${WIFI_ICON_SVG}</span>
+        <span class="pd-iface-connected-mark badge badge-online hidden"></span>
+      ` : ''}
+      <span class="pd-iface-toggle">&#9654;</span>
+    </div>
+    <div class="pd-iface-body hidden">
+      <div class="pd-iface-info"></div>
+      <div class="pd-iface-log-toggles">
+        ${PANELS.map(spec => `<span class="pi-toggle" data-kind="${spec.kind}">&#9654; ${spec.short}</span>`).join('')}
+      </div>
+    </div>
+  `;
+
+  const body = card.querySelector('.pd-iface-body');
+  const checkboxEl = card.querySelector('.fleet-iface-primary-checkbox');
+  const logTogglesEl = card.querySelector('.pd-iface-log-toggles');
+
+  const cardState = {
+    iface, card, checkboxEl,
+    infoEl: card.querySelector('.pd-iface-info'),
+    wifiIconEl: card.querySelector('.wifi-icon'),
+    connectedMarkEl: card.querySelector('.pd-iface-connected-mark'),
+    captureState: null, pcapState: null,
+    tcpdumpIfaceSelect: { value: iface },
+  };
+
+  PANELS.forEach(spec => {
+    const row = document.createElement('div');
+    row.className = 'pd-iface-log-row hidden';
+    row.innerHTML = `
+      <div class="pi-log-heading">
+        <span>${spec.label}</span>
+        <span class="pi-log-actions">
+          <button class="pi-log-capture icon-btn" type="button" title="Start Capture">&#9210;</button>
+          <button class="pi-log-clear icon-btn" type="button" title="Clear">&#128465;</button>
+        </span>
+      </div>
+      <div class="pi-log-panel"></div>
+    `;
+    body.appendChild(row);
+
+    cardState[spec.rowKey] = row;
+    cardState[spec.panelKey] = row.querySelector('.pi-log-panel');
+    cardState[spec.toggleKey] = logTogglesEl.querySelector(`.pi-toggle[data-kind="${spec.kind}"]`);
+    cardState[spec.expandedKey] = false;
+
+    cardState[spec.toggleKey].addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleFleetIfaceLogPanel(piId, entry, cardState, spec);
+    });
+    row.querySelector('.pi-log-capture').addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleCapture(piId, spec, cardState, e.currentTarget);
+    });
+    row.querySelector('.pi-log-clear').addEventListener('click', (e) => {
+      e.stopPropagation();
+      clearPanel(piId, spec, cardState[spec.panelKey]);
+    });
+  });
+
+  checkboxEl.addEventListener('click', (e) => e.stopPropagation());
+  checkboxEl.addEventListener('change', () => saveFleetPrimaryInterfaces(piId, entry));
+
+  card.querySelector('.pd-iface-header').addEventListener('click', () => toggleFleetIfaceCard(piId, entry, cardState));
+
+  return cardState;
+}
+
+// Rebuilds every interface card for a Pi (only when its interface set
+// actually changes) - tears down the shared websocket first since cards
+// (and their expanded/streaming state) are being thrown away.
+function rebuildFleetIfaceCards(piId, entry, interfaces) {
+  if (entry.ws) {
+    entry.ws.close();
+    entry.ws = null;
+  }
+  entry.ifaceCards = new Map();
+  entry.ifacesListEl.innerHTML = '';
+  interfaces.forEach(iface => {
+    const cardState = buildFleetIfaceCard(piId, entry, iface);
+    entry.ifaceCards.set(iface, cardState);
+    entry.ifacesListEl.appendChild(cardState.card);
+  });
 }
 
 function toggleRow(piId) {
   const entry = piRows.get(piId);
   if (!entry) return;
   entry.rowExpanded = !entry.rowExpanded;
-  entry.toolbarRow.classList.toggle('hidden', !entry.rowExpanded);
+  entry.ifacesRow.classList.toggle('hidden', !entry.rowExpanded);
   entry.mainToggle.innerHTML = entry.rowExpanded ? '&#9660;' : '&#9654;';
 
-  // Collapsing the Pi row also collapses/tears down its log windows.
+  // Collapsing the Pi row also collapses/tears down every interface
+  // card's log windows and the shared websocket.
   if (!entry.rowExpanded) {
-    PANELS.forEach(spec => {
-      if (entry[spec.expandedKey]) {
-        entry[spec.expandedKey] = false;
-        entry[spec.rowKey].classList.add('hidden');
-        entry[spec.toggleKey].innerHTML = '&#9654; ' + spec.short;
-      }
+    entry.ifaceCards.forEach(cardState => {
+      cardState.card.querySelector('.pd-iface-body').classList.add('hidden');
+      cardState.card.querySelector('.pd-iface-toggle').innerHTML = '&#9654;';
+      PANELS.forEach(spec => {
+        if (cardState[spec.expandedKey]) {
+          cardState[spec.expandedKey] = false;
+          cardState[spec.rowKey].classList.add('hidden');
+          cardState[spec.toggleKey].innerHTML = '&#9654; ' + spec.short;
+        }
+      });
     });
     if (entry.ws) {
       entry.ws.close();
@@ -686,23 +1309,33 @@ function createPiRow(piId) {
   summaryRow.innerHTML = `
     <td><input type="checkbox" class="pi-select-checkbox" title="Select for multicast"></td>
     <td><span class="pi-toggle main-toggle">&#9654;</span></td>
-    <td class="c-id"></td>
+    <td><a href="#" class="c-id-link pi-id-link"></a></td>
     <td class="c-ip"></td>
     <td class="c-role"></td>
     <td class="c-status"></td>
     <td class="c-seen"></td>
-    <td class="c-primary-if"><select class="field primary-if-select"><option value="">(none)</option></select></td>
   `;
   const mainToggle = summaryRow.querySelector('.main-toggle');
   mainToggle.addEventListener('click', (e) => {
     e.stopPropagation();
     toggleRow(piId);
   });
+  const idLink = summaryRow.querySelector('.c-id-link');
+  idLink.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    location.hash = `#pi/${encodeURIComponent(piId)}`;
+  });
   summaryRow.addEventListener('click', () => {
     selectedPiId = piId;
     targetSelect.value = piId;
     renderParamFields();
     piRows.forEach((entry, id) => entry.summaryRow.classList.toggle('selected', id === selectedPiId));
+  });
+  // Double-click the row anywhere (not just the id link) as a quicker way
+  // to jump to this Pi's own page.
+  summaryRow.addEventListener('dblclick', () => {
+    location.hash = `#pi/${encodeURIComponent(piId)}`;
   });
 
   // Multi-select checkbox: independent of the row-click single target above,
@@ -716,100 +1349,30 @@ function createPiRow(piId) {
     renderTargetSelect();
   });
 
-  // Per-Pi primary interface, used as the target interface when this Pi is
-  // included in a multicast command - configured here, not per-command.
-  const primaryIfaceSelect = summaryRow.querySelector('.primary-if-select');
-  primaryIfaceSelect.addEventListener('click', (e) => e.stopPropagation());
-  primaryIfaceSelect.addEventListener('change', async () => {
-    primaryIfaceSelect.disabled = true;
-    try {
-      const res = await apiFetch(`${API}/pis/${encodeURIComponent(piId)}/primary-interface`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ primary_interface: primaryIfaceSelect.value || null }),
-      });
-      if (!res.ok) {
-        alert('Failed to set primary interface.');
-        return;
-      }
-      const updated = await res.json();
-      const pi = pis.find(p => p.pi_id === piId);
-      if (pi) pi.primary_interface = updated.primary_interface;
-    } catch {
-      alert('Failed to set primary interface.');
-    } finally {
-      primaryIfaceSelect.disabled = false;
-    }
-  });
+  // Interfaces row: only visible once the Pi row itself is expanded; holds
+  // one card per interface (see buildFleetIfaceCard) - each individually
+  // toggleable, with its own primary-interface checkbox, connected-status
+  // mark, and syslog/tcpdump viewers.
+  const ifacesRow = document.createElement('tr');
+  ifacesRow.className = 'pi-ifaces-row hidden';
+  const ifacesCell = document.createElement('td');
+  ifacesCell.colSpan = 7;
+  const ifacesListEl = document.createElement('div');
+  ifacesListEl.className = 'fleet-iface-list';
+  ifacesCell.appendChild(ifacesListEl);
+  ifacesRow.appendChild(ifacesCell);
 
-  // Toolbar row: only visible once the Pi row itself is expanded; holds the
-  // per-stream toggles that open the actual log windows below it.
-  const toolbarRow = document.createElement('tr');
-  toolbarRow.className = 'pi-toolbar-row hidden';
-  const toolbarCell = document.createElement('td');
-  toolbarCell.colSpan = 8;
-  toolbarCell.innerHTML = PANELS.map(spec =>
-    `<span class="pi-toggle" data-kind="${spec.kind}">&#9654; ${spec.short}</span>`
-  ).join('');
-  toolbarRow.appendChild(toolbarCell);
-  toolbarCell.querySelectorAll('.pi-toggle').forEach(toggle => {
-    toggle.addEventListener('click', (e) => {
-      e.stopPropagation();
-      togglePanel(piId, toggle.dataset.kind);
-    });
-  });
-
-  const entry = { summaryRow, mainToggle, toolbarRow, primaryIfaceSelect, rowExpanded: false, ws: null };
-  PANELS.forEach(spec => {
-    const row = document.createElement('tr');
-    row.className = 'pi-log-row hidden';
-    const cell = document.createElement('td');
-    cell.colSpan = 8;
-    cell.innerHTML = `
-      <div class="pi-log-heading">
-        <span>${spec.label}</span>
-        <span class="pi-log-actions">
-          <select class="pi-stream-iface"><option value="">select interface</option></select>
-          <button class="pi-log-capture icon-btn" type="button" title="Start Capture">&#9210;</button>
-          <button class="pi-log-clear icon-btn" type="button" title="Clear">&#128465;</button>
-        </span>
-      </div>
-      <div class="pi-log-panel"></div>
-    `;
-    row.appendChild(cell);
-
-    entry[spec.rowKey] = row;
-    entry[spec.panelKey] = cell.querySelector('.pi-log-panel');
-    entry[spec.toggleKey] = toolbarCell.querySelector(`.pi-toggle[data-kind="${spec.kind}"]`);
-    entry[spec.expandedKey] = false;
-
-    const ifaceSelect = cell.querySelector('.pi-stream-iface');
-    entry[spec.kind + 'IfaceSelect'] = ifaceSelect;
-    ifaceSelect.addEventListener('click', (e) => e.stopPropagation());
-    if (spec.kind === 'tcpdump') {
-      // tcpdump streaming is only ever started/stopped through the Action
-      // command builder now - this select exists purely to pick which
-      // interface a PCAP capture (Start Capture button) targets, it has no
-      // side effects of its own.
-    } else {
-      ifaceSelect.addEventListener('change', (e) => {
-        setStreamInterface(piId, entry, spec, e.target.value);
-      });
-    }
-
-    const captureBtn = cell.querySelector('.pi-log-capture');
-    captureBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      toggleCapture(piId, spec, entry, captureBtn);
-    });
-    cell.querySelector('.pi-log-clear').addEventListener('click', (e) => {
-      e.stopPropagation();
-      clearPanel(piId, spec, entry[spec.panelKey]);
-    });
-  });
+  const entry = {
+    summaryRow, mainToggle, ifacesRow, ifacesListEl,
+    rowExpanded: false, ws: null,
+    ifaceCards: new Map(),
+    ifaceDetailsCache: null, ifaceDetailsPromise: null, linkInfoCache: {},
+  };
 
   return entry;
 }
+
+let pisPollCount = 0;
 
 function renderPis() {
   const seen = new Set();
@@ -821,12 +1384,10 @@ function renderPis() {
       entry = createPiRow(p.pi_id);
       piRows.set(p.pi_id, entry);
       piTableBody.appendChild(entry.summaryRow);
-      piTableBody.appendChild(entry.toolbarRow);
-      piTableBody.appendChild(entry.logRow);
-      piTableBody.appendChild(entry.tcpdumpRow);
+      piTableBody.appendChild(entry.ifacesRow);
     }
     entry.summaryRow.classList.toggle('selected', p.pi_id === selectedPiId);
-    entry.summaryRow.querySelector('.c-id').textContent = p.pi_id;
+    entry.summaryRow.querySelector('.c-id-link').textContent = p.pi_id;
     entry.summaryRow.querySelector('.c-ip').textContent = p.ip_address || '';
     entry.summaryRow.querySelector('.c-role').textContent = p.role || '';
     entry.summaryRow.querySelector('.c-status').innerHTML = statusBadge(p.status);
@@ -835,29 +1396,28 @@ function renderPis() {
 
     const interfaces = (p.metadata && Array.isArray(p.metadata.interfaces)) ? p.metadata.interfaces : [];
     const key = JSON.stringify(interfaces);
-    PANELS.forEach(spec => {
-      const select = entry[spec.kind + 'IfaceSelect'];
-      const keyProp = spec.kind + 'IfaceKey';
-      if (!select || entry[keyProp] === key) return;
-      entry[keyProp] = key;
-      const current = select.value;
-      select.innerHTML = '<option value="">select interface</option>' +
-        interfaces.map(i => `<option value="${i}">${i}</option>`).join('');
-      if (interfaces.includes(current)) select.value = current;
+    if (entry.ifaceListKey !== key) {
+      entry.ifaceListKey = key;
+      entry.ifaceDetailsCache = null;
+      entry.ifaceDetailsPromise = null;
+      entry.linkInfoCache = {};
+      rebuildFleetIfaceCards(p.pi_id, entry, interfaces);
+    }
+
+    // Each card's primary-interface checkbox is config, not a live filter -
+    // it always mirrors the server's p.primary_interfaces.
+    entry.ifaceCards.forEach((cardState, iface) => {
+      cardState.checkboxEl.checked = p.primary_interfaces.includes(iface);
     });
 
-    // The primary-interface select is config, not a live filter - its value
-    // always mirrors the server's p.primary_interface, options rebuilt only
-    // when the underlying interface list actually changes.
-    if (entry.primaryIfaceKey !== key) {
-      entry.primaryIfaceKey = key;
-      entry.primaryIfaceSelect.innerHTML = '<option value="">(none)</option>' +
-        interfaces.map(i => `<option value="${i}">${i}</option>`).join('');
-    }
-    if (entry.primaryIfaceSelect.value !== (p.primary_interface || '')) {
-      entry.primaryIfaceSelect.value = p.primary_interface || '';
+    // Wifi connected-status refresh: every interface card, not just primary
+    // ones, but only every few polls (~15s) to avoid a link_info command per
+    // wifi interface per Pi every single 5s tick.
+    if (pisPollCount % 3 === 0) {
+      entry.ifaceCards.forEach(cardState => refreshFleetWifiIcon(p.pi_id, entry, cardState));
     }
   });
+  pisPollCount++;
 
   // Drop rows for Pis that disappeared, closing any open log socket.
   [...piRows.keys()].forEach(id => {
@@ -865,9 +1425,7 @@ function renderPis() {
     const entry = piRows.get(id);
     if (entry.ws) entry.ws.close();
     entry.summaryRow.remove();
-    entry.toolbarRow.remove();
-    entry.logRow.remove();
-    entry.tcpdumpRow.remove();
+    entry.ifacesRow.remove();
     piRows.delete(id);
   });
 
@@ -875,6 +1433,7 @@ function renderPis() {
   renderTargetSelect();
 
   if (typeof refreshInterfaceOptions === 'function') refreshInterfaceOptions();
+  if (typeof refreshDetailView === 'function') refreshDetailView();
 }
 
 async function refreshPis() {
@@ -938,6 +1497,123 @@ async function loadCaptures() {
 
 loadCaptures();
 
+// --- History: persisted command results (view + delete only - this is not
+// the live per-session feed under the Actions/command builder panels, which
+// now always starts empty on page load; this is the durable record kept in
+// the backend, browsable and prunable on its own). ------------------------
+
+const historyTableBody = document.getElementById('historyTableBody');
+const historySelectAll = document.getElementById('historySelectAll');
+const historyDeleteSelectedBtn = document.getElementById('historyDeleteSelectedBtn');
+const checkedHistoryIds = new Set();
+
+function updateHistoryDeleteBtn() {
+  historyDeleteSelectedBtn.disabled = checkedHistoryIds.size === 0;
+  historyDeleteSelectedBtn.title = checkedHistoryIds.size
+    ? `Delete selected (${checkedHistoryIds.size})`
+    : 'Delete selected';
+}
+
+function syncHistorySelectAll() {
+  const checkboxes = [...historyTableBody.querySelectorAll('.history-select-checkbox')];
+  historySelectAll.checked = checkboxes.length > 0 && checkboxes.every(cb => cb.checked);
+  historySelectAll.indeterminate = checkboxes.some(cb => cb.checked) && !historySelectAll.checked;
+}
+
+async function deleteHistoryEntries(ids) {
+  const results = await Promise.allSettled(ids.map(id =>
+    apiFetch(`${API}/commands/${id}`, { method: 'DELETE', keepalive: true })
+  ));
+  const failed = results.filter(r => r.status === 'rejected' || !r.value.ok && r.value.status !== 404);
+  ids.forEach(id => checkedHistoryIds.delete(id));
+  if (failed.length) alert(`${failed.length} of ${ids.length} failed to delete; they may reappear on reload.`);
+  await loadHistory();
+}
+
+async function loadHistory() {
+  try {
+    const res = await apiFetch(`${API}/commands?limit=200`);
+    if (!res.ok) return;
+    const commands = await res.json();
+    const seenIds = new Set(commands.map(c => c.command_id));
+    [...checkedHistoryIds].forEach(id => { if (!seenIds.has(id)) checkedHistoryIds.delete(id); });
+
+    historyTableBody.innerHTML = commands.map(c => `
+      <tr class="history-row" data-command-id="${c.command_id}">
+        <td><input type="checkbox" class="history-select-checkbox" ${checkedHistoryIds.has(c.command_id) ? 'checked' : ''}></td>
+        <td>${c.pi_id}</td>
+        <td>${actionLabel(c.action)}</td>
+        <td><span class="cmd-status ${c.status}">${c.status}</span></td>
+        <td>${new Date(c.created_at).toLocaleString()}</td>
+        <td class="capture-actions">
+          <button class="icon-btn history-toggle" title="Show result">&#9654;</button>
+          <button class="icon-btn history-delete" data-command-id="${c.command_id}" title="Delete">&#128465;</button>
+        </td>
+      </tr>
+      <tr class="history-detail-row hidden" data-command-id="${c.command_id}"><td colspan="6"><div class="result"></div></td></tr>
+    `).join('') || '<tr><td colspan="6" class="pi-log-empty">no command history yet</td></tr>';
+
+    historyTableBody.querySelectorAll('.history-select-checkbox').forEach(cb => {
+      const id = cb.closest('tr').dataset.commandId;
+      cb.addEventListener('change', () => {
+        if (cb.checked) checkedHistoryIds.add(id); else checkedHistoryIds.delete(id);
+        syncHistorySelectAll();
+        updateHistoryDeleteBtn();
+      });
+    });
+
+    historyTableBody.querySelectorAll('.history-toggle').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.closest('tr').dataset.commandId;
+        const detailRow = historyTableBody.querySelector(`.history-detail-row[data-command-id="${id}"]`);
+        const expanding = detailRow.classList.contains('hidden');
+        detailRow.classList.toggle('hidden');
+        btn.innerHTML = expanding ? '&#9660;' : '&#9654;';
+        if (!expanding) return;
+        const command = commands.find(c => c.command_id === id);
+        const resultEl = detailRow.querySelector('.result');
+        if (command && command.result) renderCommandResult(resultEl, command.action, command.result);
+        else resultEl.innerHTML = '<div class="pi-log-empty">no result</div>';
+      });
+    });
+
+    historyTableBody.querySelectorAll('.history-delete').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          await deleteHistoryEntries([btn.dataset.commandId]);
+        } finally {
+          updateHistoryDeleteBtn();
+        }
+      });
+    });
+
+    syncHistorySelectAll();
+    updateHistoryDeleteBtn();
+  } catch {
+    // backend unreachable; leave the last known list in place
+  }
+}
+
+historySelectAll.addEventListener('change', () => {
+  historyTableBody.querySelectorAll('.history-select-checkbox').forEach(cb => {
+    cb.checked = historySelectAll.checked;
+    const id = cb.closest('tr').dataset.commandId;
+    if (cb.checked) checkedHistoryIds.add(id); else checkedHistoryIds.delete(id);
+  });
+  updateHistoryDeleteBtn();
+});
+
+historyDeleteSelectedBtn.addEventListener('click', async () => {
+  const ids = [...checkedHistoryIds];
+  if (!ids.length) return;
+  if (!confirm(`Delete ${ids.length} command result(s)? This cannot be undone.`)) return;
+  historyDeleteSelectedBtn.disabled = true;
+  await deleteHistoryEntries(ids);
+});
+
+loadHistory();
+
 // --- Fleet: command builder ------------------------------------------------
 
 const actionSelect = document.getElementById('actionSelect');
@@ -953,6 +1629,7 @@ const ACTION_PARAMS = {
   ],
   signal_stats: [],
   band_channel_info: [{ name: 'interface', label: 'Interface', type: 'interface', required: true }],
+  link_info: [{ name: 'interface', label: 'Interface', type: 'interface', required: true }],
   throughput_test: [{ name: 'duration', label: 'Duration (s)', type: 'number', default: 10 }],
   set_channel: [{ name: 'channel', label: 'Channel', type: 'number' }],
   syslog: [{ name: 'lines', label: 'Lines', type: 'number', default: 100 }],
@@ -969,7 +1646,7 @@ const ACTION_PARAMS = {
   ],
   disconnect_wifi: [{ name: 'interface', label: 'Interface', type: 'interface', required: true }],
   list_interfaces: [],
-  list_interface_ips: [],
+  scan_wifi: [{ name: 'interface', label: 'Interface', type: 'interface', required: true }],
 };
 
 function currentTargetInterfaces() {
@@ -985,20 +1662,38 @@ function renderParamFields() {
   const isMulticast = targetSelect.value === 'multicast';
   paramFields.innerHTML = fields.map(f => {
     if (f.type === 'interface') {
-      // In multicast mode the interface isn't picked here at all - each
-      // targeted Pi's own configured primary interface is used instead.
+      // In multicast mode interfaces aren't picked here at all - each
+      // targeted Pi's own configured primary interfaces are used instead,
+      // fanning out one command per (Pi, interface) pair.
       if (isMulticast) {
-        return `<label>${f.label}</label><div class="hint">Auto: each Pi's configured primary interface</div>`;
+        return `<label>${f.label}</label><div class="hint">Auto: each Pi's configured primary interface(s)</div>`;
       }
-      const options = ['<option value="">' + (f.required ? 'select interface' : '(none)') + '</option>']
-        .concat(interfaces.map(i => `<option value="${i}">${i}</option>`));
-      return `<label>${f.label}</label><select class="field" data-param="${f.name}">${options.join('')}</select>`;
+      return `<label>${f.label}</label><div class="iface-dropdown-mount" data-param="${f.name}"></div>`;
+    }
+    if (f.type === 'password') {
+      return `
+        <label>${f.label}</label>
+        <div class="password-wrap">
+          <input class="field" data-param="${f.name}" type="password" ${f.default !== undefined ? `value="${f.default}"` : ''}>
+          <button type="button" class="password-toggle" title="Show password">&#128065;</button>
+        </div>
+      `;
     }
     return `
       <label>${f.label}</label>
       <input class="field" data-param="${f.name}" type="${f.type}" ${f.default !== undefined ? `value="${f.default}"` : ''}>
     `;
   }).join('');
+
+  // The dropdown widget is real DOM built by JS, not a string - each mount
+  // placeholder above gets replaced by a freshly built one, carrying the
+  // data-param over so collectParams() can still find it by name.
+  paramFields.querySelectorAll('.iface-dropdown-mount[data-param]').forEach(mount => {
+    const box = buildIfaceDropdown();
+    box.dataset.param = mount.dataset.param;
+    setDropdownOptions(box, interfaces, []);
+    mount.replaceWith(box);
+  });
 }
 
 let lastRenderedInterfacesKey = null;
@@ -1009,15 +1704,9 @@ function refreshInterfaceOptions() {
   if (key === lastRenderedInterfacesKey) return;
   lastRenderedInterfacesKey = key;
 
-  paramFields.querySelectorAll('select[data-param]').forEach(select => {
-    const fields = ACTION_PARAMS[actionSelect.value] || [];
-    const field = fields.find(f => f.name === select.dataset.param);
-    if (!field || field.type !== 'interface') return;
-    const current = select.value;
-    const options = ['<option value="">' + (field.required ? 'select interface' : '(none)') + '</option>']
-      .concat(interfaces.map(i => `<option value="${i}">${i}</option>`));
-    select.innerHTML = options.join('');
-    if (interfaces.includes(current)) select.value = current;
+  paramFields.querySelectorAll('.iface-dropdown[data-param]').forEach(box => {
+    const current = getDropdownSelected(box);
+    setDropdownOptions(box, interfaces, current.filter(v => interfaces.includes(v)));
   });
 }
 
@@ -1026,16 +1715,24 @@ targetSelect.addEventListener('change', renderParamFields);
 renderTargetSelect();
 renderParamFields();
 
+// Multi-value params (currently just "interface") collect into an array;
+// everything else stays a single scalar value, same as before.
 function collectParams() {
   const params = {};
-  paramFields.querySelectorAll('[data-param]').forEach(input => {
-    if (input.value === '') return;
-    params[input.dataset.param] = input.type === 'number' ? Number(input.value) : input.value;
+  paramFields.querySelectorAll('[data-param]').forEach(el => {
+    const name = el.dataset.param;
+    if (el.classList.contains('iface-dropdown')) {
+      const selected = getDropdownSelected(el);
+      if (selected.length) params[name] = selected;
+      return;
+    }
+    if (el.value === '') return;
+    params[name] = el.type === 'number' ? Number(el.value) : el.value;
   });
   return params;
 }
 
-function addCommandEntry(commandId, piId, action, restored) {
+function addCommandEntry(commandId, piId, action) {
   const entry = document.createElement('div');
   entry.className = 'cmd-entry';
   entry.dataset.commandId = commandId;
@@ -1066,34 +1763,8 @@ function addCommandEntry(commandId, piId, action, restored) {
     entry.remove();
   });
   cmdResults.prepend(entry);
-
-  if (restored && restored.status !== 'pending') {
-    const statusEl = entry.querySelector('.cmd-status');
-    statusEl.textContent = restored.status;
-    statusEl.className = `cmd-status ${restored.status}`;
-    if (restored.result) renderResultTable(entry.querySelector('.result'), restored.result);
-  } else {
-    pollCommand(commandId, entry, piId, action);
-  }
+  pollCommand(commandId, entry, piId, action);
 }
-
-async function loadCommandHistory() {
-  try {
-    const res = await apiFetch(`${API}/commands?limit=50`);
-    if (!res.ok) return;
-    const commands = await res.json();
-    // Server returns newest-first; add oldest-to-newest so repeated
-    // prepend() calls land the newest command back on top, as if each
-    // had just been issued in that order.
-    commands.slice().reverse().forEach(c => {
-      addCommandEntry(c.command_id, c.pi_id, c.action, c);
-    });
-  } catch {
-    // backend unreachable; command feed just starts empty
-  }
-}
-
-loadCommandHistory();
 
 function formatResultValue(value) {
   if (value === null || value === undefined) return '';
@@ -1195,6 +1866,236 @@ function renderResultTable(container, obj) {
   container.appendChild(table);
 }
 
+// scan_wifi's result is a list of nearby APs - shown as one collapsed card
+// per SSID (reusing the same card look as the interface list) instead of
+// the generic key-value table, so the scan reads as a scan rather than a
+// wall of JSON. Each card expands to BSSID/signal/mode/channel/rate/security.
+function renderWifiScanResults(container, networks) {
+  container.innerHTML = '';
+  if (!networks.length) {
+    container.innerHTML = '<div class="pi-log-empty">no networks found</div>';
+    return;
+  }
+
+  // Same SSID filter box as the per-interface "Nearby networks" scan on
+  // the Pi detail page - typing narrows this list without re-scanning.
+  const searchWrap = document.createElement('div');
+  searchWrap.className = 'pd-wifi-search-wrap';
+  searchWrap.innerHTML = `${SEARCH_ICON_SVG}<input type="text" class="pd-wifi-search-input" placeholder="Filter by SSID…">`;
+  container.appendChild(searchWrap);
+
+  const listEl = document.createElement('div');
+  listEl.className = 'pd-wifi-scan-list';
+  container.appendChild(listEl);
+
+  networks.forEach(net => {
+    const card = document.createElement('div');
+    card.className = 'pd-iface-card';
+    card.innerHTML = `
+      <div class="pd-iface-header">
+        <span class="pd-iface-name">${net.ssid || '(hidden)'}</span>
+        <span class="pd-iface-toggle">&#9654;</span>
+      </div>
+      <div class="pd-iface-body hidden"></div>
+    `;
+    const body = card.querySelector('.pd-iface-body');
+    const rows = [
+      ['BSSID', net.bssid],
+      ['Mode', net.mode],
+      ['Channel', net.channel],
+      ['Frequency', net.frequency_mhz != null ? `${net.frequency_mhz} MHz` : null],
+      ['Band', net.band],
+      ['Rate', net.rate],
+      ['Signal', net.signal_percent != null ? `${net.signal_percent}%` : null],
+      ['Security', net.security],
+    ].filter(([, v]) => v !== null && v !== undefined && v !== '');
+    body.innerHTML = rows.length
+      ? `<table class="result-table">${rows.map(([k, v]) =>
+          `<tr><td class="result-key">${k}</td><td class="result-value">${v}</td></tr>`
+        ).join('')}</table>`
+      : '<div class="pi-log-empty">no data</div>';
+    card.querySelector('.pd-iface-header').addEventListener('click', () => {
+      const expanding = body.classList.contains('hidden');
+      body.classList.toggle('hidden');
+      card.querySelector('.pd-iface-toggle').innerHTML = expanding ? '&#9660;' : '&#9654;';
+    });
+    listEl.appendChild(card);
+  });
+
+  searchWrap.querySelector('.pd-wifi-search-input').addEventListener('input', (e) => {
+    applyWifiSearchFilter(listEl, e.target.value);
+  });
+}
+
+// Single dispatch point so every place a command's result gets rendered
+// (live poll, and restored history on page reload) picks scan_wifi's
+// per-AP cards over the generic key-value table without duplicating logic.
+function renderCommandResult(container, action, result) {
+  if (action === 'scan_wifi' && result && Array.isArray(result.networks)) {
+    renderWifiScanResults(container, result.networks);
+  } else {
+    renderResultTable(container, result);
+  }
+}
+
+// --- Fleet: merged scan_wifi result across several (Pi, interface) targets
+
+// Same de-dup key an AP is identified by everywhere else: its BSSID, or
+// its SSID if the BSSID wasn't reported (hidden/odd driver output).
+function dedupeNetworks(networks) {
+  const seen = new Map();
+  networks.forEach(net => {
+    const key = net.bssid || `ssid:${net.ssid}`;
+    if (!seen.has(key)) seen.set(key, net);
+  });
+  return [...seen.values()];
+}
+
+// One merged AP row: same info table as the plain scan result, but its
+// Connect button fans connect_wifi out to every (Pi, interface) target
+// that took part in the scan, instead of just one. No per-target
+// Disconnect here - which of several Pis/interfaces is "connected" to
+// this particular AP isn't tracked on the fleet page (that's only shown
+// on a single Pi's own detail page), so only Connect is offered.
+function renderMergedWifiNetworkCard(targets, net) {
+  const open = isOpenSecurity(net.security);
+  const card = document.createElement('div');
+  card.className = 'pd-iface-card';
+  card.innerHTML = `
+    <div class="pd-iface-header">
+      <span class="pd-iface-name">${net.ssid || '(hidden)'}</span>
+      <span class="pd-iface-toggle">&#9654;</span>
+    </div>
+    <div class="pd-iface-body hidden"></div>
+  `;
+  const body = card.querySelector('.pd-iface-body');
+  const infoRows = [
+    ['BSSID', net.bssid],
+    ['Frequency', net.frequency_mhz != null ? `${net.frequency_mhz} MHz` : null],
+    ['Band', net.band],
+    ['Channel', net.channel],
+    ['Rate', net.rate],
+    ['Signal', net.signal_percent != null ? `${net.signal_percent}%` : null],
+    ['Security', net.security],
+  ].filter(([, v]) => v !== null && v !== undefined && v !== '');
+
+  body.innerHTML = `
+    <table class="result-table">${infoRows.map(([k, v]) =>
+      `<tr><td class="result-key">${k}</td><td class="result-value">${v}</td></tr>`
+    ).join('')}</table>
+    <div class="wifi-connect-row">
+      ${open ? '' : `
+        <div class="password-wrap">
+          <input type="password" class="wifi-connect-password field" placeholder="Password">
+          <button type="button" class="password-toggle" title="Show password">&#128065;</button>
+        </div>
+      `}
+      <button type="button" class="wifi-connect-btn">Connect (${targets.length} interface${targets.length === 1 ? '' : 's'})</button>
+    </div>
+    <div class="wifi-connect-status hint"></div>
+  `;
+
+  card.querySelector('.pd-iface-header').addEventListener('click', () => {
+    const expanding = body.classList.contains('hidden');
+    body.classList.toggle('hidden');
+    card.querySelector('.pd-iface-toggle').innerHTML = expanding ? '&#9660;' : '&#9654;';
+  });
+
+  const stop = (e) => e.stopPropagation();
+  const statusEl = body.querySelector('.wifi-connect-status');
+  const passwordInput = body.querySelector('.wifi-connect-password');
+  if (passwordInput) passwordInput.addEventListener('click', stop);
+
+  body.querySelector('.wifi-connect-btn').addEventListener('click', async (e) => {
+    stop(e);
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    statusEl.textContent = `Connecting on ${targets.length} interface(s)…`;
+    const password = passwordInput && passwordInput.value ? passwordInput.value : undefined;
+    const results = await Promise.allSettled(targets.map(async ({ piId, interface: iface }) => {
+      const res = await postCmd(piId, 'connect_wifi', {
+        ssid: net.ssid || undefined,
+        bssid: net.bssid || undefined,
+        password,
+        interface: iface,
+      });
+      if (!res.ok) throw new Error(`${piId}/${iface}: ${res.status} ${await res.text()}`);
+      const data = await res.json();
+      const result = await awaitCommandResult(data.command_id, 30);
+      if (!(result && result.connected)) {
+        throw new Error(`${piId}/${iface}: failed${result && result.output ? ' - ' + result.output : ''}`);
+      }
+    }));
+    const okCount = results.filter(r => r.status === 'fulfilled').length;
+    const failed = results.filter(r => r.status === 'rejected');
+    statusEl.textContent = failed.length
+      ? `Connected on ${okCount}/${targets.length}. ${failed.map(r => r.reason.message).join('; ')}`
+      : `Connected on all ${okCount} interface(s).`;
+    btn.disabled = false;
+  });
+
+  return card;
+}
+
+function renderMergedWifiScan(container, targets, networks) {
+  container.innerHTML = '';
+  if (!networks.length) {
+    container.innerHTML = '<div class="pi-log-empty">no networks found</div>';
+    return;
+  }
+  const searchWrap = document.createElement('div');
+  searchWrap.className = 'pd-wifi-search-wrap';
+  searchWrap.innerHTML = `${SEARCH_ICON_SVG}<input type="text" class="pd-wifi-search-input" placeholder="Filter by SSID…">`;
+  container.appendChild(searchWrap);
+
+  const listEl = document.createElement('div');
+  listEl.className = 'pd-wifi-scan-list';
+  container.appendChild(listEl);
+
+  networks.forEach(net => listEl.appendChild(renderMergedWifiNetworkCard(targets, net)));
+
+  searchWrap.querySelector('.pd-wifi-search-input').addEventListener('input', (e) => {
+    applyWifiSearchFilter(listEl, e.target.value);
+  });
+}
+
+// One combined feed entry for a scan_wifi fan-out across several targets -
+// replaces what would otherwise be one pending/complete entry per (Pi,
+// interface), which for a scan is just the same nearby APs reported N times.
+function addMergedScanEntry(targets, networksByTarget) {
+  const entry = document.createElement('div');
+  entry.className = 'cmd-entry';
+  const label = `scan wifi &rarr; ${targets.length} interface${targets.length === 1 ? '' : 's'} (merged)`;
+  entry.innerHTML = `
+    <div class="hdr"><span><span class="toggle">&#9660;</span>${label}</span><span><span class="cmd-status complete">complete</span></span></div>
+    <div class="result"></div>
+  `;
+  entry.querySelector('.hdr').addEventListener('click', () => {
+    entry.classList.toggle('collapsed');
+    entry.querySelector('.toggle').innerHTML = entry.classList.contains('collapsed') ? '&#9654;' : '&#9660;';
+  });
+  cmdResults.prepend(entry);
+
+  const merged = dedupeNetworks(networksByTarget.flat());
+  renderMergedWifiScan(entry.querySelector('.result'), targets, merged);
+}
+
+async function sendScanWifiFanOut(targets, params) {
+  const results = await Promise.allSettled(targets.map(({ piId, interface: iface }) =>
+    sendCommandAwaitResult(piId, 'scan_wifi', { ...params, interface: iface })
+  ));
+  const networksByTarget = [];
+  const failed = [];
+  results.forEach((r, i) => {
+    if (r.status === 'fulfilled') networksByTarget.push((r.value && r.value.networks) || []);
+    else failed.push(`${targets[i].piId}/${targets[i].interface}: ${r.reason.message}`);
+  });
+  if (failed.length) {
+    alert(`${failed.length} of ${targets.length} scan(s) failed:\n${failed.join('\n')}`);
+  }
+  addMergedScanEntry(targets, networksByTarget);
+}
+
 function pushToPiLogPanel(piId, lines) {
   if (piId === 'all') return;
   let entry = piRows.get(piId);
@@ -1214,7 +2115,7 @@ async function pollCommand(commandId, entry, piId, action) {
         const data = await res.json();
         statusEl.textContent = data.status;
         statusEl.className = `cmd-status ${data.status}`;
-        if (data.result) renderResultTable(resultEl, data.result);
+        if (data.result) renderCommandResult(resultEl, action, data.result);
         if (data.status === 'complete' && action === 'syslog' && Array.isArray(data.result?.logs)) {
           pushToPiLogPanel(piId, data.result.logs);
         }
@@ -1241,10 +2142,31 @@ async function sendOneCommand(url, action, params) {
   addCommandEntry(data.command_id, data.pi_id, data.action);
 }
 
+async function sendFanOut(tasks) {
+  const results = await Promise.allSettled(tasks);
+  const failed = results.filter(r => r.status === 'rejected');
+  if (failed.length) {
+    alert(`${failed.length} of ${tasks.length} command(s) failed to send:\n` +
+      failed.map(r => r.reason.message).join('\n'));
+  }
+}
+
+async function sendCommandAwaitResult(piId, action, params) {
+  const res = await apiFetch(`${API}/pis/${encodeURIComponent(piId)}/cmd`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, params }),
+  });
+  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  const data = await res.json();
+  return awaitCommandResult(data.command_id, 30);
+}
+
 sendCmdBtn.addEventListener('click', async () => {
   const target = targetSelect.value;
   const action = actionSelect.value;
   const params = collectParams();
+  const needsInterface = (ACTION_PARAMS[action] || []).some(f => f.type === 'interface');
 
   sendCmdBtn.disabled = true;
   try {
@@ -1256,22 +2178,46 @@ sendCmdBtn.addEventListener('click', async () => {
         alert('No Pis checked in the table for multicast.');
         return;
       }
-      const needsInterface = (ACTION_PARAMS[action] || []).some(f => f.type === 'interface');
-      // One command per checked Pi, dispatched independently (no backend
-      // concept of "send to this subset" to piggyback on), each using that
-      // Pi's own configured primary interface rather than one shared value.
-      const results = await Promise.allSettled(targetIds.map(piId => {
+      // One command per (checked Pi, that Pi's own primary interface) pair,
+      // dispatched independently - no backend concept of "send to this
+      // subset" to piggyback on, and each Pi can have several primary
+      // interfaces now, so a single Pi can fan out into several commands.
+      const targets = [];
+      const rejections = [];
+      for (const piId of targetIds) {
         const pi = pis.find(p => p.pi_id === piId);
-        if (needsInterface && !(pi && pi.primary_interface)) {
-          return Promise.reject(new Error(`${piId}: no primary interface configured`));
+        if (!needsInterface) {
+          targets.push({ piId, interface: null });
+          continue;
         }
-        const perPiParams = needsInterface ? { ...params, interface: pi.primary_interface } : params;
-        return sendOneCommand(`${API}/pis/${encodeURIComponent(piId)}/cmd`, action, perPiParams);
-      }));
-      const failed = results.filter(r => r.status === 'rejected');
-      if (failed.length) {
-        alert(`${failed.length} of ${targetIds.length} command(s) failed to send:\n` +
-          failed.map(r => r.reason.message).join('\n'));
+        const ifaces = (pi && pi.primary_interfaces) || [];
+        if (!ifaces.length) {
+          rejections.push(`${piId}: no primary interface configured`);
+          continue;
+        }
+        ifaces.forEach(iface => targets.push({ piId, interface: iface }));
+      }
+      if (rejections.length) alert(rejections.join('\n'));
+
+      if (action === 'scan_wifi' && targets.length > 1) {
+        // Scanning the same air from several interfaces just reports the
+        // same nearby APs several times - merge into one de-duplicated
+        // result instead of one feed entry per interface.
+        await sendScanWifiFanOut(targets, params);
+      } else {
+        await sendFanOut(targets.map(({ piId, interface: iface }) =>
+          sendOneCommand(`${API}/pis/${encodeURIComponent(piId)}/cmd`, action, iface ? { ...params, interface: iface } : params)
+        ));
+      }
+    } else if (needsInterface && Array.isArray(params.interface)) {
+      // Single Pi target, but multiple interfaces checked - one command per
+      // checked interface, same fan-out principle as multicast.
+      if (action === 'scan_wifi' && params.interface.length > 1) {
+        await sendScanWifiFanOut(params.interface.map(iface => ({ piId: target, interface: iface })), params);
+      } else {
+        await sendFanOut(params.interface.map(iface =>
+          sendOneCommand(`${API}/pis/${encodeURIComponent(target)}/cmd`, action, { ...params, interface: iface })
+        ));
       }
     } else {
       await sendOneCommand(`${API}/pis/${encodeURIComponent(target)}/cmd`, action, params);
@@ -1357,6 +2303,642 @@ function flushLineQueue(container, state) {
   if (nearBottom) container.scrollTop = container.scrollHeight;
 }
 
+// --- Pi detail page ---------------------------------------------------
+// Reached by clicking a Pi's id in the fleet table (#pi/<id> in the hash).
+// One command bar scoped to just that one Pi, with the exact same action
+// list as the fleet command builder (ACTION_PARAMS, in the same order),
+// just always targeting this one piId instead of an arbitrary target.
+
+function actionLabel(action) {
+  return action.replace(/_/g, ' ');
+}
+
+function piInterfaces(piId) {
+  const pi = pis.find(p => p.pi_id === piId);
+  return (pi && pi.metadata && Array.isArray(pi.metadata.interfaces)) ? pi.metadata.interfaces : [];
+}
+
+function renderDetailParamFields(container, actionSelectEl, piId) {
+  const fields = ACTION_PARAMS[actionSelectEl.value] || [];
+  const interfaces = piInterfaces(piId);
+  container.innerHTML = fields.map(f => {
+    if (f.type === 'interface') {
+      return `<label>${f.label}</label><div class="iface-dropdown-mount" data-param="${f.name}"></div>`;
+    }
+    if (f.type === 'password') {
+      return `
+        <label>${f.label}</label>
+        <div class="password-wrap">
+          <input class="field" data-param="${f.name}" type="password" ${f.default !== undefined ? `value="${f.default}"` : ''}>
+          <button type="button" class="password-toggle" title="Show password">&#128065;</button>
+        </div>
+      `;
+    }
+    return `
+      <label>${f.label}</label>
+      <input class="field" data-param="${f.name}" type="${f.type}" ${f.default !== undefined ? `value="${f.default}"` : ''}>
+    `;
+  }).join('');
+
+  container.querySelectorAll('.iface-dropdown-mount[data-param]').forEach(mount => {
+    const box = buildIfaceDropdown();
+    box.dataset.param = mount.dataset.param;
+    setDropdownOptions(box, interfaces, []);
+    mount.replaceWith(box);
+  });
+}
+
+function collectDetailParams(container) {
+  const params = {};
+  container.querySelectorAll('[data-param]').forEach(el => {
+    const name = el.dataset.param;
+    if (el.classList.contains('iface-dropdown')) {
+      const selected = getDropdownSelected(el);
+      if (selected.length) params[name] = selected;
+      return;
+    }
+    if (el.value === '') return;
+    params[name] = el.type === 'number' ? Number(el.value) : el.value;
+  });
+  return params;
+}
+
+function detailAddCommandEntry(container, commandId, piId, action) {
+  const entry = document.createElement('div');
+  entry.className = 'cmd-entry';
+  entry.dataset.commandId = commandId;
+  entry.innerHTML = `
+    <div class="hdr"><span><span class="toggle">&#9660;</span>${action}</span><span><span class="cmd-status pending">pending</span></span></div>
+    <div class="result"></div>
+  `;
+  entry.querySelector('.hdr').addEventListener('click', () => {
+    entry.classList.toggle('collapsed');
+    entry.querySelector('.toggle').innerHTML = entry.classList.contains('collapsed') ? '&#9654;' : '&#9660;';
+  });
+  container.prepend(entry);
+  pollCommand(commandId, entry, piId, action);
+}
+
+async function sendDetailCommand(actionSelectEl, paramsContainer, resultsContainer, piId) {
+  const action = actionSelectEl.value;
+  const params = collectDetailParams(paramsContainer);
+  const needsInterface = (ACTION_PARAMS[action] || []).some(f => f.type === 'interface');
+  try {
+    if (needsInterface && Array.isArray(params.interface)) {
+      if (!params.interface.length) {
+        alert('Select at least one interface.');
+        return;
+      }
+      const tasks = params.interface.map(async iface => {
+        const res = await postCmd(piId, action, { ...params, interface: iface });
+        if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+        const data = await res.json();
+        detailAddCommandEntry(resultsContainer, data.command_id, data.pi_id, data.action);
+      });
+      const results = await Promise.allSettled(tasks);
+      const failed = results.filter(r => r.status === 'rejected');
+      if (failed.length) {
+        alert(`${failed.length} command(s) failed to send:\n` + failed.map(r => r.reason.message).join('\n'));
+      }
+    } else {
+      const res = await postCmd(piId, action, params);
+      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+      const data = await res.json();
+      detailAddCommandEntry(resultsContainer, data.command_id, data.pi_id, data.action);
+    }
+  } catch (err) {
+    alert(`Command failed: ${err.message}`);
+  }
+}
+
+function setupDetailBar(actionSelectEl, paramsContainer, sendBtn, resultsContainer, actions, piId) {
+  actionSelectEl.innerHTML = actions.map(a => `<option value="${a}">${actionLabel(a)}</option>`).join('');
+  renderDetailParamFields(paramsContainer, actionSelectEl, piId);
+  actionSelectEl.onchange = () => renderDetailParamFields(paramsContainer, actionSelectEl, piId);
+  sendBtn.onclick = () => sendDetailCommand(actionSelectEl, paramsContainer, resultsContainer, piId);
+  resultsContainer.innerHTML = '';
+}
+
+let detailPiId = null;
+let lastDetailInterfacesKey = null;
+let detailLogEntry = null;
+
+function renderDetailInfo(piId) {
+  const pi = pis.find(p => p.pi_id === piId);
+  document.getElementById('pdInfoFields').innerHTML = `
+    <div class="pd-info-row"><span class="k">IP</span><span class="v">${pi ? (pi.ip_address || '') : ''}</span></div>
+    <div class="pd-info-row"><span class="k">Role</span><span class="v">${pi ? (pi.role || '') : ''}</span></div>
+    <div class="pd-info-row"><span class="k">Status</span><span class="v">${pi ? statusBadge(pi.status) : ''}</span></div>
+    <div class="pd-info-row"><span class="k">Last seen</span><span class="v">${pi && pi.last_seen ? new Date(pi.last_seen).toLocaleString() : ''}</span></div>
+  `;
+}
+
+function isWifiInterface(name) {
+  return /^(wl|wlan)/.test(name);
+}
+
+// Classic curved-bars wifi glyph (like the Windows taskbar icon), drawn in
+// currentColor so the connected/disconnected/unknown CSS classes can just
+// recolor it instead of swapping emoji glyphs.
+const WIFI_ICON_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M1 9a15.5 15.5 0 0 1 22 0"/>
+  <path d="M5 13.5a9.5 9.5 0 0 1 14 0"/>
+  <path d="M9 18a3.5 3.5 0 0 1 6 0"/>
+  <circle cx="12" cy="21" r="1.2" fill="currentColor" stroke="none"/>
+</svg>`;
+
+// Refresh/radar glyph for the "scan for nearby networks" trigger button -
+// distinct from the magnifying glass below, which is for typing/filtering
+// the already-scanned list rather than triggering a new scan.
+const SCAN_TRIGGER_ICON_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M21 12a9 9 0 1 1-3-6.7"/>
+  <polyline points="21 3 21 9 15 9"/>
+</svg>`;
+
+// Magnifying-glass glyph for the SSID filter box that narrows down an
+// already-scanned network list by typed text.
+const SEARCH_ICON_SVG = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="11" cy="11" r="7"/>
+  <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+</svg>`;
+
+// Per-Pi caches for the expandable interface cards below - list_interfaces
+// is fetched once per Pi visit and reused for every card; link_info is
+// fetched once per wifi interface (by the icon refresh) and reused if the
+// card is later expanded, instead of firing it again.
+let detailIfaceDetailsCache = null;   // array from list_interfaces, or null until fetched
+let detailLinkInfoCache = {};         // interface name -> link_info result
+
+// Queries link_info for one wifi-capable interface and colors its icon:
+// green (connected, with SSID in the tooltip) or dim gray (not connected).
+// Fired once per wifi interface whenever the interface list is (re)built.
+async function refreshWifiIcon(piId, iface) {
+  const iconEl = document.querySelector(`#pdInterfaceList .wifi-icon[data-iface="${CSS.escape(iface)}"]`);
+  if (!iconEl) return;
+  try {
+    const res = await postCmd(piId, 'link_info', { interface: iface });
+    if (!res.ok) return;
+    const data = await res.json();
+    const result = await awaitCommandResult(data.command_id, 10);
+    detailLinkInfoCache[iface] = result;
+    const el = document.querySelector(`#pdInterfaceList .wifi-icon[data-iface="${CSS.escape(iface)}"]`);
+    if (!el) return;
+    const connected = !!(result && result.connected);
+    el.classList.remove('wifi-unknown');
+    el.classList.add(connected ? 'wifi-connected' : 'wifi-disconnected');
+    el.title = connected ? `Wi-Fi connected${result.ssid ? ' — ' + result.ssid : ''}` : 'Wi-Fi not connected';
+    const card = el.closest('.pd-iface-card');
+    const mark = card && card.querySelector('.pd-iface-connected-mark');
+    if (mark) {
+      mark.classList.toggle('hidden', !connected);
+      if (connected) mark.textContent = result.ssid ? `connected — ${result.ssid}` : 'connected';
+    }
+    const body = card && card.querySelector('.pd-iface-body');
+    if (body && !body.classList.contains('hidden')) renderDetailIfaceBody(body, iface);
+  } catch {
+    // leave as "unknown" - backend/Pi unreachable or command timed out
+  }
+}
+
+// Only ever touches the '.pd-iface-info' sub-div, not the whole card body -
+// the wifi scan section (button + scanned-network cards) lives in a sibling
+// div so a link_info refresh here doesn't wipe out an in-progress scan.
+function renderDetailIfaceBody(body, name) {
+  const info = body.querySelector('.pd-iface-info') || body;
+  const details = (detailIfaceDetailsCache || []).find(d => d.name === name);
+  const link = detailLinkInfoCache[name];
+  const rows = [];
+  if (details) {
+    rows.push(['State', details.state]);
+    rows.push(['Type', details.type]);
+    rows.push(['MAC address', details.mac_address]);
+    rows.push(['IP address', details.ip_address || '—']);
+  }
+  if (link) {
+    rows.push(['Wi-Fi connected', link.connected ? 'yes' : 'no']);
+    if (link.ssid) rows.push(['SSID', link.ssid]);
+    if (link.bssid) rows.push(['BSSID', link.bssid]);
+    if (link.frequency_mhz != null) rows.push(['Frequency', `${link.frequency_mhz} MHz`]);
+    if (link.band) rows.push(['Band', link.band]);
+    if (link.signal_dbm != null) rows.push(['Signal', `${link.signal_dbm} dBm`]);
+    if (link.rx_bitrate_mbps != null) rows.push(['RX bitrate', `${link.rx_bitrate_mbps} Mbps`]);
+    if (link.tx_bitrate_mbps != null) rows.push(['TX bitrate', `${link.tx_bitrate_mbps} Mbps`]);
+  }
+  info.innerHTML = rows.length
+    ? `<table class="result-table">${rows.map(([k, v]) =>
+        `<tr><td class="result-key">${k}</td><td class="result-value">${v ?? ''}</td></tr>`
+      ).join('')}</table>`
+    : '<div class="pi-log-empty">no data</div>';
+}
+
+function isOpenSecurity(security) {
+  return !security || security === '--' || /^(none|open)$/i.test(security);
+}
+
+// One scanned AP, rendered as the same collapsed-card widget used
+// elsewhere (interface list, plain scan_wifi results), but with a
+// "connected" mark against the interface's current link_info and an
+// inline Connect/Disconnect control using the same fields as the
+// connect_wifi action (ssid/bssid/password/interface).
+function renderWifiNetworkCard(piId, iface, net, connectedBssid) {
+  const isConnected = !!(connectedBssid && net.bssid && connectedBssid === net.bssid);
+  const open = isOpenSecurity(net.security);
+
+  const card = document.createElement('div');
+  card.className = 'pd-iface-card';
+  card.innerHTML = `
+    <div class="pd-iface-header">
+      <span class="pd-iface-name">${net.ssid || '(hidden)'}</span>
+      ${isConnected ? '<span class="badge badge-online">connected</span>' : ''}
+      <span class="pd-iface-toggle">&#9654;</span>
+    </div>
+    <div class="pd-iface-body hidden"></div>
+  `;
+  const body = card.querySelector('.pd-iface-body');
+  const infoRows = [
+    ['SSID', net.ssid || '(hidden)'],
+    ['BSSID', net.bssid],
+    ['Frequency', net.frequency_mhz != null ? `${net.frequency_mhz} MHz` : null],
+    ['Band', net.band],
+    ['Channel', net.channel],
+    ['Rate', net.rate],
+    ['Signal', net.signal_percent != null ? `${net.signal_percent}%` : null],
+    ['Security', net.security],
+  ].filter(([, v]) => v !== null && v !== undefined && v !== '');
+
+  body.innerHTML = `
+    <table class="result-table">${infoRows.map(([k, v]) =>
+      `<tr><td class="result-key">${k}</td><td class="result-value">${v}</td></tr>`
+    ).join('')}</table>
+    <div class="wifi-connect-row">
+      ${isConnected
+        ? `<button type="button" class="wifi-disconnect-btn">Disconnect</button>`
+        : `${open ? '' : `
+            <div class="password-wrap">
+              <input type="password" class="wifi-connect-password field" placeholder="Password">
+              <button type="button" class="password-toggle" title="Show password">&#128065;</button>
+            </div>
+          `}
+          <button type="button" class="wifi-connect-btn">Connect</button>`
+      }
+    </div>
+    <div class="wifi-connect-status hint"></div>
+  `;
+
+  card.querySelector('.pd-iface-header').addEventListener('click', () => {
+    const expanding = body.classList.contains('hidden');
+    body.classList.toggle('hidden');
+    card.querySelector('.pd-iface-toggle').innerHTML = expanding ? '&#9660;' : '&#9654;';
+  });
+
+  const statusEl = body.querySelector('.wifi-connect-status');
+  const stop = (e) => e.stopPropagation();
+
+  const connectBtn = body.querySelector('.wifi-connect-btn');
+  if (connectBtn) {
+    connectBtn.addEventListener('click', async (e) => {
+      stop(e);
+      const passwordInput = body.querySelector('.wifi-connect-password');
+      connectBtn.disabled = true;
+      statusEl.textContent = 'Connecting…';
+      try {
+        const res = await postCmd(piId, 'connect_wifi', {
+          ssid: net.ssid || undefined,
+          bssid: net.bssid || undefined,
+          password: passwordInput && passwordInput.value ? passwordInput.value : undefined,
+          interface: iface,
+        });
+        if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+        const data = await res.json();
+        const result = await awaitCommandResult(data.command_id, 30);
+        statusEl.textContent = result && result.connected ? 'Connected.' : `Failed to connect${result && result.output ? ': ' + result.output : ''}`;
+        delete detailLinkInfoCache[iface];
+        refreshWifiIcon(piId, iface);
+      } catch (err) {
+        statusEl.textContent = `Failed: ${err.message}`;
+      } finally {
+        connectBtn.disabled = false;
+      }
+    });
+  }
+  const passwordInput = body.querySelector('.wifi-connect-password');
+  if (passwordInput) passwordInput.addEventListener('click', stop);
+
+  const disconnectBtn = body.querySelector('.wifi-disconnect-btn');
+  if (disconnectBtn) {
+    disconnectBtn.addEventListener('click', async (e) => {
+      stop(e);
+      disconnectBtn.disabled = true;
+      statusEl.textContent = 'Disconnecting…';
+      try {
+        const res = await postCmd(piId, 'disconnect_wifi', { interface: iface });
+        if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+        const data = await res.json();
+        await awaitCommandResult(data.command_id, 15);
+        statusEl.textContent = 'Disconnected.';
+        delete detailLinkInfoCache[iface];
+        refreshWifiIcon(piId, iface);
+      } catch (err) {
+        statusEl.textContent = `Failed: ${err.message}`;
+      } finally {
+        disconnectBtn.disabled = false;
+      }
+    });
+  }
+
+  return card;
+}
+
+// Icon-only toggle (refresh glyph, rotates like a chevron) that triggers a
+// fresh scan and shows/hides the results panel - collapsing just hides the
+// last scan, expanding always re-scans since which APs are in range/what
+// their signal is goes stale almost immediately.
+async function toggleWifiScan(piId, iface, btn, resultsEl, listEl) {
+  const expanding = resultsEl.classList.contains('hidden');
+  resultsEl.classList.toggle('hidden');
+  btn.classList.toggle('open', expanding);
+  if (expanding) await scanWifiNetworks(piId, iface, listEl, btn);
+}
+
+// Hides scanned-network cards whose SSID doesn't contain the typed text -
+// pure client-side narrowing of the last scan, no re-scan involved.
+function applyWifiSearchFilter(listEl, query) {
+  const q = query.trim().toLowerCase();
+  listEl.querySelectorAll('.pd-iface-card').forEach(card => {
+    const ssid = (card.querySelector('.pd-iface-name')?.textContent || '').toLowerCase();
+    card.classList.toggle('hidden', !!q && !ssid.includes(q));
+  });
+}
+
+async function scanWifiNetworks(piId, iface, listEl, scanBtn) {
+  scanBtn.disabled = true;
+  listEl.innerHTML = '<div class="pi-log-empty">scanning…</div>';
+  try {
+    const res = await postCmd(piId, 'scan_wifi', { interface: iface });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    const data = await res.json();
+    const result = await awaitCommandResult(data.command_id, 30);
+    const networks = (result && result.networks) || [];
+    listEl.innerHTML = '';
+    if (!networks.length) {
+      listEl.innerHTML = '<div class="pi-log-empty">no networks found</div>';
+      return;
+    }
+    const connectedBssid = (detailLinkInfoCache[iface] && detailLinkInfoCache[iface].connected)
+      ? detailLinkInfoCache[iface].bssid : null;
+    networks.forEach(net => listEl.appendChild(renderWifiNetworkCard(piId, iface, net, connectedBssid)));
+    const searchInput = listEl.closest('.pd-wifi-scan-results')?.querySelector('.pd-wifi-search-input');
+    if (searchInput && searchInput.value) applyWifiSearchFilter(listEl, searchInput.value);
+  } catch (err) {
+    listEl.innerHTML = `<div class="pi-log-empty">scan failed: ${err.message}</div>`;
+  } finally {
+    scanBtn.disabled = false;
+  }
+}
+
+// In-flight list_interfaces fetch, so the eager per-interface load below
+// (fired once per interface as soon as the page opens) issues exactly one
+// list_interfaces command instead of one per interface racing each other.
+let detailIfaceDetailsPromise = null;
+
+async function fetchDetailIfaceDetails(piId) {
+  if (detailIfaceDetailsCache !== null) return detailIfaceDetailsCache;
+  if (!detailIfaceDetailsPromise) {
+    detailIfaceDetailsPromise = (async () => {
+      try {
+        const res = await postCmd(piId, 'list_interfaces', {});
+        if (res.ok) {
+          const data = await res.json();
+          const result = await awaitCommandResult(data.command_id, 10);
+          detailIfaceDetailsCache = (result && result.interfaces) || [];
+        } else {
+          detailIfaceDetailsCache = [];
+        }
+      } catch {
+        detailIfaceDetailsCache = [];
+      }
+      return detailIfaceDetailsCache;
+    })();
+  }
+  return detailIfaceDetailsPromise;
+}
+
+// Fetches whatever's missing for one card - list_interfaces (shared across
+// all cards, fetched at most once per Pi visit) and, for wifi interfaces,
+// link_info (usually already cached by refreshWifiIcon by the time a user
+// expands the card).
+async function loadDetailIfaceInfo(piId, name) {
+  await fetchDetailIfaceDetails(piId);
+  if (isWifiInterface(name) && !(name in detailLinkInfoCache)) {
+    try {
+      const res = await postCmd(piId, 'link_info', { interface: name });
+      if (res.ok) {
+        const data = await res.json();
+        detailLinkInfoCache[name] = await awaitCommandResult(data.command_id, 10);
+      }
+    } catch {
+      // leave unset - body will just omit the wifi rows
+    }
+  }
+}
+
+// Info is already fetched eagerly (see renderDetailInterfaceList), so
+// expanding a card just reveals it - only re-fetch if that eager load
+// hasn't landed yet (e.g. a slow/unresponsive Pi) or hasn't run at all.
+async function toggleDetailIfaceCard(piId, card, name) {
+  const body = card.querySelector('.pd-iface-body');
+  const info = body.querySelector('.pd-iface-info');
+  const toggle = card.querySelector('.pd-iface-toggle');
+  const expanding = body.classList.contains('hidden');
+  body.classList.toggle('hidden');
+  toggle.innerHTML = expanding ? '&#9660;' : '&#9654;';
+  if (!expanding) return;
+  if (!info.innerHTML.trim()) {
+    info.innerHTML = '<div class="pi-log-empty">loading…</div>';
+    await loadDetailIfaceInfo(piId, name);
+  }
+  renderDetailIfaceBody(body, name);
+}
+
+function renderDetailInterfaceList(piId) {
+  const interfaces = piInterfaces(piId);
+  const list = document.getElementById('pdInterfaceList');
+  list.innerHTML = interfaces.length ? interfaces.map(name => `
+    <div class="pd-iface-card" data-iface="${name}">
+      <div class="pd-iface-header">
+        <span class="pd-iface-name">${name}</span>
+        ${isWifiInterface(name) ? `
+          <span class="wifi-icon wifi-unknown" data-iface="${name}" title="checking…">${WIFI_ICON_SVG}</span>
+          <span class="pd-iface-connected-mark badge badge-online hidden" data-iface="${name}"></span>
+        ` : ''}
+        <span class="pd-iface-toggle">&#9654;</span>
+      </div>
+      <div class="pd-iface-body hidden">
+        <div class="pd-iface-info"></div>
+        ${isWifiInterface(name) ? `
+          <div class="pd-wifi-scan-heading">
+            <span>Nearby networks</span>
+            <button type="button" class="pd-scan-wifi-toggle icon-btn" title="Scan for nearby networks">${SCAN_TRIGGER_ICON_SVG}</button>
+          </div>
+          <div class="pd-wifi-scan-results hidden">
+            <div class="pd-wifi-search-wrap">
+              ${SEARCH_ICON_SVG}
+              <input type="text" class="pd-wifi-search-input" placeholder="Filter by SSID…">
+            </div>
+            <div class="pd-wifi-scan-list"></div>
+          </div>
+        ` : ''}
+      </div>
+    </div>
+  `).join('') : '<div class="pi-log-empty">no interfaces</div>';
+
+  list.querySelectorAll('.pd-iface-card').forEach(card => {
+    const name = card.dataset.iface;
+    card.querySelector('.pd-iface-header').addEventListener('click', () => toggleDetailIfaceCard(piId, card, name));
+  });
+
+  list.querySelectorAll('.pd-scan-wifi-toggle').forEach(btn => {
+    const card = btn.closest('.pd-iface-card');
+    const name = card.dataset.iface;
+    const resultsEl = card.querySelector('.pd-wifi-scan-results');
+    const listEl = card.querySelector('.pd-wifi-scan-list');
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleWifiScan(piId, name, btn, resultsEl, listEl);
+    });
+    const searchInput = card.querySelector('.pd-wifi-search-input');
+    searchInput.addEventListener('click', (e) => e.stopPropagation());
+    searchInput.addEventListener('input', () => applyWifiSearchFilter(listEl, searchInput.value));
+  });
+
+  interfaces.filter(isWifiInterface).forEach(name => refreshWifiIcon(piId, name));
+
+  // Load every interface's list_interfaces/link_info info as soon as the
+  // page is shown, not just when its card is expanded - so opening a card
+  // shows data immediately instead of a "loading…" flash.
+  interfaces.forEach(async (name) => {
+    await loadDetailIfaceInfo(piId, name);
+    const card = list.querySelector(`.pd-iface-card[data-iface="${CSS.escape(name)}"]`);
+    const body = card && card.querySelector('.pd-iface-body');
+    if (body) renderDetailIfaceBody(body, name);
+  });
+}
+
+// Middle panel: syslog/tcpdump log windows, built once per visit to the
+// detail page and reusing the same connectPiLog/toggleCapture/
+// setStreamInterface functions the fleet table's inline rows use - those
+// only ever touch the entry object by key, so a plain object standing in
+// for a table row's state works without any changes to that logic. Unlike
+// the fleet table, both windows are always "expanded" here (no toggle),
+// so the socket opens immediately and closes when leaving the page.
+function buildDetailLogEntry(piId) {
+  const entry = { captureState: null, pcapState: null, ws: null };
+  document.querySelectorAll('#pdLogPanel .pd-log-block').forEach(block => {
+    const kind = block.dataset.kind;
+    const spec = PANELS.find(p => p.kind === kind);
+    entry[spec.panelKey] = block.querySelector('.pi-log-panel');
+    entry[spec.panelKey].innerHTML = '<div class="pi-log-empty">waiting for messages…</div>';
+
+    const ifaceSelect = block.querySelector('.pi-stream-iface');
+    entry[kind + 'IfaceSelect'] = ifaceSelect;
+    ifaceSelect.value = '';
+    ifaceSelect.onchange = kind === 'tcpdump' ? null : (e) => setStreamInterface(piId, entry, spec, e.target.value);
+
+    const captureBtn = block.querySelector('.pi-log-capture');
+    captureBtn.innerHTML = '&#9210;';
+    captureBtn.title = 'Start Capture';
+    captureBtn.classList.remove('recording');
+    captureBtn.onclick = () => toggleCapture(piId, spec, entry, captureBtn);
+
+    block.querySelector('.pi-log-clear').onclick = () => clearPanel(piId, spec, entry[spec.panelKey]);
+  });
+  return entry;
+}
+
+function refreshDetailLogIfaceOptions(piId, entry) {
+  const interfaces = piInterfaces(piId);
+  PANELS.forEach(spec => {
+    const select = entry[spec.kind + 'IfaceSelect'];
+    if (!select) return;
+    const current = select.value;
+    select.innerHTML = '<option value="">select interface</option>' +
+      interfaces.map(i => `<option value="${i}">${i}</option>`).join('');
+    if (interfaces.includes(current)) select.value = current;
+  });
+}
+
+function closeDetailLogEntry() {
+  if (detailLogEntry && detailLogEntry.ws) detailLogEntry.ws.close();
+  detailLogEntry = null;
+}
+
+// Called on every refreshPis() poll (5s) so status/last-seen/interfaces
+// stay current without rebuilding the whole page (which would tear down
+// the log WebSocket and reset in-progress captures every 5s).
+function refreshDetailView() {
+  if (!detailPiId || !document.getElementById('piDetail').classList.contains('active')) return;
+  renderDetailInfo(detailPiId);
+
+  const interfaces = piInterfaces(detailPiId);
+  const key = JSON.stringify(interfaces);
+  if (key === lastDetailInterfacesKey) return;
+  lastDetailInterfacesKey = key;
+
+  document.getElementById('pdActionParams').querySelectorAll('.iface-dropdown[data-param]').forEach(box => {
+    const current = getDropdownSelected(box);
+    setDropdownOptions(box, interfaces, current.filter(v => interfaces.includes(v)));
+  });
+  renderDetailInterfaceList(detailPiId);
+  if (detailLogEntry) refreshDetailLogIfaceOptions(detailPiId, detailLogEntry);
+}
+
+function showPiDetail(piId) {
+  closeDetailLogEntry();
+  detailPiId = piId;
+  lastDetailInterfacesKey = null;
+  detailIfaceDetailsCache = null;
+  detailIfaceDetailsPromise = null;
+  detailLinkInfoCache = {};
+  tabs.forEach(b => b.classList.remove('active'));
+  views.forEach(v => v.classList.remove('active'));
+  document.getElementById('piDetail').classList.add('active');
+  document.getElementById('piDetailTitle').textContent = piId;
+
+  renderDetailInfo(piId);
+  renderDetailInterfaceList(piId);
+
+  detailLogEntry = buildDetailLogEntry(piId);
+  refreshDetailLogIfaceOptions(piId, detailLogEntry);
+  detailLogEntry.ws = connectPiLog(piId, detailLogEntry);
+
+  setupDetailBar(
+    document.getElementById('pdAction'), document.getElementById('pdActionParams'),
+    document.getElementById('pdActionSendBtn'), document.getElementById('pdActionResults'),
+    Object.keys(ACTION_PARAMS), piId
+  );
+}
+
+function showFleetView() {
+  closeDetailLogEntry();
+  detailPiId = null;
+  document.getElementById('piDetail').classList.remove('active');
+  tabs.forEach(b => b.classList.remove('active'));
+  views.forEach(v => v.classList.remove('active'));
+  tabs[0].classList.add('active');
+  document.getElementById('fleet').classList.add('active');
+}
+
+document.getElementById('piDetailBack').addEventListener('click', () => {
+  location.hash = '';
+});
+
+function routeDetail() {
+  const m = location.hash.match(/^#pi\/(.+)$/);
+  if (m) showPiDetail(decodeURIComponent(m[1]));
+  else showFleetView();
+}
+window.addEventListener('hashchange', routeDetail);
+routeDetail();
 </script>
 </body>
 </html>

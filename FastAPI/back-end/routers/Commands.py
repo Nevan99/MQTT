@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 from database.database import get_session
 from database.models import Command, Pi
 from schemas.schemas import CommandRequest, CommandOut
-from service.mqtt_service import mqtt_service
+from service.mqtt_service import mqtt_service, TRANSIENT_ACTIONS
 from service.auth import get_current_user
 
 router = APIRouter(tags=["commands"], dependencies=[Depends(get_current_user)])
@@ -15,6 +15,21 @@ router = APIRouter(tags=["commands"], dependencies=[Depends(get_current_user)])
 
 def _dispatch(pi_id: str, req: CommandRequest, session: Session) -> CommandOut:
     command_id = str(uuid.uuid4())
+
+    # link_info (and any other TRANSIENT_ACTIONS) is polled far too often -
+    # by wifi status icons, connected marks, interface cards, wifi scans -
+    # to persist as a Command row; it's tracked in memory only, still
+    # correlated by command_id the same way, but never written to the DB
+    # or shown in command history.
+    if req.action in TRANSIENT_ACTIONS:
+        entry = mqtt_service.register_transient_command(command_id, pi_id, req.action)
+        mqtt_service.publish_command(pi_id, command_id, req.action, req.params)
+        return CommandOut(
+            command_id=command_id, pi_id=pi_id, action=req.action,
+            status=entry["status"], result=None,
+            created_at=entry["created_at"], completed_at=None,
+        )
+
     command = Command(
         command_id=command_id,
         pi_id=pi_id,
@@ -67,6 +82,9 @@ def list_commands(limit: int = 50, session: Session = Depends(get_session)):
 
 @router.get("/commands/{command_id}", response_model=CommandOut)
 def get_command(command_id: str, session: Session = Depends(get_session)):
+    transient = mqtt_service.get_transient_command(command_id)
+    if transient is not None:
+        return CommandOut(**transient)
     command = session.get(Command, command_id)
     if command is None:
         raise HTTPException(status_code=404, detail="Command not found")
@@ -82,6 +100,8 @@ def get_command(command_id: str, session: Session = Depends(get_session)):
 def delete_command(command_id: str, session: Session = Depends(get_session)):
     command = session.get(Command, command_id)
     if command is None:
+        if mqtt_service.pop_transient_command(command_id):
+            return {"deleted": command_id}
         raise HTTPException(status_code=404, detail="Command not found")
     session.delete(command)
     session.commit()

@@ -27,6 +27,16 @@ def _add_missing_columns():
         if "primary_interface" not in existing:
             conn.execute(text("ALTER TABLE pi ADD COLUMN primary_interface VARCHAR"))
             conn.commit()
+        if "primary_interfaces_json" not in existing:
+            conn.execute(text("ALTER TABLE pi ADD COLUMN primary_interfaces_json VARCHAR DEFAULT '[]'"))
+            # Best-effort carry over any single interface set under the old
+            # (now-unused) single-value column into the new list column.
+            conn.execute(text(
+                "UPDATE pi SET primary_interfaces_json = '[\"' || primary_interface || '\"]' "
+                "WHERE primary_interface IS NOT NULL AND primary_interface != ''"
+            ))
+            conn.execute(text("UPDATE pi SET primary_interfaces_json = '[]' WHERE primary_interfaces_json IS NULL"))
+            conn.commit()
 
 
 def get_session():
