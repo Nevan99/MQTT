@@ -91,14 +91,22 @@ class _CaptureHandler(socketserver.StreamRequestHandler):
 
     def _handle_stream_tcpdump(self, header):
         """start_tcpdump_stream's connection (view only, nothing saved):
-        raw pcap bytes decoded to text as they arrive and relayed live over
-        the WebSocket as category "tcpdump", same category name the old
-        MQTT-based stream used - only the transport changed."""
+        raw pcap bytes decoded to structured packet records as they arrive
+        and relayed live over the WebSocket as category "tcpdump" - same
+        category name the old MQTT-based stream used, only the transport
+        and the payload shape (structured fields instead of one text line,
+        for a Wireshark-style packet list on the frontend) changed."""
         pi_id = header["pi_id"]
         interface = header.get("interface")
         decoder = PcapStreamDecoder()
         while True:
-            chunk = self.rfile.read(65536)
+            # self.rfile is a buffered io.BufferedReader - .read(n) blocks
+            # until n bytes actually arrive (or EOF), so on a quiet
+            # interface nothing would get decoded/relayed until either the
+            # buffer filled or the stream closed on stop. Reading straight
+            # off the raw socket instead returns as soon as any data is
+            # available, however little.
+            chunk = self.connection.recv(4096)
             if not chunk:
                 break
             # Batched per read-chunk (naturally several packets under any
@@ -107,7 +115,7 @@ class _CaptureHandler(socketserver.StreamRequestHandler):
             # the old per-line tcpdump batching over MQTT.
             decoded = decoder.feed(chunk)
             if decoded:
-                self._relay_lines(pi_id, "tcpdump", interface, decoded)
+                self._relay_packets(pi_id, interface, decoded)
 
     def _handle_stream_syslog(self, header):
         """start_syslog_stream's connection (view only, nothing saved):
@@ -121,18 +129,21 @@ class _CaptureHandler(socketserver.StreamRequestHandler):
                 continue
             _relay(pi_id, "logs", line)
 
-    def _relay_lines(self, pi_id, category, interface, decoded):
+    def _relay_packets(self, pi_id, interface, decoded):
         payload = [
             {
                 "timestamp": ts.isoformat(),
-                "loglevel": "packet",
-                "message": message,
                 "device_id": pi_id,
                 "interface": interface,
+                "length": orig_len,
+                "protocol": rec["protocol"],
+                "src": rec["src"],
+                "dst": rec["dst"],
+                "info": rec["info"],
             }
-            for ts, message in decoded
+            for ts, orig_len, rec in decoded
         ]
-        _relay(pi_id, category, payload)
+        _relay(pi_id, "tcpdump", payload)
 
     def _send(self, payload):
         try:

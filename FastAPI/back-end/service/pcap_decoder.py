@@ -1,12 +1,11 @@
 """Incremental decoder for a classic-format pcap byte stream (what
-`tcpdump -w -` produces), turning captured frames into short tcpdump-style
-text summaries as the bytes arrive - used to give a live text view of a
-pcap capture without waiting for it to finish and without a second capture
-process, reusing exactly the bytes already being written to disk for the
-saved .pcap file.
+`tcpdump -w -` produces), turning captured frames into structured records
+(protocol/source/destination/length/info - the same columns Wireshark's
+packet list shows) as the bytes arrive, reusing exactly the bytes already
+being written to disk for the saved .pcap file.
 
-Deliberately not full tcpdump fidelity - just enough (addresses, ports,
-TCP flags/seq/ack/win, protocol) to be useful reading it as a live log.
+Deliberately not full tcpdump/Wireshark fidelity - just enough (addresses,
+ports, TCP flags/seq/ack/win, protocol) to be useful reading live.
 """
 import socket as socket_lib
 import struct
@@ -16,17 +15,19 @@ ETH_HEADER_LEN = 14
 SLL_HEADER_LEN = 16  # Linux "cooked" capture (linktype 113)
 
 _TCP_FLAG_BITS = [
-    (0x01, "F"), (0x02, "S"), (0x04, "R"), (0x08, "P"),
-    (0x10, "."), (0x20, "U"), (0x40, "E"), (0x80, "C"),
+    (0x01, "FIN"), (0x02, "SYN"), (0x04, "RST"), (0x08, "PSH"),
+    (0x10, "ACK"), (0x20, "URG"), (0x40, "ECE"), (0x80, "CWR"),
 ]
 _PROTO_NAMES = {1: "ICMP", 6: "TCP", 17: "UDP"}
 
 
 def _tcp_flags_str(flags):
-    return "".join(ch for bit, ch in _TCP_FLAG_BITS if flags & bit) or "."
+    names = [name for bit, name in _TCP_FLAG_BITS if flags & bit]
+    return ", ".join(names) if names else "none"
 
 
 def _decode_ipv4(payload):
+    """Returns a dict with protocol/src/dst/info, or None if malformed."""
     if len(payload) < 20:
         return None
     ihl = (payload[0] & 0x0F) * 4
@@ -45,14 +46,24 @@ def _decode_ipv4(payload):
         win = struct.unpack("!H", body[14:16])[0]
         data_offset = (body[12] >> 4) * 4
         data_len = max(len(body) - data_offset, 0)
-        return (f"{src}.{sport} > {dst}.{dport}: Flags [{_tcp_flags_str(flags)}], "
-                f"seq {seq}, ack {ack}, win {win}, length {data_len}")
+        return {
+            "protocol": "TCP", "src": src, "dst": dst,
+            "info": f"{sport} → {dport} [{_tcp_flags_str(flags)}] Seq={seq} Ack={ack} Win={win} Len={data_len}",
+        }
     if proto == 17 and len(body) >= 8:  # UDP
         sport, dport, udp_len = struct.unpack("!HHH", body[0:6])
-        return f"{src}.{sport} > {dst}.{dport}: UDP, length {max(udp_len - 8, 0)}"
+        return {
+            "protocol": "UDP", "src": src, "dst": dst,
+            "info": f"{sport} → {dport} Len={max(udp_len - 8, 0)}",
+        }
     if proto == 1 and body:  # ICMP
-        return f"{src} > {dst}: ICMP type {body[0]}, length {len(body)}"
-    return f"{src} > {dst}: {_PROTO_NAMES.get(proto, f'proto {proto}')}, length {len(body)}"
+        icmp_type = body[0]
+        name = {8: "Echo (ping) request", 0: "Echo (ping) reply"}.get(icmp_type, f"Type {icmp_type}")
+        return {"protocol": "ICMP", "src": src, "dst": dst, "info": name}
+    return {
+        "protocol": _PROTO_NAMES.get(proto, f"IP proto {proto}"), "src": src, "dst": dst,
+        "info": f"Len={len(body)}",
+    }
 
 
 def _decode_arp(payload):
@@ -61,12 +72,17 @@ def _decode_arp(payload):
     op = struct.unpack("!H", payload[6:8])[0]
     src_ip = socket_lib.inet_ntoa(payload[14:18])
     dst_ip = socket_lib.inet_ntoa(payload[24:28])
-    verb = "Request" if op == 1 else "Reply" if op == 2 else f"op {op}"
-    return f"ARP, {verb}, {src_ip} > {dst_ip}"
+    if op == 1:
+        info = f"Who has {dst_ip}? Tell {src_ip}"
+    elif op == 2:
+        info = f"{src_ip} is at (reply to {dst_ip})"
+    else:
+        info = f"op {op}"
+    return {"protocol": "ARP", "src": src_ip, "dst": dst_ip, "info": info}
 
 
-def decode_packet(data: bytes, linktype: int) -> str:
-    """Decode one captured frame's bytes into a one-line summary."""
+def decode_packet(data: bytes, linktype: int) -> dict:
+    """Decode one captured frame's bytes into {protocol, src, dst, info}."""
     try:
         if linktype == 113 and len(data) >= SLL_HEADER_LEN:
             ethertype = struct.unpack("!H", data[14:16])[0]
@@ -75,25 +91,29 @@ def decode_packet(data: bytes, linktype: int) -> str:
             ethertype = struct.unpack("!H", data[12:14])[0]
             payload = data[ETH_HEADER_LEN:]
         else:
-            return f"truncated frame, length {len(data)}"
+            return {"protocol": "?", "src": None, "dst": None, "info": f"truncated frame, length {len(data)}"}
 
         if ethertype == 0x0800:
-            return _decode_ipv4(payload) or f"IP, length {len(payload)}"
+            return _decode_ipv4(payload) or {"protocol": "IP", "src": None, "dst": None, "info": f"length {len(payload)}"}
         if ethertype == 0x0806:
-            return _decode_arp(payload) or f"ARP, length {len(payload)}"
+            return _decode_arp(payload) or {"protocol": "ARP", "src": None, "dst": None, "info": f"length {len(payload)}"}
         if ethertype == 0x86DD:
-            return f"IPv6, length {len(payload)}"
-        return f"ethertype 0x{ethertype:04x}, length {len(payload)}"
+            return {"protocol": "IPv6", "src": None, "dst": None, "info": f"length {len(payload)}"}
+        return {"protocol": f"0x{ethertype:04x}", "src": None, "dst": None, "info": f"length {len(payload)}"}
     except Exception:
-        return f"unparsed frame, length {len(data)}"
+        return {"protocol": "?", "src": None, "dst": None, "info": f"unparsed frame, length {len(data)}"}
 
 
 class PcapStreamDecoder:
     """Feed it raw bytes as they arrive over the capture socket; get back
-    any packets that are now fully buffered, decoded to (timestamp,
-    message) pairs. Handles the stream being split across chunks at
-    arbitrary byte boundaries - a header or record is only consumed once
-    all of it has arrived."""
+    any packets that are now fully buffered, decoded to
+    (timestamp, frame_length, record) triples, where record is the dict
+    from decode_packet() and frame_length is the packet's original
+    on-the-wire length (Wireshark's "Length" column) - separate from how
+    many bytes tcpdump actually captured, in case of a snaplen cutoff.
+    Handles the stream being split across chunks at arbitrary byte
+    boundaries - a header or record is only consumed once all of it has
+    arrived."""
 
     GLOBAL_HEADER_LEN = 24
     RECORD_HEADER_LEN = 16
@@ -138,7 +158,7 @@ class PcapStreamDecoder:
             return out
 
         while len(self._buf) >= self.RECORD_HEADER_LEN:
-            ts_sec, ts_frac, incl_len, _orig_len = struct.unpack(
+            ts_sec, ts_frac, incl_len, orig_len = struct.unpack(
                 self._byte_order + "IIII", bytes(self._buf[:self.RECORD_HEADER_LEN])
             )
             if len(self._buf) < self.RECORD_HEADER_LEN + incl_len:
@@ -149,6 +169,6 @@ class PcapStreamDecoder:
 
             frac = ts_frac / 1_000_000_000 if self._nsec else ts_frac / 1_000_000
             ts = datetime.fromtimestamp(ts_sec + frac, tz=timezone.utc)
-            out.append((ts, decode_packet(data, self._linktype)))
+            out.append((ts, orig_len, decode_packet(data, self._linktype)))
 
         return out

@@ -55,6 +55,14 @@ class PiAgent:
         self._tcpdump_procs = {}
         self._tcpdump_lock = threading.Lock()
 
+        # One lock per interface, created on demand - connect_wifi/
+        # disconnect_wifi can now take minutes (nmcli timeout=300), so two
+        # commands aimed at the *same* interface must run strictly one
+        # after another instead of racing on the same NetworkManager
+        # profile; different interfaces still run fully concurrently.
+        self._wifi_locks = {}
+        self._wifi_locks_guard = threading.Lock()
+
         # The broker (mosquitto 1.6.9) only speaks MQTT 3.1.1 - v5 broker
         # support wasn't added until mosquitto 2.0. Connecting as v5 anyway
         # is undefined behavior against this broker; clean_session=True here
@@ -97,7 +105,7 @@ class PiAgent:
                 return False
             proc = subprocess.Popen(
                 ["tcpdump", "-i", interface, "-w", "-", "-U"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0,
             )
             # tcpdump fails fast on a bad interface or missing capture
             # permissions (needs root or cap_net_raw+cap_net_admin). Without
@@ -194,7 +202,11 @@ class PiAgent:
                 "kind": "stream_tcpdump", "pi_id": self.pi_id, "interface": interface,
             }) + "\n").encode())
             while True:
-                chunk = proc.stdout.read(65536)
+                # Small read size (vs. 65536) so packets on a quiet
+                # interface get forwarded as soon as tcpdump -U flushes
+                # them, instead of sitting in the pipe until a large chunk
+                # fills up.
+                chunk = proc.stdout.read(4096)
                 if not chunk:
                     break
                 sock.sendall(chunk)
@@ -218,7 +230,7 @@ class PiAgent:
                 return False
             proc = subprocess.Popen(
                 ["tcpdump", "-i", interface, "-w", "-", "-U"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0,
             )
             time.sleep(0.3)
             if proc.poll() is not None:
@@ -268,10 +280,6 @@ class PiAgent:
 
     def start_syslog_stream(self, interface=None):
         """Start the syslog streaming thread for the given interface filter.
-
-        No-op if already streaming that exact interface. If a stream for a
-        *different* interface is running, it's stopped and replaced - only
-        one syslog stream runs per Pi at a time.
         """
         cmd = ["journalctl", "-u", "NetworkManager", "-n", "50", "-f"]
         if interface:
@@ -288,7 +296,11 @@ class PiAgent:
         if old_proc:
             old_proc.terminate()
 
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
+        # bufsize=1 (line-buffered) so `for line in proc.stdout` yields each
+        # journal line as soon as journalctl writes it, instead of Python's
+        # default block-buffering on a non-tty pipe holding lines back until
+        # a full buffer's worth accumulates.
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True, bufsize=1)
         with self._streaming_lock:
             self._syslog_proc = proc
         threading.Thread(target=self._stream_syslog_socket, args=(interface, proc), daemon=True).start()
@@ -472,16 +484,6 @@ class PiAgent:
         return 100 + (zlib.crc32(interface.encode()) % 1000)
 
     def _apply_policy_routing(self, con_name, interface, ip_address):
-        """Give this interface its own routing table plus a source-based ip
-        rule, so traffic sourced from (or explicitly bound to, e.g.
-        `ping -I <interface>`) this interface always routes via its own
-        gateway. Without this, multiple wifi interfaces associated to APs on
-        the same subnet can end up sharing one default route, so a packet
-        forced out one NIC gets addressed to a *different* interface's
-        gateway MAC - the AP silently drops it, and `ping -I <iface>` fails
-        intermittently with 100% loss even though the interface is fine.
-        Confirmed as the fix by manually reproducing and resolving this on
-        pi01. Best-effort: failure here doesn't fail the connect itself."""
         if not ip_address:
             return {"applied": False, "reason": "no IP address yet"}
 
@@ -554,7 +556,7 @@ class PiAgent:
         if channel:
             band = "bg" if int(channel) <= 14 else "a"
             add_cmd += ["802-11-wireless.band", band, "802-11-wireless.channel", str(channel)]
-        add_ret = subprocess.run(add_cmd, capture_output=True, text=True, timeout=30)
+        add_ret = subprocess.run(add_cmd, capture_output=True, text=True, timeout=60)
         if add_ret.returncode != 0:
             return {
                 "ssid": ssid,
@@ -565,7 +567,7 @@ class PiAgent:
 
         up_ret = subprocess.run(
             ["nmcli", "connection", "up", con_name],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=300,
         )
         connected = up_ret.returncode == 0
         ip_address = self.get_interface_ip(interface) if connected else None
@@ -596,7 +598,7 @@ class PiAgent:
                         capture_output=True, text=True)
 
         subprocess.run(["nmcli", "device", "wifi", "rescan", "ifname", interface],
-                        capture_output=True, text=True, timeout=15)
+                        capture_output=True, text=True, timeout=30)
         time.sleep(2)
 
         connect_cmd = [
@@ -605,7 +607,7 @@ class PiAgent:
         ]
         if password:
             connect_cmd += ["password", password]
-        ret = subprocess.run(connect_cmd, capture_output=True, text=True, timeout=30)
+        ret = subprocess.run(connect_cmd, capture_output=True, text=True, timeout=300)
         connected = ret.returncode == 0
         ip_address = self.get_interface_ip(interface) if connected else None
         return {
@@ -623,7 +625,7 @@ class PiAgent:
             return {"error": "interface is required"}
         ret = subprocess.run(
             ["nmcli", "device", "disconnect", interface],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=300,
         )
         return {
             "interface": interface,
@@ -687,6 +689,48 @@ class PiAgent:
         if delay > 0:
             time.sleep(delay)
 
+    def _wifi_lock_for(self, interface):
+        with self._wifi_locks_guard:
+            lock = self._wifi_locks.get(interface)
+            if lock is None:
+                lock = threading.Lock()
+                self._wifi_locks[interface] = lock
+            return lock
+
+    def _dispatch_wifi_command(self, action, command_id, interface, fn, *args):
+        """Runs connect_wifi/disconnect_wifi off the MQTT network thread and
+        publishes their result itself once done, instead of handle_command
+        blocking on it directly. Both can now take up to 5 minutes
+        (nmcli timeout=300) - blocking the same thread paho's network loop
+        runs on for that long would starve the periodic keepalive PINGREQ
+        and get this client disconnected by the broker mid-command. Worse,
+        since the client connects with clean_session=True, any command
+        sent to this Pi during that disconnected window is dropped, not
+        queued - so a caller could see it silently never execute. Two
+        commands aimed at the same interface still serialize (via
+        _wifi_lock_for), so they don't race on the same NetworkManager
+        profile; different interfaces run fully in parallel."""
+        def worker():
+            lock = self._wifi_lock_for(interface) if interface else None
+            if lock:
+                lock.acquire()
+            try:
+                result = fn(*args)
+            except Exception as e:
+                result = {"error": str(e)}
+            finally:
+                if lock:
+                    lock.release()
+            result["command_id"] = command_id
+            result["action"] = action
+            result["pi_id"] = self.pi_id
+            result["timestamp"] = datetime.now(timezone.utc).isoformat()
+            try:
+                self.client.publish(self.result_topic, json.dumps(result), qos=1)
+            except Exception as e:
+                print(f"[pi_agent] failed to publish result for {action}: {e}")
+        threading.Thread(target=worker, daemon=True).start()
+
     def handle_command(self, payload):
         action = payload.get("action")
         at = payload.get("at")
@@ -706,15 +750,19 @@ class PiAgent:
             elif action == "set_channel":
                 result = self.restart_hostapd(channel=payload.get("channel"))
             elif action == "connect_wifi":
-                result = self.connect_wifi(
-                    payload.get("ssid"),
-                    payload.get("password"),
-                    payload.get("interface"),
-                    payload.get("bssid"),
-                    payload.get("channel"),
+                interface = payload.get("interface")
+                self._dispatch_wifi_command(
+                    action, payload.get("command_id"), interface, self.connect_wifi,
+                    payload.get("ssid"), payload.get("password"), interface,
+                    payload.get("bssid"), payload.get("channel"),
                 )
+                return
             elif action == "disconnect_wifi":
-                result = self.disconnect_wifi(payload.get("interface"))
+                interface = payload.get("interface")
+                self._dispatch_wifi_command(
+                    action, payload.get("command_id"), interface, self.disconnect_wifi, interface,
+                )
+                return
             elif action == "scan_wifi":
                 result = self.get_wifi_scan(payload.get("interface"))
             elif action == "list_interfaces":
@@ -834,6 +882,16 @@ class PiAgent:
             })
         return details
 
+    def _wired_source_ip(self):
+        """IP address of a connected wired interface, if any - used to bind
+        the MQTT connection's local socket to it (see run()), so the
+        agent's control-plane traffic prefers wired over wifi whenever both
+        are up, without touching system-wide routing."""
+        for iface in self.get_interface_details():
+            if iface["type"] == "ethernet" and iface["state"] == "UP" and iface["ip_address"]:
+                return iface["ip_address"]
+        return None
+
     def get_interface_ip(self, interface):
         """Best-effort IPv4 address currently assigned to a given interface."""
         if not interface:
@@ -844,6 +902,13 @@ class PiAgent:
         ).stdout
         m = re.search(r'inet (\d+\.\d+\.\d+\.\d+)', out)
         return m.group(1) if m else None
+
+    def get_interface_ips(self):
+        """Map of interface name -> IPv4 address for every non-loopback interface."""
+        return {
+            interface: self.get_interface_ip(interface)
+            for interface in self.get_network_interfaces()
+        }
 
     def get_ip_address(self):
         """Best-effort local IP: the address used to reach the broker."""
@@ -879,16 +944,15 @@ class PiAgent:
         try:
             self.handle_command(payload)
         except Exception as e:
-            # Whatever this command was, a bug in handling it shouldn't be
-            # able to kill the paho network thread and leave every command
-            # after it stuck "pending" until the process is restarted by hand.
             print(f"[pi_agent] unhandled error processing {payload.get('action')}: {e}")
 
     def run(self):
         self.client.will_set(self.status_topic, payload="offline", qos=1, retain=True)
         while True:
             try:
-                self.client.connect(self.broker_host, self.broker_port, keepalive=30)
+                bind_address = self._wired_source_ip() or ""
+                self.client.connect(self.broker_host, self.broker_port, keepalive=30,
+                                     bind_address=bind_address)
                 self.client.loop_forever()
             except Exception as e:
                 print(f"[pi_agent] connection loop crashed, reconnecting in 5s: {e}")

@@ -59,6 +59,16 @@
   #piDetailGrid.dragging { user-select: none; cursor: col-resize; }
   #piDetailGrid .gutter { margin: 0 -0.5rem; }
   #piDetailGrid .panel { display: flex; flex-direction: column; min-height: 0; }
+  .pd-panel-header { display: flex; align-items: center; justify-content: space-between; flex: 0 0 auto; gap: 0.5rem; }
+  .pd-panel-collapsed .pd-panel-header { justify-content: center; padding: 0; }
+  .pd-panel-header h3 { margin: 0; }
+  .pd-panel-collapse-btn { flex: 0 0 auto; font-size: 0.7rem; width: 1.5rem; height: 1.5rem; }
+  .pd-panel-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; margin-top: 0.5rem; }
+  .pd-panel-collapsed { padding-left: 0.25rem; padding-right: 0.25rem; }
+  .pd-panel-collapsed .pd-panel-header h3 { display: none; }
+  .pd-panel-collapsed .pd-panel-body { display: none; }
+  .pd-log-block.pd-log-collapsed { flex: 0 0 auto; }
+  .pd-log-block.pd-log-collapsed .pi-log-panel { display: none; }
   .pd-info-row { display: flex; justify-content: space-between; gap: 0.5rem; padding: 0.3rem 0; border-bottom: 1px solid #222; font-size: 0.85rem; }
   .pd-info-row .k { color: #888; }
   .pd-info-row .v { color: #ddd; text-align: right; }
@@ -73,7 +83,7 @@
   .pd-iface-header { display: flex; align-items: center; gap: 0.4rem; padding: 0.4rem 0.5rem; font-size: 0.85rem; color: #ddd; cursor: pointer; }
   .pd-iface-header:hover { background: #202020; }
   .pd-iface-name { flex: 1 1 auto; }
-  .pd-iface-toggle { color: #888; font-size: 0.7rem; }
+  .pd-iface-toggle { display: inline-flex; align-items: center; color: #888; }
   .pd-iface-body { padding: 0 0.6rem 0.6rem; border-top: 1px solid #262626; }
   .pd-iface-body.hidden { display: none; border-top: none; }
   .pd-iface-connected-mark { font-size: 0.7rem; }
@@ -88,7 +98,12 @@
   .pd-wifi-search-input { flex: 1 1 auto; background: transparent; border: none; color: #eee; font-size: 0.82rem; padding: 0; }
   .pd-wifi-search-input:focus { outline: none; }
   .pd-wifi-scan-list { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.4rem; }
-  .wifi-connect-row { display: flex; gap: 0.4rem; align-items: center; margin-top: 0.5rem; }
+  .wifi-connect-row { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin-top: 0.5rem; }
+  .wifi-remember-row { display: flex; align-items: center; gap: 0.3rem; font-size: 0.75rem; color: #aaa; margin: 0; width: 100%; cursor: pointer; }
+  .wifi-remember-row input { width: auto; margin: 0; }
+  .wifi-disconnect-row { margin-top: 0.5rem; }
+  .wifi-disconnect-btn { background: #522; border-color: #a44; color: #fbb; }
+  .wifi-disconnect-btn:hover { background: #633; }
   .wifi-connect-row .password-wrap { flex: 1 1 auto; }
   .wifi-connect-status { margin-top: 0.3rem; min-height: 1em; }
   .wifi-icon { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; }
@@ -123,17 +138,48 @@
   tr.pi-ifaces-row td { background: #181818; padding: 0.5rem; }
   tr.pi-ifaces-row.hidden { display: none; }
   .fleet-iface-list .pd-iface-card { background: #141414; }
-  .pd-iface-log-toggles { margin-top: 0.4rem; }
-  .pd-iface-log-row { margin-top: 0.3rem; border-top: 1px solid #262626; }
-  .pd-iface-log-row.hidden { display: none; }
   .fleet-iface-primary-checkbox { margin-right: 0.1rem; }
   .pi-log-heading { display: flex; justify-content: space-between; align-items: center; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; color: #888; padding: 0.4rem 0.75rem 0.2rem; }
   .pi-log-actions { display: flex; gap: 0.4rem; text-transform: none; letter-spacing: normal; }
   .pi-log-actions button.icon-btn { border: 1px solid #333; }
   .pi-log-actions button.recording { background: #522; border-color: #a44; color: #fbb; }
+  .pi-log-actions button.streaming { background: #164; border-color: #4a7; color: #9f9; }
   .pi-log-panel { max-height: 240px; overflow-y: auto; padding: 0.2rem 0.75rem 0.5rem; }
   .pi-log-panel .line { border-bottom: 1px solid #202020; }
   .pi-log-empty { color: #666; font-size: 0.78rem; padding: 0.4rem 0; }
+  .pi-log-panel.wireshark-table-wrap { display: flex; flex-direction: column; padding: 0; overflow: hidden; max-height: 320px; }
+  #piDetailGrid .pd-log-block .pi-log-panel.wireshark-table-wrap { max-height: none; }
+  .fleet-iface-list .pd-log-block .pi-log-panel { max-height: 240px; }
+  .fleet-iface-list .pd-log-block .pi-log-panel.wireshark-table-wrap { max-height: 320px; }
+  .wireshark-pause-banner { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; background: #3a2f10; color: #e8c766; border-bottom: 1px solid #6a5420; padding: 0.3rem 0.6rem; font-size: 0.73rem; }
+  .wireshark-pause-banner.hidden { display: none; }
+  .wireshark-pause-banner button { padding: 0.15rem 0.6rem; font-size: 0.7rem; }
+  .wireshark-table-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
+  table.wireshark-table { width: 100%; border-collapse: collapse; font-family: ui-monospace, monospace; font-size: 0.75rem; }
+  table.wireshark-table thead th { position: sticky; top: 0; background: #1a1a1a; color: #888; text-align: left; padding: 0.25rem 0.6rem; border-bottom: 1px solid #333; white-space: nowrap; }
+  table.wireshark-table td { padding: 0.12rem 0.6rem; border-bottom: 1px solid #1c1c1c; white-space: nowrap; color: #ccc; cursor: pointer; }
+  table.wireshark-table td.ws-info { white-space: normal; }
+  table.wireshark-table tr.proto-tcp { background: rgba(100, 150, 220, 0.10); }
+  table.wireshark-table tr.proto-udp { background: rgba(150, 110, 220, 0.10); }
+  table.wireshark-table tr.proto-arp { background: rgba(220, 200, 90, 0.12); }
+  table.wireshark-table tr.proto-icmp { background: rgba(220, 100, 100, 0.12); }
+  table.wireshark-table tr:hover { filter: brightness(1.35); }
+  table.wireshark-table tr.selected { outline: 2px solid #6cf; outline-offset: -2px; }
+  .wireshark-detail-panel { position: relative; flex: 0 0 auto; max-height: 40%; overflow: auto; border-top: 1px solid #333; background: #161616; padding: 0.5rem 0.75rem; font-size: 0.78rem; }
+  .wireshark-detail-empty { color: #666; }
+  .wireshark-detail-panel table.result-table { width: 100%; }
+  .wireshark-detail-close { position: absolute; top: 0.35rem; right: 0.35rem; width: 1.4rem; height: 1.4rem; color: #888; }
+  .wireshark-detail-close:hover { color: #eee; background: #262626; }
+  .wireshark-detail-panel.wireshark-detail-empty-state .wireshark-detail-close { display: none; }
+  .wireshark-detail-body { padding-right: 1.6rem; }
+  .wireshark-filter-wrap { flex: 0 0 auto; display: flex; align-items: center; gap: 0.4rem; padding: 0.35rem 0.6rem; border-bottom: 1px solid #333; color: #888; }
+  .wireshark-filter-wrap svg { flex: 0 0 auto; }
+  .wireshark-filter-input { flex: 1 1 auto; background: transparent; border: none; color: #eee; font-size: 0.78rem; font-family: ui-monospace, monospace; padding: 0; }
+  .wireshark-filter-input:focus { outline: none; }
+  table.wireshark-table tr.filtered-out { display: none; }
+  .wifi-scan-loading { display: flex; align-items: center; gap: 0.55rem; color: #888; font-size: 0.82rem; padding: 0.5rem 0.1rem; }
+  .wifi-scan-spinner { flex: 0 0 auto; width: 14px; height: 14px; border: 2px solid #333; border-top-color: #6cf; border-radius: 50%; animation: wifi-scan-spin 0.7s linear infinite; }
+  @keyframes wifi-scan-spin { to { transform: rotate(360deg); } }
   .badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 10px; font-size: 0.75rem; }
   .badge-online { background: #163; }
   .badge-offline { background: #522; }
@@ -170,19 +216,40 @@
   td.result-nested { padding: 0 0 0.4rem 0.75rem; }
   .hint { color: #777; font-size: 0.75rem; margin-top: 0.5rem; }
 
-  #loginOverlay { position: fixed; inset: 0; background: #111; display: none; align-items: center; justify-content: center; z-index: 100; }
+  #loginOverlay {
+    position: fixed; inset: 0; display: none; align-items: center; justify-content: center; z-index: 100;
+    background:
+      linear-gradient(rgba(10, 14, 22, 0.65), rgba(10, 14, 22, 0.65)),
+      url('assets/brand2_img.jpg') center center / cover no-repeat,
+      #111;
+  }
   #loginOverlay.active { display: flex; }
   #appRoot { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
   #appRoot.auth-hidden { display: none; }
-  .login-box { width: 280px; background: #1a1a1a; border: 1px solid #333; border-radius: 8px; padding: 1.5rem; }
+  .login-box { width: 280px; background: #1a1a1acc; backdrop-filter: blur(2px); border: 1px solid #333; border-radius: 8px; padding: 1.5rem; }
+  .login-brand-wordmark {
+    display: block; margin: 0 0 1.25rem; font-size: 1.35rem; font-weight: 800;
+    letter-spacing: 0.02em; font-family: system-ui, sans-serif;
+  }
+  .login-brand-wordmark .brand-kaon { color: #29b6f6; }
+  .login-brand-wordmark .brand-broadband { color: #eee; font-weight: 600; }
+  .login-brand-slogan { display: block; margin: -1rem 0 1rem; font-size: 0.72rem; color: #666; letter-spacing: 0.03em; }
   .login-box h2 { margin: 0 0 1rem; font-size: 1.1rem; }
   .login-error { color: #f66; font-size: 0.8rem; min-height: 1.2em; margin-top: 0.5rem; }
   #logoutBtn { margin-left: auto; }
+  header .header-logo-img { height: 40px; width: auto; }
+  footer#appFooter {
+    flex: 0 0 auto; display: flex; align-items: center; justify-content: center; gap: 0.5rem;
+    padding: 0.6rem 1rem; background: #1a1a1a; border-top: 1px solid #333; color: #888; font-size: 0.78rem;
+  }
+  footer#appFooter img { height: 36px; width: auto; opacity: 0.85; }
 </style>
 </head>
 <body>
 <div id="loginOverlay">
   <div class="login-box">
+    <span class="login-brand-wordmark"><span class="brand-kaon">KAON</span> <span class="brand-broadband">BROADBAND</span></span>
+    <span class="login-brand-slogan">connected+</span>
     <h2>Pi Fleet Controller</h2>
     <form id="loginForm">
       <label>Username</label>
@@ -190,7 +257,7 @@
       <label>Password</label>
       <div class="password-wrap">
         <input id="loginPassword" class="field" type="password" autocomplete="current-password" required>
-        <button type="button" class="password-toggle" title="Show password">&#128065;</button>
+        <button type="button" class="password-toggle" title="Show password"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg></button>
       </div>
       <div class="login-error" id="loginError"></div>
       <div class="row" style="margin-top: 0.75rem;">
@@ -201,6 +268,7 @@
 </div>
 <div id="appRoot" class="auth-hidden">
 <header>
+  <img src="assets/kaon-icon-logo.png" alt="Kaon Broadband" class="header-logo-img">
   <h1>Pi Fleet Controller</h1>
   <nav>
     <button class="tab active" data-view="fleet">Fleet</button>
@@ -214,7 +282,7 @@
   <div class="panel">
     <table>
       <thead>
-        <tr><th></th><th></th><th>Pi ID</th><th>IP</th><th>Role</th><th>Status</th><th>Last seen</th></tr>
+        <tr><th></th><th>Pi ID</th><th>IP</th><th>Role</th><th>Status</th><th>Last seen</th><th></th></tr>
       </thead>
       <tbody id="piTableBody"></tbody>
     </table>
@@ -287,7 +355,7 @@
 </section>
 
 <section id="piDetail" class="view">
-  <div class="panel" style="margin-bottom:0;">
+  <div class="panel" style="margin-bottom:0; flex: 0 0 auto; position: relative; z-index: 1;">
     <div class="row" style="align-items:center;">
       <button id="piDetailBack" type="button" style="flex: 0 0 auto; padding: 0.2rem 0.5rem; font-size: 0.75rem;" title="Back to fleet">&larr; Back</button>
       <h2 id="piDetailTitle" style="margin:0 0 0 0.75rem; font-size:1rem;"></h2>
@@ -295,10 +363,15 @@
   </div>
   <div id="piDetailGrid">
     <div class="panel" id="pdInfoPanel">
-      <h3 style="margin-top:0;">Pi info</h3>
-      <div id="pdInfoFields"></div>
-      <label>Interfaces</label>
-      <div id="pdInterfaceList"></div>
+      <div class="pd-panel-header">
+        <h3>Pi info</h3>
+        <button type="button" class="icon-btn pd-panel-collapse-btn" id="pdInfoCollapseBtn" title="Collapse"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform: rotate(180deg);"><polyline points="9 6 15 12 9 18"/></svg></button>
+      </div>
+      <div class="pd-panel-body">
+        <div id="pdInfoFields"></div>
+        <label>Interfaces</label>
+        <div id="pdInterfaceList"></div>
+      </div>
     </div>
 
     <div class="gutter" id="pdGutterLeft"></div>
@@ -311,6 +384,7 @@
             <select class="pi-stream-iface"><option value="">select interface</option></select>
             <button class="pi-log-capture icon-btn" type="button" title="Start Capture">&#9210;</button>
             <button class="pi-log-clear icon-btn" type="button" title="Clear">&#128465;</button>
+            <button class="pi-log-collapse icon-btn" type="button" title="Collapse"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform: rotate(-90deg);"><polyline points="9 6 15 12 9 18"/></svg></button>
           </span>
         </div>
         <div class="pi-log-panel"></div>
@@ -320,31 +394,65 @@
           <span>tcpdump</span>
           <span class="pi-log-actions">
             <select class="pi-stream-iface"><option value="">select interface</option></select>
+            <button class="pi-log-stream icon-btn" type="button" title="Start streaming"><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><polygon points="6 4 20 12 6 20"/></svg></button>
             <button class="pi-log-capture icon-btn" type="button" title="Start Capture">&#9210;</button>
             <button class="pi-log-clear icon-btn" type="button" title="Clear">&#128465;</button>
+            <button class="pi-log-collapse icon-btn" type="button" title="Collapse"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform: rotate(-90deg);"><polyline points="9 6 15 12 9 18"/></svg></button>
           </span>
         </div>
-        <div class="pi-log-panel"></div>
+        <div class="pi-log-panel wireshark-table-wrap">
+          <div class="wireshark-filter-wrap">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" class="wireshark-filter-input" placeholder="Filter (e.g. tcp, arp, 192.168.1.5)">
+          </div>
+          <div class="wireshark-pause-banner hidden">
+            <span class="wireshark-pause-text">Live capture paused</span>
+            <button type="button" class="wireshark-resume-btn">Resume</button>
+          </div>
+          <div class="wireshark-table-scroll">
+            <table class="wireshark-table">
+              <thead>
+                <tr><th>No.</th><th>Time</th><th>Source</th><th>Destination</th><th>Protocol</th><th>Length</th><th>Info</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div class="wireshark-detail-panel wireshark-detail-empty-state">
+            <button type="button" class="wireshark-detail-close icon-btn" title="Close"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+            <div class="wireshark-detail-body">
+              <div class="wireshark-detail-empty">Click a packet row to see its details</div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
     <div class="gutter" id="pdGutterRight"></div>
 
     <div class="panel" id="pdActionPanel" style="overflow-y: hidden;">
-      <h3 style="margin-top:0;">Actions</h3>
-      <label>Action</label>
-      <select id="pdAction" class="field"></select>
-      <div id="pdActionParams"></div>
-      <div class="row" style="margin-top: 0.75rem;">
-        <button id="pdActionSendBtn">Send command</button>
+      <div class="pd-panel-header">
+        <h3>Actions</h3>
+        <button type="button" class="icon-btn pd-panel-collapse-btn" id="pdActionCollapseBtn" title="Collapse"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></button>
       </div>
-      <div class="pd-results-panel">
-        <div class="pd-results-heading">Results</div>
-        <div id="pdActionResults" class="pd-results-body"></div>
+      <div class="pd-panel-body">
+        <label>Action</label>
+        <select id="pdAction" class="field"></select>
+        <div id="pdActionParams"></div>
+        <div class="row" style="margin-top: 0.75rem;">
+          <button id="pdActionSendBtn">Send command</button>
+        </div>
+        <div class="pd-results-panel">
+          <div class="pd-results-heading">Results</div>
+          <div id="pdActionResults" class="pd-results-body"></div>
+        </div>
       </div>
     </div>
   </div>
 </section>
+<footer id="appFooter">
+  <img src="assets/kaon-icon-logo.png" alt="Kaon Broadband">
+  <span>&copy; <span id="footerYear"></span> Kaon Broadband. All rights reserved.</span>
+</footer>
 </div>
 
 <script>
@@ -503,21 +611,49 @@ tabs.forEach(btn => btn.addEventListener('click', () => {
   const grid = document.getElementById('piDetailGrid');
   const gutterLeft = document.getElementById('pdGutterLeft');
   const gutterRight = document.getElementById('pdGutterRight');
+  const infoPanel = document.getElementById('pdInfoPanel');
+  const actionPanel = document.getElementById('pdActionPanel');
+  const infoCollapseBtn = document.getElementById('pdInfoCollapseBtn');
+  const actionCollapseBtn = document.getElementById('pdActionCollapseBtn');
   const MIN_LEFT = 200, MAX_LEFT = 480;
   const MIN_RIGHT = 260, MAX_RIGHT = 600;
+  const COLLAPSED_WIDTH = 32;
 
   let leftWidth = parseInt(localStorage.getItem('pdLeftWidth'), 10);
   if (!(leftWidth >= MIN_LEFT && leftWidth <= MAX_LEFT)) leftWidth = 280;
   let rightWidth = parseInt(localStorage.getItem('pdRightWidth'), 10);
   if (!(rightWidth >= MIN_RIGHT && rightWidth <= MAX_RIGHT)) rightWidth = 380;
+  let leftCollapsed = false;
+  let rightCollapsed = false;
 
   function apply() {
-    grid.style.gridTemplateColumns = `${leftWidth}px 6px 1fr 6px ${rightWidth}px`;
+    const left = leftCollapsed ? COLLAPSED_WIDTH : leftWidth;
+    const right = rightCollapsed ? COLLAPSED_WIDTH : rightWidth;
+    grid.style.gridTemplateColumns = `${left}px 6px 1fr 6px ${right}px`;
   }
   apply();
 
+  // Collapsing either side panel to a thin strip (rather than a fixed
+  // fraction) hands essentially all the freed width to the Logs panel in
+  // the middle, since it's the only flexible ("1fr") column.
+  infoCollapseBtn.addEventListener('click', () => {
+    leftCollapsed = !leftCollapsed;
+    infoPanel.classList.toggle('pd-panel-collapsed', leftCollapsed);
+    infoCollapseBtn.innerHTML = chevronIconSvg(leftCollapsed ? 'right' : 'left');
+    infoCollapseBtn.title = leftCollapsed ? 'Expand' : 'Collapse';
+    apply();
+  });
+  actionCollapseBtn.addEventListener('click', () => {
+    rightCollapsed = !rightCollapsed;
+    actionPanel.classList.toggle('pd-panel-collapsed', rightCollapsed);
+    actionCollapseBtn.innerHTML = chevronIconSvg(rightCollapsed ? 'left' : 'right');
+    actionCollapseBtn.title = rightCollapsed ? 'Expand' : 'Collapse';
+    apply();
+  });
+
   function startDrag(which) {
     return (e) => {
+      if ((which === 'left' && leftCollapsed) || (which === 'right' && rightCollapsed)) return;
       e.preventDefault();
       grid.classList.add('dragging');
       const gutterEl = which === 'left' ? gutterLeft : gutterRight;
@@ -648,6 +784,35 @@ document.addEventListener('click', () => {
   document.querySelectorAll('.iface-dropdown-panel').forEach(p => p.classList.add('hidden'));
 });
 
+// Slim chevron used for every collapse/expand toggle (side panels and the
+// syslog/tcpdump blocks) - one thin stroked path, just rotated per
+// direction, instead of the bold filled-triangle unicode glyphs.
+function chevronIconSvg(direction) {
+  const rotation = { right: 0, down: 90, left: 180, up: 270 }[direction] || 0;
+  return `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform: rotate(${rotation}deg);"><polyline points="9 6 15 12 9 18"/></svg>`;
+}
+
+// Play/stop glyphs for the explicit "start streaming" toggle on the
+// tcpdump panel - separate from the view expand/collapse chevron, so
+// opening the panel to look at a previous capture doesn't itself start a
+// new live capture.
+const CLOSE_ICON_SVG = `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+const PLAY_ICON_SVG = `<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><polygon points="6 4 20 12 6 20"/></svg>`;
+const STOP_ICON_SVG = `<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><rect x="6" y="6" width="12" height="12"/></svg>`;
+
+// Open-eye / eye-with-slash glyphs for the password show/hide toggle,
+// replacing the old eye/see-no-evil-monkey emoji pair with a matched icon
+// set consistent with the app's other inline-SVG icons.
+const EYE_ICON_SVG = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/>
+  <circle cx="12" cy="12" r="3"/>
+</svg>`;
+const EYE_OFF_ICON_SVG = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M1 12s4-7 11-7c2.1 0 3.9.5 5.4 1.2M23 12s-4 7-11 7c-2.1 0-3.9-.5-5.4-1.2"/>
+  <path d="M9.5 9.5a3 3 0 0 0 4.2 4.2"/>
+  <line x1="1" y1="1" x2="23" y2="23"/>
+</svg>`;
+
 // Delegated show/hide toggle for every password field on the page (login
 // form and any dynamically-built Action panel password param) - one
 // listener instead of wiring each toggle button individually, so newly
@@ -659,7 +824,7 @@ document.addEventListener('click', (e) => {
   if (!input) return;
   const showing = input.type === 'text';
   input.type = showing ? 'password' : 'text';
-  btn.innerHTML = showing ? '&#128065;' : '&#128584;';
+  btn.innerHTML = showing ? EYE_ICON_SVG : EYE_OFF_ICON_SVG;
   btn.title = showing ? 'Show password' : 'Hide password';
 });
 
@@ -747,7 +912,25 @@ function connectPiLog(piId, entry) {
     // lines still arrive one per message.
     const lines = Array.isArray(payload) ? payload : [payload];
 
+    // Only show lines for the interface this panel actually has selected -
+    // the backend broadcasts every logs/tcpdump message for the whole Pi
+    // regardless of what's picked here, so without this a stream left
+    // running from elsewhere (another tab, a stop that hasn't landed yet)
+    // would still fill a panel that shows "no interface selected".
+    const ifaceSelect = entry[msg.category + 'IfaceSelect'];
+    const selectedIface = ifaceSelect ? ifaceSelect.value : '';
+    if (!selectedIface) return;
+
     const panel = entry[panelKey];
+    if (msg.category === 'tcpdump') {
+      const tbody = panel.querySelector('tbody');
+      if (tbody) {
+        lines.filter(line => line && line.interface === selectedIface)
+          .forEach(line => appendPacketRow(tbody, line));
+      }
+      return;
+    }
+
     const empty = panel.querySelector('.pi-log-empty');
     if (empty) empty.remove();
     lines.forEach(line => appendLineTo(panel, line));
@@ -906,7 +1089,7 @@ async function togglePcapCapture(piId, entry, btn) {
 
 function clearPanel(piId, spec, panel) {
   if (!confirm(`Clear ${spec.label} for ${piId}? This removes the saved history too.`)) return;
-  panel.innerHTML = '<div class="pi-log-empty">waiting for messages…</div>';
+  resetLogPanel(panel, spec);
 }
 
 function postCmd(piId, action, params) {
@@ -917,8 +1100,52 @@ function postCmd(piId, action, params) {
   });
 }
 
+// Sends connect_wifi and, if the Pi reports it didn't connect, sends it
+// exactly one more time before giving up - covers the common case of a
+// one-off transient failure (AP busy, brief scan/negotiation hiccup)
+// without silently retrying forever. Returns whichever attempt's result
+// (the successful one, or the last failure if both attempts failed).
+async function connectWifiWithRetry(piId, params, maxAttempts = 2) {
+  let result = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const res = await postCmd(piId, 'connect_wifi', params);
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    const data = await res.json();
+    result = await awaitCommandResult(data.command_id, 320);
+    if (result && result.connected) return result;
+  }
+  return result;
+}
+
 const STREAM_START_ACTION = { logs: 'stream_logs', tcpdump: 'tcpdump' };
 const STREAM_STOP_ACTION = { logs: 'stop_logs', tcpdump: 'stop_tcpdump' };
+
+// Explicit start/stop for the tcpdump panel's live capture - a dedicated
+// button (▶/■), separate from the panel's own expand/collapse chevron, so
+// opening the panel to look at previously-captured packets doesn't itself
+// kick off a brand new live capture. Returns the new streaming state
+// (true/false), or null if the request failed (caller should leave state
+// untouched in that case).
+async function performToggleTcpdumpStream(piId, iface, btn) {
+  if (!iface) {
+    alert('No interface for this panel.');
+    return null;
+  }
+  const starting = !btn.classList.contains('streaming');
+  btn.disabled = true;
+  try {
+    await postCmd(piId, starting ? 'tcpdump' : 'stop_tcpdump', { interface: iface });
+  } catch (err) {
+    alert(`Failed to ${starting ? 'start' : 'stop'} streaming: ${err.message}`);
+    return null;
+  } finally {
+    btn.disabled = false;
+  }
+  btn.classList.toggle('streaming', starting);
+  btn.innerHTML = starting ? STOP_ICON_SVG : PLAY_ICON_SVG;
+  btn.title = starting ? 'Stop streaming' : 'Start streaming';
+  return starting;
+}
 
 // Called only from the explicit Watch/Stop toggle, never from picking an
 // interface in a dropdown by itself - selecting an interface is just
@@ -930,7 +1157,7 @@ const STREAM_STOP_ACTION = { logs: 'stop_logs', tcpdump: 'stop_tcpdump' };
 // watched one; syslog only ever runs one stream per Pi.
 async function setStreamInterface(piId, entry, spec, interface_) {
   const panel = entry[spec.panelKey];
-  panel.innerHTML = '<div class="pi-log-empty">waiting for messages…</div>';
+  resetLogPanel(panel, spec);
   const prevIfaceKey = spec.kind + 'ActiveIface';
   const prevIface = entry[prevIfaceKey];
   try {
@@ -988,7 +1215,9 @@ function connectFleetPiLog(piId, entry) {
       });
       byIface.forEach((ifaceLines, iface) => {
         const cardState = entry.ifaceCards.get(iface);
-        if (cardState && cardState.tcpdumpExpanded) appendTo(cardState, ifaceLines);
+        if (!cardState || !cardState.tcpdumpStreaming) return;
+        const tbody = cardState[panelKey].querySelector('tbody');
+        if (tbody) ifaceLines.forEach(line => appendPacketRow(tbody, line));
       });
     } else {
       let target = null;
@@ -1008,6 +1237,12 @@ function connectFleetPiLog(piId, entry) {
 // tcpdump stays view-only through its own dedicated stream_tcpdump
 // connection (see pi_agent.py's start_tcpdump_stream) - independent of the
 // separate recording process, both can run on the same interface at once.
+// Pure view expand/collapse for syslog: syslog still auto-starts/stops on
+// this toggle (the agent only ever runs one stream at a time, so there's
+// nothing to separately "arm" - opening the panel IS the request to watch
+// it). tcpdump does NOT auto-stream from this toggle anymore - it only
+// shows/hides the packet table; starting/stopping the actual capture is
+// the explicit "start streaming" button (see toggleFleetTcpdumpStream).
 async function toggleFleetIfaceLogPanel(piId, entry, cardState, spec) {
   const expanding = !cardState[spec.expandedKey];
 
@@ -1015,27 +1250,60 @@ async function toggleFleetIfaceLogPanel(piId, entry, cardState, spec) {
     entry.ifaceCards.forEach((other) => {
       if (other !== cardState && other.logExpanded) {
         other.logExpanded = false;
-        other.logRow.classList.add('hidden');
-        other.logToggle.innerHTML = '&#9654; ' + PANELS.find(p => p.kind === 'logs').short;
+        other.logRow.classList.add('pd-log-collapsed');
+        other.logToggle.innerHTML = chevronIconSvg('down');
+        other.logToggle.title = 'Expand';
       }
     });
   }
 
   cardState[spec.expandedKey] = expanding;
-  cardState[spec.rowKey].classList.toggle('hidden', !expanding);
-  cardState[spec.toggleKey].innerHTML = expanding ? '&#9660; ' + spec.short : '&#9654; ' + spec.short;
+  cardState[spec.rowKey].classList.toggle('pd-log-collapsed', !expanding);
+  cardState[spec.toggleKey].innerHTML = chevronIconSvg(expanding ? 'up' : 'down');
+  cardState[spec.toggleKey].title = expanding ? 'Collapse' : 'Expand';
 
   if (expanding && !cardState[spec.panelKey].children.length) {
     cardState[spec.panelKey].innerHTML = '<div class="pi-log-empty">waiting for messages…</div>';
   }
 
-  try {
-    await postCmd(piId, expanding ? STREAM_START_ACTION[spec.kind] : STREAM_STOP_ACTION[spec.kind], { interface: cardState.iface });
-  } catch {
-    // backend unreachable; UI still reflects the toggle, next attempt will retry
+  if (spec.kind === 'logs') {
+    try {
+      await postCmd(piId, expanding ? STREAM_START_ACTION.logs : STREAM_STOP_ACTION.logs, { interface: cardState.iface });
+    } catch {
+      // backend unreachable; UI still reflects the toggle, next attempt will retry
+    }
   }
 
-  const anyOpen = [...entry.ifaceCards.values()].some(c => c.logExpanded || c.tcpdumpExpanded);
+  const anyOpen = [...entry.ifaceCards.values()].some(c => c.logExpanded || c.tcpdumpStreaming);
+  if (anyOpen && !entry.ws) {
+    entry.ws = connectFleetPiLog(piId, entry);
+  } else if (!anyOpen && entry.ws) {
+    entry.ws.close();
+    entry.ws = null;
+  }
+}
+
+// Fleet wrapper for the tcpdump panel's explicit start/stop streaming
+// button - manages the shared per-Pi websocket around the common
+// start/stop core (performToggleTcpdumpStream).
+async function toggleFleetTcpdumpStream(piId, entry, cardState, btn) {
+  const starting = await performToggleTcpdumpStream(piId, cardState.iface, btn);
+  if (starting === null) return;
+  cardState.tcpdumpStreaming = starting;
+
+  // Starting a stream while the packet table's row is still collapsed
+  // would accumulate rows nobody can see (the row itself is display:none
+  // until its own chevron is expanded) - auto-expand it so packets are
+  // visible immediately. This doesn't reintroduce auto-streaming-on-
+  // toggle: it's the view following an explicit start, not the reverse.
+  if (starting && !cardState.tcpdumpExpanded) {
+    cardState.tcpdumpExpanded = true;
+    cardState.tcpdumpRow.classList.remove('pd-log-collapsed');
+    cardState.tcpdumpToggle.innerHTML = chevronIconSvg('up');
+    cardState.tcpdumpToggle.title = 'Collapse';
+  }
+
+  const anyOpen = [...entry.ifaceCards.values()].some(c => c.logExpanded || c.tcpdumpStreaming);
   if (anyOpen && !entry.ws) {
     entry.ws = connectFleetPiLog(piId, entry);
   } else if (!anyOpen && entry.ws) {
@@ -1051,7 +1319,7 @@ async function toggleFleetIfaceCard(piId, entry, cardState) {
   const toggleEl = cardState.card.querySelector('.pd-iface-toggle');
   const expanding = body.classList.contains('hidden');
   body.classList.toggle('hidden', !expanding);
-  toggleEl.innerHTML = expanding ? '&#9660;' : '&#9654;';
+  toggleEl.innerHTML = chevronIconSvg(expanding ? 'down' : 'right');
   if (!expanding) return;
   if (!cardState.infoEl.innerHTML.trim()) {
     cardState.infoEl.innerHTML = '<div class="pi-log-empty">loading…</div>';
@@ -1122,6 +1390,42 @@ function renderFleetIfaceBody(entry, cardState) {
         `<tr><td class="result-key">${k}</td><td class="result-value">${v ?? ''}</td></tr>`
       ).join('')}</table>`
     : '<div class="pi-log-empty">no data</div>';
+
+  if (link && link.connected) {
+    cardState.infoEl.insertAdjacentHTML('beforeend',
+      '<div class="wifi-disconnect-row"><button type="button" class="wifi-disconnect-btn">Disconnect</button></div>');
+    cardState.infoEl.querySelector('.wifi-disconnect-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      disconnectFleetWifi(cardState, e.currentTarget);
+    });
+  }
+}
+
+// Disconnects one interface card's wifi directly (no need to go through
+// the Actions panel or a scanned network's own Disconnect button).
+async function disconnectFleetWifi(cardState, btn) {
+  const piId = cardState.piId;
+  btn.disabled = true;
+  btn.textContent = 'Disconnecting…';
+  try {
+    const res = await postCmd(piId, 'disconnect_wifi', { interface: cardState.iface });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    const data = await res.json();
+    await awaitCommandResult(data.command_id, 320);
+  } catch (err) {
+    alert(`Failed to disconnect: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Disconnect';
+  }
+  const entry = piRows.get(piId);
+  if (entry) {
+    // IP address goes away on disconnect too, same as it changes on
+    // connect - force a fresh read instead of showing the stale one.
+    entry.ifaceDetailsCache = null;
+    entry.ifaceDetailsPromise = null;
+    refreshFleetWifiIcon(piId, entry, cardState);
+  }
 }
 
 // Colors one card's wifi icon and "connected — SSID" mark via link_info -
@@ -1192,53 +1496,59 @@ function buildFleetIfaceCard(piId, entry, iface) {
         <span class="wifi-icon wifi-unknown" title="checking…">${WIFI_ICON_SVG}</span>
         <span class="pd-iface-connected-mark badge badge-online hidden"></span>
       ` : ''}
-      <span class="pd-iface-toggle">&#9654;</span>
+      <span class="pd-iface-toggle">${chevronIconSvg('right')}</span>
     </div>
     <div class="pd-iface-body hidden">
       <div class="pd-iface-info"></div>
-      <div class="pd-iface-log-toggles">
-        ${PANELS.map(spec => `<span class="pi-toggle" data-kind="${spec.kind}">&#9654; ${spec.short}</span>`).join('')}
-      </div>
     </div>
   `;
 
   const body = card.querySelector('.pd-iface-body');
   const checkboxEl = card.querySelector('.fleet-iface-primary-checkbox');
-  const logTogglesEl = card.querySelector('.pd-iface-log-toggles');
 
   const cardState = {
-    iface, card, checkboxEl,
+    piId, iface, card, checkboxEl,
     infoEl: card.querySelector('.pd-iface-info'),
     wifiIconEl: card.querySelector('.wifi-icon'),
     connectedMarkEl: card.querySelector('.pd-iface-connected-mark'),
-    captureState: null, pcapState: null,
+    captureState: null, pcapState: null, tcpdumpStreaming: false,
     tcpdumpIfaceSelect: { value: iface },
   };
 
   PANELS.forEach(spec => {
+    const isTcpdump = spec.kind === 'tcpdump';
     const row = document.createElement('div');
-    row.className = 'pd-iface-log-row hidden';
+    row.className = 'pd-log-block pd-log-collapsed';
     row.innerHTML = `
       <div class="pi-log-heading">
         <span>${spec.label}</span>
         <span class="pi-log-actions">
+          ${isTcpdump ? `<button class="pi-log-stream icon-btn" type="button" title="Start streaming">${PLAY_ICON_SVG}</button>` : ''}
           <button class="pi-log-capture icon-btn" type="button" title="Start Capture">&#9210;</button>
           <button class="pi-log-clear icon-btn" type="button" title="Clear">&#128465;</button>
+          <button class="pi-log-collapse icon-btn" type="button" title="Expand">${chevronIconSvg('down')}</button>
         </span>
       </div>
-      <div class="pi-log-panel"></div>
+      <div class="pi-log-panel${isTcpdump ? ' wireshark-table-wrap' : ''}">${isTcpdump ? WIRESHARK_TABLE_HTML : ''}</div>
     `;
     body.appendChild(row);
 
     cardState[spec.rowKey] = row;
     cardState[spec.panelKey] = row.querySelector('.pi-log-panel');
-    cardState[spec.toggleKey] = logTogglesEl.querySelector(`.pi-toggle[data-kind="${spec.kind}"]`);
+    cardState[spec.toggleKey] = row.querySelector('.pi-log-collapse');
     cardState[spec.expandedKey] = false;
+    if (isTcpdump) setupWiresharkTable(cardState[spec.panelKey]);
 
     cardState[spec.toggleKey].addEventListener('click', (e) => {
       e.stopPropagation();
       toggleFleetIfaceLogPanel(piId, entry, cardState, spec);
     });
+    if (isTcpdump) {
+      row.querySelector('.pi-log-stream').addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleFleetTcpdumpStream(piId, entry, cardState, e.currentTarget);
+      });
+    }
     row.querySelector('.pi-log-capture').addEventListener('click', (e) => {
       e.stopPropagation();
       toggleCapture(piId, spec, cardState, e.currentTarget);
@@ -1279,26 +1589,35 @@ function toggleRow(piId) {
   if (!entry) return;
   entry.rowExpanded = !entry.rowExpanded;
   entry.ifacesRow.classList.toggle('hidden', !entry.rowExpanded);
-  entry.mainToggle.innerHTML = entry.rowExpanded ? '&#9660;' : '&#9654;';
+  entry.mainToggle.innerHTML = chevronIconSvg(entry.rowExpanded ? 'down' : 'right');
 
-  // Collapsing the Pi row also collapses/tears down every interface
-  // card's log windows and the shared websocket.
-  if (!entry.rowExpanded) {
-    entry.ifaceCards.forEach(cardState => {
-      cardState.card.querySelector('.pd-iface-body').classList.add('hidden');
-      cardState.card.querySelector('.pd-iface-toggle').innerHTML = '&#9654;';
-      PANELS.forEach(spec => {
-        if (cardState[spec.expandedKey]) {
-          cardState[spec.expandedKey] = false;
-          cardState[spec.rowKey].classList.add('hidden');
-          cardState[spec.toggleKey].innerHTML = '&#9654; ' + spec.short;
-        }
-      });
+  if (entry.rowExpanded) {
+    // A tcpdump capture (or syslog stream) started before the row was
+    // collapsed keeps running server-side regardless - only the live
+    // relay's websocket was torn down, so reconnect it if still needed.
+    const anyActive = [...entry.ifaceCards.values()].some(c => c.logExpanded || c.tcpdumpStreaming);
+    if (anyActive && !entry.ws) entry.ws = connectFleetPiLog(piId, entry);
+    return;
+  }
+
+  // Collapsing the Pi row also hides every interface card's log windows
+  // and tears down the shared websocket (view only - doesn't stop an
+  // in-progress capture/stream).
+  entry.ifaceCards.forEach(cardState => {
+    cardState.card.querySelector('.pd-iface-body').classList.add('hidden');
+    cardState.card.querySelector('.pd-iface-toggle').innerHTML = chevronIconSvg('right');
+    PANELS.forEach(spec => {
+      if (cardState[spec.expandedKey]) {
+        cardState[spec.expandedKey] = false;
+        cardState[spec.rowKey].classList.add('pd-log-collapsed');
+        cardState[spec.toggleKey].innerHTML = chevronIconSvg('down');
+        cardState[spec.toggleKey].title = 'Expand';
+      }
     });
-    if (entry.ws) {
-      entry.ws.close();
-      entry.ws = null;
-    }
+  });
+  if (entry.ws) {
+    entry.ws.close();
+    entry.ws = null;
   }
 }
 
@@ -1308,12 +1627,12 @@ function createPiRow(piId) {
   summaryRow.dataset.piId = piId;
   summaryRow.innerHTML = `
     <td><input type="checkbox" class="pi-select-checkbox" title="Select for multicast"></td>
-    <td><span class="pi-toggle main-toggle">&#9654;</span></td>
     <td><a href="#" class="c-id-link pi-id-link"></a></td>
     <td class="c-ip"></td>
     <td class="c-role"></td>
     <td class="c-status"></td>
     <td class="c-seen"></td>
+    <td><span class="pd-iface-toggle main-toggle">${chevronIconSvg('right')}</span></td>
   `;
   const mainToggle = summaryRow.querySelector('.main-toggle');
   mainToggle.addEventListener('click', (e) => {
@@ -1568,11 +1887,11 @@ async function loadHistory() {
         const detailRow = historyTableBody.querySelector(`.history-detail-row[data-command-id="${id}"]`);
         const expanding = detailRow.classList.contains('hidden');
         detailRow.classList.toggle('hidden');
-        btn.innerHTML = expanding ? '&#9660;' : '&#9654;';
+        btn.innerHTML = chevronIconSvg(expanding ? 'down' : 'right');
         if (!expanding) return;
         const command = commands.find(c => c.command_id === id);
         const resultEl = detailRow.querySelector('.result');
-        if (command && command.result) renderCommandResult(resultEl, command.action, command.result);
+        if (command && command.result) renderCommandResult(resultEl, command.action, command.result, command.pi_id);
         else resultEl.innerHTML = '<div class="pi-log-empty">no result</div>';
       });
     });
@@ -1675,7 +1994,7 @@ function renderParamFields() {
         <label>${f.label}</label>
         <div class="password-wrap">
           <input class="field" data-param="${f.name}" type="password" ${f.default !== undefined ? `value="${f.default}"` : ''}>
-          <button type="button" class="password-toggle" title="Show password">&#128065;</button>
+          <button type="button" class="password-toggle" title="Show password">${EYE_ICON_SVG}</button>
         </div>
       `;
     }
@@ -1763,6 +2082,7 @@ function addCommandEntry(commandId, piId, action) {
     entry.remove();
   });
   cmdResults.prepend(entry);
+  if (action === 'scan_wifi') renderWifiScanLoading(entry.querySelector('.result'));
   pollCommand(commandId, entry, piId, action);
 }
 
@@ -1866,6 +2186,31 @@ function renderResultTable(container, obj) {
   container.appendChild(table);
 }
 
+// Spinner + text shown in place of a scan_wifi result while the scan is
+// still in flight - used by every scan_wifi entry point (plain action,
+// fleet merged multi-interface scan, per-interface "Nearby networks").
+function renderWifiScanLoading(container, text) {
+  container.innerHTML = `
+    <div class="wifi-scan-loading">
+      <span class="wifi-scan-spinner"></span>
+      <span>${text || 'Scanning for networks…'}</span>
+    </div>
+  `;
+}
+
+// Alphabetical by SSID (case-insensitive), hidden/unnamed networks last -
+// applied everywhere a scanned network list gets rendered.
+function sortNetworksBySsid(networks) {
+  return [...networks].sort((a, b) => {
+    const aSsid = a.ssid || '';
+    const bSsid = b.ssid || '';
+    if (!aSsid && !bSsid) return 0;
+    if (!aSsid) return 1;
+    if (!bSsid) return -1;
+    return aSsid.localeCompare(bSsid, undefined, { sensitivity: 'base' });
+  });
+}
+
 // scan_wifi's result is a list of nearby APs - shown as one collapsed card
 // per SSID (reusing the same card look as the interface list) instead of
 // the generic key-value table, so the scan reads as a scan rather than a
@@ -1876,6 +2221,7 @@ function renderWifiScanResults(container, networks) {
     container.innerHTML = '<div class="pi-log-empty">no networks found</div>';
     return;
   }
+  networks = sortNetworksBySsid(networks);
 
   // Same SSID filter box as the per-interface "Nearby networks" scan on
   // the Pi detail page - typing narrows this list without re-scanning.
@@ -1894,7 +2240,7 @@ function renderWifiScanResults(container, networks) {
     card.innerHTML = `
       <div class="pd-iface-header">
         <span class="pd-iface-name">${net.ssid || '(hidden)'}</span>
-        <span class="pd-iface-toggle">&#9654;</span>
+        <span class="pd-iface-toggle">${chevronIconSvg('right')}</span>
       </div>
       <div class="pd-iface-body hidden"></div>
     `;
@@ -1917,7 +2263,7 @@ function renderWifiScanResults(container, networks) {
     card.querySelector('.pd-iface-header').addEventListener('click', () => {
       const expanding = body.classList.contains('hidden');
       body.classList.toggle('hidden');
-      card.querySelector('.pd-iface-toggle').innerHTML = expanding ? '&#9660;' : '&#9654;';
+      card.querySelector('.pd-iface-toggle').innerHTML = chevronIconSvg(expanding ? 'down' : 'right');
     });
     listEl.appendChild(card);
   });
@@ -1927,12 +2273,48 @@ function renderWifiScanResults(container, networks) {
   });
 }
 
+// A single-target scan_wifi result (one Pi, one interface - the common
+// case from the Fleet/detail Actions panel) reuses the exact same
+// connect-capable card as the per-interface "Nearby networks" widget
+// (renderWifiNetworkCard), instead of the connect-less plain result view -
+// so scanning from the Actions panel can connect directly too, not just
+// the merged multi-interface fleet scan.
+function renderScanResultsWithConnect(container, piId, iface, networks) {
+  container.innerHTML = '';
+  if (!networks.length) {
+    container.innerHTML = '<div class="pi-log-empty">no networks found</div>';
+    return;
+  }
+  networks = sortNetworksBySsid(networks);
+
+  const searchWrap = document.createElement('div');
+  searchWrap.className = 'pd-wifi-search-wrap';
+  searchWrap.innerHTML = `${SEARCH_ICON_SVG}<input type="text" class="pd-wifi-search-input" placeholder="Filter by SSID…">`;
+  container.appendChild(searchWrap);
+
+  const listEl = document.createElement('div');
+  listEl.className = 'pd-wifi-scan-list';
+  container.appendChild(listEl);
+
+  // connectedBssid unknown here (no link_info fetched for this render) -
+  // the "connected" badge just won't show; Connect/Disconnect still work.
+  networks.forEach(net => listEl.appendChild(renderWifiNetworkCard(piId, iface, net, null)));
+
+  searchWrap.querySelector('.pd-wifi-search-input').addEventListener('input', (e) => {
+    applyWifiSearchFilter(listEl, e.target.value);
+  });
+}
+
 // Single dispatch point so every place a command's result gets rendered
 // (live poll, and restored history on page reload) picks scan_wifi's
 // per-AP cards over the generic key-value table without duplicating logic.
-function renderCommandResult(container, action, result) {
+function renderCommandResult(container, action, result, piId) {
   if (action === 'scan_wifi' && result && Array.isArray(result.networks)) {
-    renderWifiScanResults(container, result.networks);
+    if (piId && result.interface) {
+      renderScanResultsWithConnect(container, piId, result.interface, result.networks);
+    } else {
+      renderWifiScanResults(container, result.networks);
+    }
   } else {
     renderResultTable(container, result);
   }
@@ -1964,7 +2346,7 @@ function renderMergedWifiNetworkCard(targets, net) {
   card.innerHTML = `
     <div class="pd-iface-header">
       <span class="pd-iface-name">${net.ssid || '(hidden)'}</span>
-      <span class="pd-iface-toggle">&#9654;</span>
+      <span class="pd-iface-toggle">${chevronIconSvg('right')}</span>
     </div>
     <div class="pd-iface-body hidden"></div>
   `;
@@ -1984,12 +2366,7 @@ function renderMergedWifiNetworkCard(targets, net) {
       `<tr><td class="result-key">${k}</td><td class="result-value">${v}</td></tr>`
     ).join('')}</table>
     <div class="wifi-connect-row">
-      ${open ? '' : `
-        <div class="password-wrap">
-          <input type="password" class="wifi-connect-password field" placeholder="Password">
-          <button type="button" class="password-toggle" title="Show password">&#128065;</button>
-        </div>
-      `}
+      ${open ? '' : wifiPasswordFieldHtml(net)}
       <button type="button" class="wifi-connect-btn">Connect (${targets.length} interface${targets.length === 1 ? '' : 's'})</button>
     </div>
     <div class="wifi-connect-status hint"></div>
@@ -1998,13 +2375,15 @@ function renderMergedWifiNetworkCard(targets, net) {
   card.querySelector('.pd-iface-header').addEventListener('click', () => {
     const expanding = body.classList.contains('hidden');
     body.classList.toggle('hidden');
-    card.querySelector('.pd-iface-toggle').innerHTML = expanding ? '&#9660;' : '&#9654;';
+    card.querySelector('.pd-iface-toggle').innerHTML = chevronIconSvg(expanding ? 'down' : 'right');
   });
 
   const stop = (e) => e.stopPropagation();
   const statusEl = body.querySelector('.wifi-connect-status');
   const passwordInput = body.querySelector('.wifi-connect-password');
   if (passwordInput) passwordInput.addEventListener('click', stop);
+  const rememberCheckbox = body.querySelector('.wifi-remember-checkbox');
+  if (rememberCheckbox) rememberCheckbox.addEventListener('click', stop);
 
   body.querySelector('.wifi-connect-btn').addEventListener('click', async (e) => {
     stop(e);
@@ -2013,17 +2392,27 @@ function renderMergedWifiNetworkCard(targets, net) {
     statusEl.textContent = `Connecting on ${targets.length} interface(s)…`;
     const password = passwordInput && passwordInput.value ? passwordInput.value : undefined;
     const results = await Promise.allSettled(targets.map(async ({ piId, interface: iface }) => {
-      const res = await postCmd(piId, 'connect_wifi', {
+      const result = await connectWifiWithRetry(piId, {
         ssid: net.ssid || undefined,
         bssid: net.bssid || undefined,
         password,
         interface: iface,
       });
-      if (!res.ok) throw new Error(`${piId}/${iface}: ${res.status} ${await res.text()}`);
-      const data = await res.json();
-      const result = await awaitCommandResult(data.command_id, 30);
       if (!(result && result.connected)) {
         throw new Error(`${piId}/${iface}: failed${result && result.output ? ' - ' + result.output : ''}`);
+      }
+      // Nothing here previously refreshed the fleet's own interface cards -
+      // connect succeeded but their wifi icon/connected-mark/IP stayed
+      // stale (whatever they last showed) until something else happened
+      // to touch them, which read as a mysterious delay. ifaceDetailsCache
+      // is nulled to force a fresh IP address on next render; the wifi
+      // icon/link info is refreshed right away.
+      const entry = piRows.get(piId);
+      const cardState = entry && entry.ifaceCards.get(iface);
+      if (entry && cardState) {
+        entry.ifaceDetailsCache = null;
+        entry.ifaceDetailsPromise = null;
+        await refreshFleetWifiIcon(piId, entry, cardState);
       }
     }));
     const okCount = results.filter(r => r.status === 'fulfilled').length;
@@ -2031,6 +2420,7 @@ function renderMergedWifiNetworkCard(targets, net) {
     statusEl.textContent = failed.length
       ? `Connected on ${okCount}/${targets.length}. ${failed.map(r => r.reason.message).join('; ')}`
       : `Connected on all ${okCount} interface(s).`;
+    if (okCount > 0) applyWifiPasswordMemory(body, net, password);
     btn.disabled = false;
   });
 
@@ -2043,6 +2433,7 @@ function renderMergedWifiScan(container, targets, networks) {
     container.innerHTML = '<div class="pi-log-empty">no networks found</div>';
     return;
   }
+  networks = sortNetworksBySsid(networks);
   const searchWrap = document.createElement('div');
   searchWrap.className = 'pd-wifi-search-wrap';
   searchWrap.innerHTML = `${SEARCH_ICON_SVG}<input type="text" class="pd-wifi-search-input" placeholder="Filter by SSID…">`;
@@ -2062,12 +2453,16 @@ function renderMergedWifiScan(container, targets, networks) {
 // One combined feed entry for a scan_wifi fan-out across several targets -
 // replaces what would otherwise be one pending/complete entry per (Pi,
 // interface), which for a scan is just the same nearby APs reported N times.
-function addMergedScanEntry(targets, networksByTarget) {
+// Added immediately (pending, with the scanning spinner) so there's
+// visible feedback for the whole duration of the multi-interface scan,
+// not just once every interface has reported back - see fillMergedScanEntry.
+function createMergedScanEntry(targets) {
   const entry = document.createElement('div');
   entry.className = 'cmd-entry';
-  const label = `scan wifi &rarr; ${targets.length} interface${targets.length === 1 ? '' : 's'} (merged)`;
+  const count = targets.length;
+  const label = `scan wifi &rarr; ${count} interface${count === 1 ? '' : 's'} (merged)`;
   entry.innerHTML = `
-    <div class="hdr"><span><span class="toggle">&#9660;</span>${label}</span><span><span class="cmd-status complete">complete</span></span></div>
+    <div class="hdr"><span><span class="toggle">&#9660;</span>${label}</span><span><span class="cmd-status pending">pending</span></span></div>
     <div class="result"></div>
   `;
   entry.querySelector('.hdr').addEventListener('click', () => {
@@ -2075,12 +2470,20 @@ function addMergedScanEntry(targets, networksByTarget) {
     entry.querySelector('.toggle').innerHTML = entry.classList.contains('collapsed') ? '&#9654;' : '&#9660;';
   });
   cmdResults.prepend(entry);
+  renderWifiScanLoading(entry.querySelector('.result'), `Scanning ${count} interface${count === 1 ? '' : 's'}…`);
+  return entry;
+}
 
+function fillMergedScanEntry(entry, targets, networksByTarget) {
+  const statusEl = entry.querySelector('.cmd-status');
+  statusEl.textContent = 'complete';
+  statusEl.className = 'cmd-status complete';
   const merged = dedupeNetworks(networksByTarget.flat());
   renderMergedWifiScan(entry.querySelector('.result'), targets, merged);
 }
 
 async function sendScanWifiFanOut(targets, params) {
+  const entry = createMergedScanEntry(targets);
   const results = await Promise.allSettled(targets.map(({ piId, interface: iface }) =>
     sendCommandAwaitResult(piId, 'scan_wifi', { ...params, interface: iface })
   ));
@@ -2093,7 +2496,7 @@ async function sendScanWifiFanOut(targets, params) {
   if (failed.length) {
     alert(`${failed.length} of ${targets.length} scan(s) failed:\n${failed.join('\n')}`);
   }
-  addMergedScanEntry(targets, networksByTarget);
+  fillMergedScanEntry(entry, targets, networksByTarget);
 }
 
 function pushToPiLogPanel(piId, lines) {
@@ -2115,7 +2518,7 @@ async function pollCommand(commandId, entry, piId, action) {
         const data = await res.json();
         statusEl.textContent = data.status;
         statusEl.className = `cmd-status ${data.status}`;
-        if (data.result) renderCommandResult(resultEl, action, data.result);
+        if (data.result) renderCommandResult(resultEl, action, data.result, piId);
         if (data.status === 'complete' && action === 'syslog' && Array.isArray(data.result?.logs)) {
           pushToPiLogPanel(piId, data.result.logs);
         }
@@ -2303,6 +2706,336 @@ function flushLineQueue(container, state) {
   if (nearBottom) container.scrollTop = container.scrollHeight;
 }
 
+// --- tcpdump: Wireshark-style packet list ----------------------------------
+// Markup for a tcpdump panel - a sticky-header table (No./Time/Source/
+// Destination/Protocol/Length/Info, the same columns Wireshark's packet
+// list pane shows) instead of the plain scrolling text log syslog uses.
+// Inserted in place of an empty '.pi-log-panel' div wherever a tcpdump
+// block is built (both the fleet table's per-interface cards and the Pi
+// detail page's shared block).
+// Inlined rather than reusing the SEARCH_ICON_SVG constant defined further
+// down the file - this is a top-level template string evaluated
+// immediately, so it can't reference a const declared later (temporal
+// dead zone), unlike the functions elsewhere that just happen to mention
+// SEARCH_ICON_SVG inside a function body that only runs later.
+const WIRESHARK_FILTER_ICON_SVG = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`;
+
+const WIRESHARK_TABLE_HTML = `
+  <div class="wireshark-filter-wrap">
+    ${WIRESHARK_FILTER_ICON_SVG}
+    <input type="text" class="wireshark-filter-input" placeholder="Filter (e.g. tcp, arp, 192.168.1.5)">
+  </div>
+  <div class="wireshark-pause-banner hidden">
+    <span class="wireshark-pause-text">Live capture paused</span>
+    <button type="button" class="wireshark-resume-btn">Resume</button>
+  </div>
+  <div class="wireshark-table-scroll">
+    <table class="wireshark-table">
+      <thead>
+        <tr><th>No.</th><th>Time</th><th>Source</th><th>Destination</th><th>Protocol</th><th>Length</th><th>Info</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="wireshark-detail-panel wireshark-detail-empty-state">
+    <button type="button" class="wireshark-detail-close icon-btn" title="Close">${CLOSE_ICON_SVG}</button>
+    <div class="wireshark-detail-body">
+      <div class="wireshark-detail-empty">Click a packet row to see its details</div>
+    </div>
+  </div>
+`;
+
+function formatPacketTime(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString('en-GB', { hour12: false }) + '.' + String(d.getMilliseconds()).padStart(3, '0');
+}
+
+const PACKET_TABLE_PROTO_CLASSES = new Set(['tcp', 'udp', 'arp', 'icmp']);
+
+// Per-table state, keyed by <tbody>. Mirrors Wireshark's own behavior:
+// scrolling away from the bottom to inspect a packet pauses the live view
+// entirely (new packets buffer in `pending` instead of touching the DOM,
+// and the visible 500-row cap stops pruning) so nothing shifts under you
+// or gets deleted out from under your cursor; scrolling back to the
+// bottom (or clicking Resume) flushes whatever arrived while paused.
+const packetTableQueues = new WeakMap();
+
+function getPacketTableState(tbody) {
+  let state = packetTableQueues.get(tbody);
+  if (!state) {
+    state = {
+      queue: [], scheduled: false, count: 0,
+      paused: false, pending: [], filterQuery: '',
+      scrollEl: null, banner: null, detailPanel: null,
+    };
+    packetTableQueues.set(tbody, state);
+  }
+  return state;
+}
+
+function isScrolledNearBottom(scrollEl) {
+  return scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < 40;
+}
+
+function updatePauseBanner(state) {
+  if (!state.banner) return;
+  state.banner.classList.toggle('hidden', !state.paused);
+  if (state.paused) {
+    state.banner.querySelector('.wireshark-pause-text').textContent = state.pending.length
+      ? `Live capture paused — ${state.pending.length} new packet${state.pending.length === 1 ? '' : 's'}`
+      : 'Live capture paused (scrolled up)';
+  }
+}
+
+function resumeLiveCapture(tbody) {
+  const state = getPacketTableState(tbody);
+  state.paused = false;
+  if (state.pending.length) {
+    state.queue.push(...state.pending);
+    state.pending = [];
+    if (!state.scheduled) {
+      state.scheduled = true;
+      requestAnimationFrame(() => flushPacketQueue(tbody, state));
+    }
+  }
+  updatePauseBanner(state);
+  if (state.scrollEl) state.scrollEl.scrollTop = state.scrollEl.scrollHeight;
+}
+
+// Wires up the scroll-to-pause behavior, the Resume button, and
+// click-a-row-for-details - called once per tcpdump panel when its table
+// markup is built (fleet: fresh element per card; detail page: same
+// static element every Pi visit, so this uses property assignment
+// throughout instead of addEventListener to avoid piling up listeners).
+function setupWiresharkTable(panel) {
+  const tbody = panel.querySelector('tbody');
+  const scrollEl = panel.querySelector('.wireshark-table-scroll');
+  const banner = panel.querySelector('.wireshark-pause-banner');
+  const resumeBtn = panel.querySelector('.wireshark-resume-btn');
+  const detailPanel = panel.querySelector('.wireshark-detail-panel');
+  const detailBody = detailPanel ? detailPanel.querySelector('.wireshark-detail-body') : null;
+  const detailCloseBtn = detailPanel ? detailPanel.querySelector('.wireshark-detail-close') : null;
+  const filterInput = panel.querySelector('.wireshark-filter-input');
+  if (!tbody || !scrollEl) return;
+
+  const state = getPacketTableState(tbody);
+  state.scrollEl = scrollEl;
+  state.banner = banner;
+  state.detailPanel = detailPanel;
+  state.detailBody = detailBody;
+
+  if (detailCloseBtn) {
+    detailCloseBtn.onclick = (e) => {
+      e.stopPropagation();
+      closePacketDetail(tbody);
+    };
+  }
+
+  scrollEl.onscroll = () => {
+    if (isScrolledNearBottom(scrollEl)) {
+      if (state.paused) resumeLiveCapture(tbody);
+    } else if (!state.paused) {
+      state.paused = true;
+      updatePauseBanner(state);
+    }
+  };
+
+  if (resumeBtn) resumeBtn.onclick = () => resumeLiveCapture(tbody);
+
+  if (filterInput) {
+    filterInput.value = state.filterQuery || '';
+    filterInput.onclick = (e) => e.stopPropagation();
+    filterInput.oninput = () => {
+      state.filterQuery = filterInput.value.trim().toLowerCase();
+      tbody.querySelectorAll('tr').forEach(tr => {
+        const rowPayload = packetRowPayloads.get(tr);
+        const show = !state.filterQuery || (rowPayload && matchesPacketFilter(rowPayload, state.filterQuery));
+        tr.classList.toggle('filtered-out', !show);
+      });
+    };
+  }
+
+  tbody.onclick = (e) => {
+    const tr = e.target.closest('tr');
+    if (!tr) {
+      closePacketDetail(tbody);
+      return;
+    }
+    selectPacketRow(tbody, tr);
+  };
+}
+
+// Tracks whichever packet's detail pane is currently open, across every
+// tcpdump table on the page, so the one click-outside listener below can
+// close it regardless of which panel it belongs to.
+let activePacketSelection = null;
+
+document.addEventListener('click', (e) => {
+  if (!activePacketSelection) return;
+  const { tbody, detailPanel } = activePacketSelection;
+  if (tbody.contains(e.target)) return;
+  if (detailPanel && detailPanel.contains(e.target)) return;
+  closePacketDetail(tbody);
+});
+
+function closePacketDetail(tbody) {
+  const state = getPacketTableState(tbody);
+  const prevSelected = tbody.querySelector('tr.selected');
+  if (prevSelected) prevSelected.classList.remove('selected');
+  if (activePacketSelection && activePacketSelection.tbody === tbody) activePacketSelection = null;
+  if (state.detailPanel) {
+    state.detailPanel.classList.add('wireshark-detail-empty-state');
+    if (state.detailBody) {
+      state.detailBody.innerHTML = '<div class="wireshark-detail-empty">Click a packet row to see its details</div>';
+    }
+  }
+}
+
+// Simple substring match across the fields shown in the table plus the
+// protocol - not Wireshark's real filter grammar (no "tcp.port == 80"
+// expressions), but enough to narrow a busy capture down to one host,
+// protocol, or keyword while it's still streaming.
+function matchesPacketFilter(payload, query) {
+  const haystack = [payload.protocol, payload.src, payload.dst, payload.info, payload.length]
+    .filter(v => v !== null && v !== undefined)
+    .join(' ')
+    .toLowerCase();
+  return haystack.includes(query);
+}
+
+// Full decoded fields for whichever row is currently selected, keyed by
+// the <tr> itself - the table only shows a summary per row, this backs
+// the "click a packet to see its details" pane with everything received.
+const packetRowPayloads = new WeakMap();
+
+// Flat key/value packet detail pane - shown for whichever row is selected.
+function renderPacketSummaryFallback(container, payload) {
+  const rows = [
+    ['No.', payload.no],
+    ['Time', formatPacketTime(payload.timestamp)],
+    ['Source', payload.src || '—'],
+    ['Destination', payload.dst || '—'],
+    ['Protocol', payload.protocol || '—'],
+    ['Length', payload.length != null ? payload.length : '—'],
+    ['Interface', payload.interface || '—'],
+    ['Info', payload.info || '—'],
+  ];
+  container.innerHTML = `
+    <table class="result-table">${rows.map(([k, v]) =>
+      `<tr><td class="result-key">${k}</td><td class="result-value">${v}</td></tr>`
+    ).join('')}</table>
+  `;
+}
+
+function selectPacketRow(tbody, tr) {
+  const state = getPacketTableState(tbody);
+  const prevSelected = tbody.querySelector('tr.selected');
+
+  // Clicking the already-selected row closes the detail pane instead of
+  // re-rendering it - same toggle-to-close behavior as the collapse
+  // chevrons elsewhere on the page.
+  if (prevSelected === tr) {
+    closePacketDetail(tbody);
+    return;
+  }
+
+  if (prevSelected) prevSelected.classList.remove('selected');
+  tr.classList.add('selected');
+
+  const payload = packetRowPayloads.get(tr);
+  if (!state.detailPanel || !payload) return;
+
+  state.detailPanel.classList.remove('wireshark-detail-empty-state');
+  activePacketSelection = { tbody, detailPanel: state.detailPanel };
+  if (state.detailBody) renderPacketSummaryFallback(state.detailBody, payload);
+}
+
+function buildPacketRow(no, payload, filterQuery) {
+  const tr = document.createElement('tr');
+  const proto = (payload.protocol || '').toLowerCase();
+  if (PACKET_TABLE_PROTO_CLASSES.has(proto)) tr.classList.add(`proto-${proto}`);
+  const cells = [
+    no,
+    formatPacketTime(payload.timestamp),
+    payload.src || '',
+    payload.dst || '',
+    payload.protocol || '',
+    payload.length != null ? payload.length : '',
+  ];
+  tr.innerHTML = cells.map(v => `<td>${v}</td>`).join('') + '<td class="ws-info"></td>';
+  tr.querySelector('.ws-info').textContent = payload.info || '';
+  const fullPayload = { no, ...payload };
+  packetRowPayloads.set(tr, fullPayload);
+  if (filterQuery && !matchesPacketFilter(fullPayload, filterQuery)) tr.classList.add('filtered-out');
+  return tr;
+}
+
+// Same queue-and-flush-on-next-frame pattern as appendLineTo/flushLineQueue,
+// just building <tr> packet rows into a <tbody> instead of <div> lines -
+// batches a burst of packets into one DOM write instead of one per packet.
+// While paused (user scrolled up), packets go to `pending` instead - see
+// resumeLiveCapture.
+function appendPacketRow(tbody, payload) {
+  const state = getPacketTableState(tbody);
+  if (state.paused) {
+    state.pending.push(payload);
+    if (state.pending.length > 2000) state.pending.shift();
+    updatePauseBanner(state);
+    return;
+  }
+  state.queue.push(payload);
+  if (!state.scheduled) {
+    state.scheduled = true;
+    requestAnimationFrame(() => flushPacketQueue(tbody, state));
+  }
+}
+
+function flushPacketQueue(tbody, state) {
+  state.scheduled = false;
+  const items = state.queue;
+  state.queue = [];
+  if (!items.length) return;
+
+  const frag = document.createDocumentFragment();
+  items.forEach(payload => {
+    state.count += 1;
+    frag.appendChild(buildPacketRow(state.count, payload, state.filterQuery));
+  });
+  tbody.appendChild(frag);
+
+  // Only reachable while live (paused packets never reach this function),
+  // so it's always safe to prune old rows and snap to the bottom here.
+  while (tbody.children.length > 500) tbody.removeChild(tbody.firstChild);
+  if (state.scrollEl) state.scrollEl.scrollTop = state.scrollEl.scrollHeight;
+}
+
+// Wipes a tcpdump panel's packet table back to empty (used by Clear and by
+// the initial "waiting for messages" reset) instead of clobbering the
+// table markup itself the way the plain-text log panels get reset.
+function resetLogPanel(panel, spec) {
+  if (spec.kind === 'tcpdump') {
+    const tbody = panel.querySelector('tbody');
+    if (tbody) {
+      tbody.innerHTML = '';
+      packetTableQueues.delete(tbody);
+    }
+    const detailPanel = panel.querySelector('.wireshark-detail-panel');
+    if (detailPanel) {
+      detailPanel.classList.add('wireshark-detail-empty-state');
+      const detailBody = detailPanel.querySelector('.wireshark-detail-body');
+      if (detailBody) detailBody.innerHTML = '<div class="wireshark-detail-empty">Click a packet row to see its details</div>';
+    }
+    if (activePacketSelection && activePacketSelection.tbody === tbody) activePacketSelection = null;
+    const banner = panel.querySelector('.wireshark-pause-banner');
+    if (banner) banner.classList.add('hidden');
+    const filterInput = panel.querySelector('.wireshark-filter-input');
+    if (filterInput) filterInput.value = '';
+  } else {
+    panel.innerHTML = '<div class="pi-log-empty">waiting for messages…</div>';
+  }
+}
+
 // --- Pi detail page ---------------------------------------------------
 // Reached by clicking a Pi's id in the fleet table (#pi/<id> in the hash).
 // One command bar scoped to just that one Pi, with the exact same action
@@ -2330,7 +3063,7 @@ function renderDetailParamFields(container, actionSelectEl, piId) {
         <label>${f.label}</label>
         <div class="password-wrap">
           <input class="field" data-param="${f.name}" type="password" ${f.default !== undefined ? `value="${f.default}"` : ''}>
-          <button type="button" class="password-toggle" title="Show password">&#128065;</button>
+          <button type="button" class="password-toggle" title="Show password">${EYE_ICON_SVG}</button>
         </div>
       `;
     }
@@ -2376,6 +3109,7 @@ function detailAddCommandEntry(container, commandId, piId, action) {
     entry.querySelector('.toggle').innerHTML = entry.classList.contains('collapsed') ? '&#9654;' : '&#9660;';
   });
   container.prepend(entry);
+  if (action === 'scan_wifi') renderWifiScanLoading(entry.querySelector('.result'));
   pollCommand(commandId, entry, piId, action);
 }
 
@@ -2529,10 +3263,114 @@ function renderDetailIfaceBody(body, name) {
         `<tr><td class="result-key">${k}</td><td class="result-value">${v ?? ''}</td></tr>`
       ).join('')}</table>`
     : '<div class="pi-log-empty">no data</div>';
+
+  if (link && link.connected) {
+    info.insertAdjacentHTML('beforeend',
+      '<div class="wifi-disconnect-row"><button type="button" class="wifi-disconnect-btn">Disconnect</button></div>');
+    info.querySelector('.wifi-disconnect-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      disconnectDetailWifi(name, e.currentTarget);
+    });
+  }
+}
+
+// Disconnects one interface directly from its own card (no need to go
+// through the Actions panel or a scanned network's own Disconnect button).
+async function disconnectDetailWifi(iface, btn) {
+  const piId = detailPiId;
+  btn.disabled = true;
+  btn.textContent = 'Disconnecting…';
+  try {
+    const res = await postCmd(piId, 'disconnect_wifi', { interface: iface });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    const data = await res.json();
+    await awaitCommandResult(data.command_id, 320);
+  } catch (err) {
+    alert(`Failed to disconnect: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Disconnect';
+  }
+  delete detailLinkInfoCache[iface];
+  detailIfaceDetailsCache = null;
+  detailIfaceDetailsPromise = null;
+  refreshWifiIcon(piId, iface);
 }
 
 function isOpenSecurity(security) {
   return !security || security === '--' || /^(none|open)$/i.test(security);
+}
+
+// "Remember password" for wifi connect cards - stored in localStorage,
+// keyed by SSID (falling back to BSSID for hidden networks), so
+// reconnecting to the same network later can pre-fill the password
+// instead of retyping it. Note: this is plaintext in the browser's
+// localStorage, readable by any script running on this page/origin - a
+// reasonable tradeoff for a lab-scale fleet tool, not something to rely on
+// if this page is ever exposed somewhere less trusted.
+const WIFI_PASSWORD_STORAGE_KEY = 'pi_fleet_wifi_passwords';
+
+function wifiPasswordKey(net) {
+  return net.ssid || net.bssid || null;
+}
+
+function getSavedWifiPasswords() {
+  try {
+    return JSON.parse(localStorage.getItem(WIFI_PASSWORD_STORAGE_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function getSavedWifiPassword(net) {
+  const key = wifiPasswordKey(net);
+  return key ? (getSavedWifiPasswords()[key] || '') : '';
+}
+
+function rememberWifiPassword(net, password) {
+  const key = wifiPasswordKey(net);
+  if (!key) return;
+  const saved = getSavedWifiPasswords();
+  saved[key] = password;
+  localStorage.setItem(WIFI_PASSWORD_STORAGE_KEY, JSON.stringify(saved));
+}
+
+function forgetWifiPassword(net) {
+  const key = wifiPasswordKey(net);
+  if (!key) return;
+  const saved = getSavedWifiPasswords();
+  if (key in saved) {
+    delete saved[key];
+    localStorage.setItem(WIFI_PASSWORD_STORAGE_KEY, JSON.stringify(saved));
+  }
+}
+
+// Shared markup for a password field + its "Remember password" checkbox,
+// pre-filled/checked when a password is already saved for this network.
+function wifiPasswordFieldHtml(net) {
+  const saved = getSavedWifiPassword(net);
+  return `
+    <div class="password-wrap">
+      <input type="password" class="wifi-connect-password field" placeholder="Password" value="${saved ? saved.replace(/"/g, '&quot;') : ''}">
+      <button type="button" class="password-toggle" title="Show password">${EYE_ICON_SVG}</button>
+    </div>
+    <label class="wifi-remember-row">
+      <input type="checkbox" class="wifi-remember-checkbox" ${saved ? 'checked' : ''}>
+      Remember password
+    </label>
+  `;
+}
+
+// After a successful connect, save or forget the password per the
+// "Remember password" checkbox's state.
+function applyWifiPasswordMemory(body, net, password) {
+  const remember = body.querySelector('.wifi-remember-checkbox');
+  if (!remember) return;
+  if (remember.checked && password) {
+    rememberWifiPassword(net, password);
+  } else {
+    forgetWifiPassword(net);
+  }
 }
 
 // One scanned AP, rendered as the same collapsed-card widget used
@@ -2550,7 +3388,7 @@ function renderWifiNetworkCard(piId, iface, net, connectedBssid) {
     <div class="pd-iface-header">
       <span class="pd-iface-name">${net.ssid || '(hidden)'}</span>
       ${isConnected ? '<span class="badge badge-online">connected</span>' : ''}
-      <span class="pd-iface-toggle">&#9654;</span>
+      <span class="pd-iface-toggle">${chevronIconSvg('right')}</span>
     </div>
     <div class="pd-iface-body hidden"></div>
   `;
@@ -2573,12 +3411,7 @@ function renderWifiNetworkCard(piId, iface, net, connectedBssid) {
     <div class="wifi-connect-row">
       ${isConnected
         ? `<button type="button" class="wifi-disconnect-btn">Disconnect</button>`
-        : `${open ? '' : `
-            <div class="password-wrap">
-              <input type="password" class="wifi-connect-password field" placeholder="Password">
-              <button type="button" class="password-toggle" title="Show password">&#128065;</button>
-            </div>
-          `}
+        : `${open ? '' : wifiPasswordFieldHtml(net)}
           <button type="button" class="wifi-connect-btn">Connect</button>`
       }
     </div>
@@ -2588,7 +3421,7 @@ function renderWifiNetworkCard(piId, iface, net, connectedBssid) {
   card.querySelector('.pd-iface-header').addEventListener('click', () => {
     const expanding = body.classList.contains('hidden');
     body.classList.toggle('hidden');
-    card.querySelector('.pd-iface-toggle').innerHTML = expanding ? '&#9660;' : '&#9654;';
+    card.querySelector('.pd-iface-toggle').innerHTML = chevronIconSvg(expanding ? 'down' : 'right');
   });
 
   const statusEl = body.querySelector('.wifi-connect-status');
@@ -2599,21 +3432,28 @@ function renderWifiNetworkCard(piId, iface, net, connectedBssid) {
     connectBtn.addEventListener('click', async (e) => {
       stop(e);
       const passwordInput = body.querySelector('.wifi-connect-password');
+      const password = passwordInput && passwordInput.value ? passwordInput.value : undefined;
       connectBtn.disabled = true;
       statusEl.textContent = 'Connecting…';
       try {
-        const res = await postCmd(piId, 'connect_wifi', {
+        const result = await connectWifiWithRetry(piId, {
           ssid: net.ssid || undefined,
           bssid: net.bssid || undefined,
-          password: passwordInput && passwordInput.value ? passwordInput.value : undefined,
+          password,
           interface: iface,
         });
-        if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-        const data = await res.json();
-        const result = await awaitCommandResult(data.command_id, 30);
         statusEl.textContent = result && result.connected ? 'Connected.' : `Failed to connect${result && result.output ? ': ' + result.output : ''}`;
-        delete detailLinkInfoCache[iface];
-        refreshWifiIcon(piId, iface);
+        if (result && result.connected) applyWifiPasswordMemory(body, net, password);
+        // Only touch the Pi detail page's own cache/icon if this card is
+        // actually being shown there for this same Pi - this card is also
+        // reused for scan results on the Fleet Actions panel and History
+        // tab, where there's no detail-page interface list to refresh.
+        if (detailPiId === piId) {
+          delete detailLinkInfoCache[iface];
+          detailIfaceDetailsCache = null;
+          detailIfaceDetailsPromise = null;
+          refreshWifiIcon(piId, iface);
+        }
       } catch (err) {
         statusEl.textContent = `Failed: ${err.message}`;
       } finally {
@@ -2623,6 +3463,8 @@ function renderWifiNetworkCard(piId, iface, net, connectedBssid) {
   }
   const passwordInput = body.querySelector('.wifi-connect-password');
   if (passwordInput) passwordInput.addEventListener('click', stop);
+  const rememberCheckbox = body.querySelector('.wifi-remember-checkbox');
+  if (rememberCheckbox) rememberCheckbox.addEventListener('click', stop);
 
   const disconnectBtn = body.querySelector('.wifi-disconnect-btn');
   if (disconnectBtn) {
@@ -2634,10 +3476,14 @@ function renderWifiNetworkCard(piId, iface, net, connectedBssid) {
         const res = await postCmd(piId, 'disconnect_wifi', { interface: iface });
         if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
         const data = await res.json();
-        await awaitCommandResult(data.command_id, 15);
+        await awaitCommandResult(data.command_id, 320);
         statusEl.textContent = 'Disconnected.';
-        delete detailLinkInfoCache[iface];
-        refreshWifiIcon(piId, iface);
+        if (detailPiId === piId) {
+          delete detailLinkInfoCache[iface];
+          detailIfaceDetailsCache = null;
+          detailIfaceDetailsPromise = null;
+          refreshWifiIcon(piId, iface);
+        }
       } catch (err) {
         statusEl.textContent = `Failed: ${err.message}`;
       } finally {
@@ -2672,13 +3518,13 @@ function applyWifiSearchFilter(listEl, query) {
 
 async function scanWifiNetworks(piId, iface, listEl, scanBtn) {
   scanBtn.disabled = true;
-  listEl.innerHTML = '<div class="pi-log-empty">scanning…</div>';
+  renderWifiScanLoading(listEl, `Scanning ${iface} for networks…`);
   try {
     const res = await postCmd(piId, 'scan_wifi', { interface: iface });
     if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
     const data = await res.json();
     const result = await awaitCommandResult(data.command_id, 30);
-    const networks = (result && result.networks) || [];
+    const networks = sortNetworksBySsid((result && result.networks) || []);
     listEl.innerHTML = '';
     if (!networks.length) {
       listEl.innerHTML = '<div class="pi-log-empty">no networks found</div>';
@@ -2751,7 +3597,7 @@ async function toggleDetailIfaceCard(piId, card, name) {
   const toggle = card.querySelector('.pd-iface-toggle');
   const expanding = body.classList.contains('hidden');
   body.classList.toggle('hidden');
-  toggle.innerHTML = expanding ? '&#9660;' : '&#9654;';
+  toggle.innerHTML = chevronIconSvg(expanding ? 'down' : 'right');
   if (!expanding) return;
   if (!info.innerHTML.trim()) {
     info.innerHTML = '<div class="pi-log-empty">loading…</div>';
@@ -2771,7 +3617,7 @@ function renderDetailInterfaceList(piId) {
           <span class="wifi-icon wifi-unknown" data-iface="${name}" title="checking…">${WIFI_ICON_SVG}</span>
           <span class="pd-iface-connected-mark badge badge-online hidden" data-iface="${name}"></span>
         ` : ''}
-        <span class="pd-iface-toggle">&#9654;</span>
+        <span class="pd-iface-toggle">${chevronIconSvg('right')}</span>
       </div>
       <div class="pd-iface-body hidden">
         <div class="pd-iface-info"></div>
@@ -2832,17 +3678,43 @@ function renderDetailInterfaceList(piId) {
 // the fleet table, both windows are always "expanded" here (no toggle),
 // so the socket opens immediately and closes when leaving the page.
 function buildDetailLogEntry(piId) {
-  const entry = { captureState: null, pcapState: null, ws: null };
+  const entry = { captureState: null, pcapState: null, ws: null, tcpdumpStreaming: false };
   document.querySelectorAll('#pdLogPanel .pd-log-block').forEach(block => {
     const kind = block.dataset.kind;
     const spec = PANELS.find(p => p.kind === kind);
+    block.classList.remove('pd-log-collapsed');
+    const existingCollapseBtn = block.querySelector('.pi-log-collapse');
+    if (existingCollapseBtn) {
+      existingCollapseBtn.innerHTML = chevronIconSvg('up');
+      existingCollapseBtn.title = 'Collapse';
+    }
     entry[spec.panelKey] = block.querySelector('.pi-log-panel');
-    entry[spec.panelKey].innerHTML = '<div class="pi-log-empty">waiting for messages…</div>';
+    resetLogPanel(entry[spec.panelKey], spec);
+    if (kind === 'tcpdump') setupWiresharkTable(entry[spec.panelKey]);
 
     const ifaceSelect = block.querySelector('.pi-stream-iface');
     entry[kind + 'IfaceSelect'] = ifaceSelect;
     ifaceSelect.value = '';
-    ifaceSelect.onchange = kind === 'tcpdump' ? null : (e) => setStreamInterface(piId, entry, spec, e.target.value);
+
+    // Explicit start/stop for tcpdump only - opening/expanding the panel
+    // never auto-starts a capture (see performToggleTcpdumpStream).
+    const streamBtn = block.querySelector('.pi-log-stream');
+    if (streamBtn) {
+      streamBtn.classList.remove('streaming');
+      streamBtn.innerHTML = PLAY_ICON_SVG;
+      streamBtn.title = 'Start streaming';
+      streamBtn.onclick = () => toggleDetailTcpdumpStream(piId, entry, streamBtn);
+    }
+
+    // Switching the interface dropdown never used to have any effect for
+    // tcpdump (unlike logs, which restarts its stream via
+    // setStreamInterface) - so picking a new interface while a stream was
+    // running left the button stuck showing "streaming" for an interface
+    // that was no longer selected, and the panel kept showing packets from
+    // the old interface instead of the newly picked one.
+    ifaceSelect.onchange = kind === 'tcpdump'
+      ? (e) => onDetailTcpdumpIfaceChange(piId, entry, streamBtn, e.target.value)
+      : (e) => setStreamInterface(piId, entry, spec, e.target.value);
 
     const captureBtn = block.querySelector('.pi-log-capture');
     captureBtn.innerHTML = '&#9210;';
@@ -2851,8 +3723,76 @@ function buildDetailLogEntry(piId) {
     captureBtn.onclick = () => toggleCapture(piId, spec, entry, captureBtn);
 
     block.querySelector('.pi-log-clear').onclick = () => clearPanel(piId, spec, entry[spec.panelKey]);
+
+    // Pure screen-space toggle, independent of streaming state - collapsing
+    // one block (down to just its heading) lets the other's flex-grow claim
+    // the freed height, since it's the only block left competing for space.
+    const collapseBtn = block.querySelector('.pi-log-collapse');
+    collapseBtn.onclick = () => {
+      const collapsed = block.classList.toggle('pd-log-collapsed');
+      collapseBtn.innerHTML = chevronIconSvg(collapsed ? 'down' : 'up');
+      collapseBtn.title = collapsed ? 'Expand' : 'Collapse';
+    };
   });
   return entry;
+}
+
+// Detail-page wrapper for the tcpdump panel's explicit start/stop
+// streaming button - the page keeps one persistent websocket open for its
+// whole visit (see showPiDetail), so unlike the fleet table there's no
+// per-toggle connect/disconnect to manage here, just the backend command.
+async function toggleDetailTcpdumpStream(piId, entry, btn) {
+  const iface = entry.tcpdumpIfaceSelect ? entry.tcpdumpIfaceSelect.value : '';
+  if (!iface) {
+    alert('Select an interface for the tcpdump panel first.');
+    return;
+  }
+  const starting = await performToggleTcpdumpStream(piId, iface, btn);
+  if (starting === null) return;
+  entry.tcpdumpStreaming = starting;
+  entry.tcpdumpActiveIface = starting ? iface : null;
+
+  // Same reasoning as the fleet table: starting a stream while the block
+  // is collapsed (the space-saving toggle, not this streaming toggle)
+  // would accumulate rows nobody can see.
+  if (starting) {
+    const block = document.querySelector('#pdLogPanel .pd-log-block[data-kind="tcpdump"]');
+    if (block && block.classList.contains('pd-log-collapsed')) {
+      block.classList.remove('pd-log-collapsed');
+      const collapseBtn = block.querySelector('.pi-log-collapse');
+      if (collapseBtn) {
+        collapseBtn.innerHTML = chevronIconSvg('up');
+        collapseBtn.title = 'Collapse';
+      }
+    }
+  }
+}
+
+// Fired when the tcpdump panel's interface dropdown changes. If a stream
+// was running on the interface being switched away from, stop it
+// server-side and reset the button back to "Start streaming" - otherwise
+// the button kept showing "streaming" for an interface no longer selected,
+// and the orphaned stream on the old interface would just keep running.
+// Either way, the panel is cleared since whatever it's showing belongs to
+// the previously selected interface, not the new one.
+async function onDetailTcpdumpIfaceChange(piId, entry, btn, newIface) {
+  const panel = entry.tcpdumpPanel;
+  const spec = PANELS.find(p => p.kind === 'tcpdump');
+  if (panel) resetLogPanel(panel, spec);
+
+  if (entry.tcpdumpActiveIface && entry.tcpdumpActiveIface !== newIface) {
+    const prevIface = entry.tcpdumpActiveIface;
+    entry.tcpdumpStreaming = false;
+    entry.tcpdumpActiveIface = null;
+    btn.classList.remove('streaming');
+    btn.innerHTML = PLAY_ICON_SVG;
+    btn.title = 'Start streaming';
+    try {
+      await postCmd(piId, 'stop_tcpdump', { interface: prevIface });
+    } catch {
+      // backend unreachable; button/panel are already reset locally
+    }
+  }
 }
 
 function refreshDetailLogIfaceOptions(piId, entry) {
@@ -2939,6 +3879,9 @@ function routeDetail() {
 }
 window.addEventListener('hashchange', routeDetail);
 routeDetail();
+
+const footerYearEl = document.getElementById('footerYear');
+if (footerYearEl) footerYearEl.textContent = new Date().getFullYear();
 </script>
 </body>
 </html>

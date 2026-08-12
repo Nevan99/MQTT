@@ -2,3 +2,9 @@
 *.db
 .venv
 captures_data/
+__pycache__/
+*.pyc
+*.db
+.DS_Store
+*.txt
+*.pcap
