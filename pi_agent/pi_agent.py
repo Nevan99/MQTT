@@ -879,6 +879,7 @@ class PiAgent:
                 "type": "wifi" if name.startswith(("wl", "wlan")) else
                         ("ethernet" if link_type == "ether" else link_type),
                 "ip_address": self.get_interface_ip(name),
+                "ipv6_address": self.get_interface_ipv6(name),
             })
         return details
 
@@ -892,16 +893,29 @@ class PiAgent:
                 return iface["ip_address"]
         return None
 
-    def get_interface_ip(self, interface):
-        """Best-effort IPv4 address currently assigned to a given interface."""
+    def get_interface_ip(self, interface, family="4"):
+        """Best-effort address currently assigned to a given interface.
+        family="4" (default) returns the IPv4 address, unchanged from
+        before. family="6" returns an IPv6 address, preferring a global
+        (routable) one over a link-local fe80::/10 address - every
+        interface has a link-local address just from being up, so it's
+        rarely what's actually useful to show; global is only reported
+        once real IPv6 connectivity/autoconf has happened."""
         if not interface:
             return None
         out = subprocess.run(
-            ["ip", "-4", "-o", "addr", "show", interface],
+            ["ip", f"-{family}", "-o", "addr", "show", interface],
             capture_output=True, text=True,
         ).stdout
+        if family == "6":
+            addrs = re.findall(r'inet6 ([0-9a-fA-F:]+)/\d+', out)
+            global_addrs = [a for a in addrs if not a.startswith("fe80:")]
+            return global_addrs[0] if global_addrs else (addrs[0] if addrs else None)
         m = re.search(r'inet (\d+\.\d+\.\d+\.\d+)', out)
         return m.group(1) if m else None
+
+    def get_interface_ipv6(self, interface):
+        return self.get_interface_ip(interface, family="6")
 
     def get_interface_ips(self):
         """Map of interface name -> IPv4 address for every non-loopback interface."""
@@ -950,9 +964,11 @@ class PiAgent:
         self.client.will_set(self.status_topic, payload="offline", qos=1, retain=True)
         while True:
             try:
-                bind_address = self._wired_source_ip() or ""
-                self.client.connect(self.broker_host, self.broker_port, keepalive=30,
-                                     bind_address=bind_address)
+                # Temporarily disabled: was binding to a wired interface's
+                # IP (via _wired_source_ip) to prefer wired over wifi for
+                # control-plane traffic. Restore by uncommenting below.
+                # bind_address = self._wired_source_ip() or ""
+                self.client.connect(self.broker_host, self.broker_port, keepalive=30)
                 self.client.loop_forever()
             except Exception as e:
                 print(f"[pi_agent] connection loop crashed, reconnecting in 5s: {e}")

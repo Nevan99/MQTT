@@ -1,0 +1,856 @@
+// --- Pi detail page ---------------------------------------------------
+// Reached by clicking a Pi's id in the fleet table (#pi/<id> in the hash).
+// One command bar scoped to just that one Pi, with the exact same action
+// list as the fleet command builder (ACTION_PARAMS, in the same order),
+// just always targeting this one piId instead of an arbitrary target.
+
+function actionLabel(action) {
+  return action.replace(/_/g, ' ');
+}
+
+function piInterfaces(piId) {
+  const pi = pis.find(p => p.pi_id === piId);
+  return (pi && pi.metadata && Array.isArray(pi.metadata.interfaces)) ? pi.metadata.interfaces : [];
+}
+
+function renderDetailParamFields(container, actionSelectEl, piId) {
+  const fields = ACTION_PARAMS[actionSelectEl.value] || [];
+  const interfaces = piInterfaces(piId);
+  container.innerHTML = fields.map(f => {
+    if (f.type === 'interface') {
+      return `<label>${f.label}</label><div class="iface-dropdown-mount" data-param="${f.name}"></div>`;
+    }
+    if (f.type === 'password') {
+      return `
+        <label>${f.label}</label>
+        <div class="password-wrap">
+          <input class="field" data-param="${f.name}" type="password" ${f.default !== undefined ? `value="${f.default}"` : ''}>
+          <button type="button" class="password-toggle" title="Show password">${EYE_ICON_SVG}</button>
+        </div>
+      `;
+    }
+    return `
+      <label>${f.label}</label>
+      <input class="field" data-param="${f.name}" type="${f.type}" ${f.default !== undefined ? `value="${f.default}"` : ''}>
+    `;
+  }).join('');
+
+  container.querySelectorAll('.iface-dropdown-mount[data-param]').forEach(mount => {
+    const box = buildIfaceDropdown();
+    box.dataset.param = mount.dataset.param;
+    setDropdownOptions(box, interfaces, []);
+    mount.replaceWith(box);
+  });
+}
+
+function collectDetailParams(container) {
+  const params = {};
+  container.querySelectorAll('[data-param]').forEach(el => {
+    const name = el.dataset.param;
+    if (el.classList.contains('iface-dropdown')) {
+      const selected = getDropdownSelected(el);
+      if (selected.length) params[name] = selected;
+      return;
+    }
+    if (el.value === '') return;
+    params[name] = el.type === 'number' ? Number(el.value) : el.value;
+  });
+  return params;
+}
+
+function detailAddCommandEntry(container, commandId, piId, action) {
+  const entry = document.createElement('div');
+  entry.className = 'cmd-entry';
+  entry.dataset.commandId = commandId;
+  entry.innerHTML = `
+    <div class="hdr"><span><span class="toggle">&#9660;</span>${action}</span><span><span class="cmd-status pending">pending</span></span></div>
+    <div class="result"></div>
+  `;
+  entry.querySelector('.hdr').addEventListener('click', () => {
+    entry.classList.toggle('collapsed');
+    entry.querySelector('.toggle').innerHTML = entry.classList.contains('collapsed') ? '&#9654;' : '&#9660;';
+  });
+  container.prepend(entry);
+  if (action === 'scan_wifi') renderWifiScanLoading(entry.querySelector('.result'));
+  pollCommand(commandId, entry, piId, action);
+}
+
+async function sendDetailCommand(actionSelectEl, paramsContainer, resultsContainer, piId) {
+  const action = actionSelectEl.value;
+  const params = collectDetailParams(paramsContainer);
+  const needsInterface = (ACTION_PARAMS[action] || []).some(f => f.type === 'interface');
+  try {
+    if (needsInterface && Array.isArray(params.interface)) {
+      if (!params.interface.length) {
+        alert('Select at least one interface.');
+        return;
+      }
+      if (action === 'scan_wifi' && params.interface.length > 1) {
+        // Same reasoning as the fleet command builder's fan-out - scanning
+        // the same air from several interfaces on this Pi just reports the
+        // same nearby APs several times, so merge into one de-duplicated
+        // result instead of one feed entry per interface.
+        await sendScanWifiFanOut(
+          params.interface.map(iface => ({ piId, interface: iface })), params, resultsContainer,
+        );
+        return;
+      }
+      const tasks = params.interface.map(async iface => {
+        const res = await postCmd(piId, action, { ...params, interface: iface });
+        if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+        const data = await res.json();
+        detailAddCommandEntry(resultsContainer, data.command_id, data.pi_id, data.action);
+      });
+      const results = await Promise.allSettled(tasks);
+      const failed = results.filter(r => r.status === 'rejected');
+      if (failed.length) {
+        alert(`${failed.length} command(s) failed to send:\n` + failed.map(r => r.reason.message).join('\n'));
+      }
+    } else {
+      const res = await postCmd(piId, action, params);
+      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+      const data = await res.json();
+      detailAddCommandEntry(resultsContainer, data.command_id, data.pi_id, data.action);
+    }
+  } catch (err) {
+    alert(`Command failed: ${err.message}`);
+  }
+}
+
+function setupDetailBar(actionSelectEl, paramsContainer, sendBtn, resultsContainer, actions, piId) {
+  actionSelectEl.innerHTML = actions.map(a => `<option value="${a}">${actionLabel(a)}</option>`).join('');
+  renderDetailParamFields(paramsContainer, actionSelectEl, piId);
+  actionSelectEl.onchange = () => renderDetailParamFields(paramsContainer, actionSelectEl, piId);
+  sendBtn.onclick = () => sendDetailCommand(actionSelectEl, paramsContainer, resultsContainer, piId);
+  resultsContainer.innerHTML = '';
+}
+
+let detailPiId = null;
+let lastDetailInterfacesKey = null;
+let detailLogEntry = null;
+
+function renderDetailInfo(piId) {
+  const pi = pis.find(p => p.pi_id === piId);
+  document.getElementById('pdInfoFields').innerHTML = `
+    <div class="pd-info-row"><span class="k">IP</span><span class="v">${pi ? (pi.ip_address || '') : ''}</span></div>
+    <div class="pd-info-row"><span class="k">Role</span><span class="v">${pi ? (pi.role || '') : ''}</span></div>
+    <div class="pd-info-row"><span class="k">Status</span><span class="v">${pi ? statusBadge(pi.status) : ''}</span></div>
+    <div class="pd-info-row"><span class="k">Last seen</span><span class="v">${pi && pi.last_seen ? new Date(pi.last_seen).toLocaleString() : ''}</span></div>
+  `;
+}
+
+function isWifiInterface(name) {
+  return /^(wl|wlan)/.test(name);
+}
+
+// Classic curved-bars wifi glyph (like the Windows taskbar icon), drawn in
+// currentColor so the connected/disconnected/unknown CSS classes can just
+// recolor it instead of swapping emoji glyphs.
+const WIFI_ICON_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M1 9a15.5 15.5 0 0 1 22 0"/>
+  <path d="M5 13.5a9.5 9.5 0 0 1 14 0"/>
+  <path d="M9 18a3.5 3.5 0 0 1 6 0"/>
+  <circle cx="12" cy="21" r="1.2" fill="currentColor" stroke="none"/>
+</svg>`;
+
+// Refresh/radar glyph for the "scan for nearby networks" trigger button -
+// distinct from the magnifying glass below, which is for typing/filtering
+// the already-scanned list rather than triggering a new scan.
+const SCAN_TRIGGER_ICON_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M21 12a9 9 0 1 1-3-6.7"/>
+  <polyline points="21 3 21 9 15 9"/>
+</svg>`;
+
+// Magnifying-glass glyph for the SSID filter box that narrows down an
+// already-scanned network list by typed text.
+const SEARCH_ICON_SVG = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="11" cy="11" r="7"/>
+  <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+</svg>`;
+
+// Per-Pi caches for the expandable interface cards below - list_interfaces
+// is fetched once per Pi visit and reused for every card; link_info is
+// fetched once per wifi interface (by the icon refresh) and reused if the
+// card is later expanded, instead of firing it again.
+let detailIfaceDetailsCache = null;   // array from list_interfaces, or null until fetched
+let detailLinkInfoCache = {};         // interface name -> link_info result
+
+// Queries link_info for one wifi-capable interface and colors its icon:
+// green (connected, with SSID in the tooltip) or dim gray (not connected).
+// Fired once per wifi interface whenever the interface list is (re)built.
+async function refreshWifiIcon(piId, iface) {
+  const iconEl = document.querySelector(`#pdInterfaceList .wifi-icon[data-iface="${CSS.escape(iface)}"]`);
+  if (!iconEl) return;
+  try {
+    const res = await postCmd(piId, 'link_info', { interface: iface });
+    if (!res.ok) return;
+    const data = await res.json();
+    const result = await awaitCommandResult(data.command_id, 10);
+    detailLinkInfoCache[iface] = result;
+    const el = document.querySelector(`#pdInterfaceList .wifi-icon[data-iface="${CSS.escape(iface)}"]`);
+    if (!el) return;
+    const connected = !!(result && result.connected);
+    el.classList.remove('wifi-unknown');
+    el.classList.add(connected ? 'wifi-connected' : 'wifi-disconnected');
+    el.title = connected ? `Wi-Fi connected${result.ssid ? ' — ' + result.ssid : ''}` : 'Wi-Fi not connected';
+    const card = el.closest('.pd-iface-card');
+    const mark = card && card.querySelector('.pd-iface-connected-mark');
+    if (mark) {
+      mark.classList.toggle('hidden', !connected);
+      if (connected) mark.textContent = result.ssid ? `connected — ${result.ssid}` : 'connected';
+    }
+    const body = card && card.querySelector('.pd-iface-body');
+    if (body && !body.classList.contains('hidden')) renderDetailIfaceBody(body, iface);
+  } catch {
+    // leave as "unknown" - backend/Pi unreachable or command timed out
+  }
+}
+
+// Only ever touches the '.pd-iface-info' sub-div, not the whole card body -
+// the wifi scan section (button + scanned-network cards) lives in a sibling
+// div so a link_info refresh here doesn't wipe out an in-progress scan.
+function renderDetailIfaceBody(body, name) {
+  const info = body.querySelector('.pd-iface-info') || body;
+  const details = (detailIfaceDetailsCache || []).find(d => d.name === name);
+  const link = detailLinkInfoCache[name];
+  const rows = [];
+  if (details) {
+    rows.push(['State', details.state]);
+    rows.push(['Type', details.type]);
+    rows.push(['MAC address', details.mac_address]);
+    rows.push(['IP address', details.ip_address || '—']);
+  }
+  if (link) {
+    rows.push(['Wi-Fi connected', link.connected ? 'yes' : 'no']);
+    if (link.ssid) rows.push(['SSID', link.ssid]);
+    if (link.bssid) rows.push(['BSSID', link.bssid]);
+    if (link.frequency_mhz != null) rows.push(['Frequency', `${link.frequency_mhz} MHz`]);
+    if (link.band) rows.push(['Band', link.band]);
+    if (link.signal_dbm != null) rows.push(['Signal', `${link.signal_dbm} dBm`]);
+    if (link.rx_bitrate_mbps != null) rows.push(['RX bitrate', `${link.rx_bitrate_mbps} Mbps`]);
+    if (link.tx_bitrate_mbps != null) rows.push(['TX bitrate', `${link.tx_bitrate_mbps} Mbps`]);
+  }
+  info.innerHTML = rows.length
+    ? `<table class="result-table">${rows.map(([k, v]) =>
+        `<tr><td class="result-key">${k}</td><td class="result-value">${v ?? ''}</td></tr>`
+      ).join('')}</table>`
+    : '<div class="pi-log-empty">no data</div>';
+
+  if (link && link.connected) {
+    info.insertAdjacentHTML('beforeend',
+      '<div class="wifi-disconnect-row"><button type="button" class="wifi-disconnect-btn">Disconnect</button></div>');
+    info.querySelector('.wifi-disconnect-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      disconnectDetailWifi(name, e.currentTarget);
+    });
+  }
+}
+
+// Disconnects one interface directly from its own card (no need to go
+// through the Actions panel or a scanned network's own Disconnect button).
+async function disconnectDetailWifi(iface, btn) {
+  const piId = detailPiId;
+  btn.disabled = true;
+  btn.textContent = 'Disconnecting…';
+  try {
+    const res = await postCmd(piId, 'disconnect_wifi', { interface: iface });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    const data = await res.json();
+    await awaitCommandResult(data.command_id, 320);
+  } catch (err) {
+    alert(`Failed to disconnect: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Disconnect';
+  }
+  delete detailLinkInfoCache[iface];
+  detailIfaceDetailsCache = null;
+  detailIfaceDetailsPromise = null;
+  refreshWifiIcon(piId, iface);
+}
+
+function isOpenSecurity(security) {
+  return !security || security === '--' || /^(none|open)$/i.test(security);
+}
+
+// "Remember password" for wifi connect cards - stored in localStorage,
+// keyed by SSID (falling back to BSSID for hidden networks), so
+// reconnecting to the same network later can pre-fill the password
+// instead of retyping it. Note: this is plaintext in the browser's
+// localStorage, readable by any script running on this page/origin - a
+// reasonable tradeoff for a lab-scale fleet tool, not something to rely on
+// if this page is ever exposed somewhere less trusted.
+const WIFI_PASSWORD_STORAGE_KEY = 'pi_fleet_wifi_passwords';
+
+function wifiPasswordKey(net) {
+  return net.ssid || net.bssid || null;
+}
+
+function getSavedWifiPasswords() {
+  try {
+    return JSON.parse(localStorage.getItem(WIFI_PASSWORD_STORAGE_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function getSavedWifiPassword(net) {
+  const key = wifiPasswordKey(net);
+  return key ? (getSavedWifiPasswords()[key] || '') : '';
+}
+
+function rememberWifiPassword(net, password) {
+  const key = wifiPasswordKey(net);
+  if (!key) return;
+  const saved = getSavedWifiPasswords();
+  saved[key] = password;
+  localStorage.setItem(WIFI_PASSWORD_STORAGE_KEY, JSON.stringify(saved));
+}
+
+function forgetWifiPassword(net) {
+  const key = wifiPasswordKey(net);
+  if (!key) return;
+  const saved = getSavedWifiPasswords();
+  if (key in saved) {
+    delete saved[key];
+    localStorage.setItem(WIFI_PASSWORD_STORAGE_KEY, JSON.stringify(saved));
+  }
+}
+
+// Shared markup for a password field + its "Remember password" checkbox,
+// pre-filled/checked when a password is already saved for this network.
+function wifiPasswordFieldHtml(net) {
+  const saved = getSavedWifiPassword(net);
+  return `
+    <div class="password-wrap">
+      <input type="password" class="wifi-connect-password field" placeholder="Password" value="${saved ? saved.replace(/"/g, '&quot;') : ''}">
+      <button type="button" class="password-toggle" title="Show password">${EYE_ICON_SVG}</button>
+    </div>
+    <label class="wifi-remember-row">
+      <input type="checkbox" class="wifi-remember-checkbox" ${saved ? 'checked' : ''}>
+      Remember password
+    </label>
+  `;
+}
+
+// After a successful connect, save or forget the password per the
+// "Remember password" checkbox's state.
+function applyWifiPasswordMemory(body, net, password) {
+  const remember = body.querySelector('.wifi-remember-checkbox');
+  if (!remember) return;
+  if (remember.checked && password) {
+    rememberWifiPassword(net, password);
+  } else {
+    forgetWifiPassword(net);
+  }
+}
+
+// One scanned AP, rendered as the same collapsed-card widget used
+// elsewhere (interface list, plain scan_wifi results), but with a
+// "connected" mark against the interface's current link_info and an
+// inline Connect/Disconnect control using the same fields as the
+// connect_wifi action (ssid/bssid/password/interface).
+function renderWifiNetworkCard(piId, iface, net, connectedBssid) {
+  const isConnected = !!(connectedBssid && net.bssid && connectedBssid === net.bssid);
+  const open = isOpenSecurity(net.security);
+
+  const card = document.createElement('div');
+  card.className = 'pd-iface-card';
+  card.innerHTML = `
+    <div class="pd-iface-header">
+      <span class="pd-iface-name">${net.ssid || '(hidden)'}</span>
+      ${isConnected ? '<span class="badge badge-online">connected</span>' : ''}
+      <span class="pd-iface-toggle">${chevronIconSvg('right')}</span>
+    </div>
+    <div class="pd-iface-body hidden"></div>
+  `;
+  const body = card.querySelector('.pd-iface-body');
+  const infoRows = [
+    ['SSID', net.ssid || '(hidden)'],
+    ['BSSID', net.bssid],
+    ['Frequency', net.frequency_mhz != null ? `${net.frequency_mhz} MHz` : null],
+    ['Band', net.band],
+    ['Channel', net.channel],
+    ['Rate', net.rate],
+    ['Signal', net.signal_percent != null ? `${net.signal_percent}%` : null],
+    ['Security', net.security],
+  ].filter(([, v]) => v !== null && v !== undefined && v !== '');
+
+  body.innerHTML = `
+    <table class="result-table">${infoRows.map(([k, v]) =>
+      `<tr><td class="result-key">${k}</td><td class="result-value">${v}</td></tr>`
+    ).join('')}</table>
+    <div class="wifi-connect-row">
+      ${isConnected
+        ? `<button type="button" class="wifi-disconnect-btn">Disconnect</button>`
+        : `${open ? '' : wifiPasswordFieldHtml(net)}
+          <button type="button" class="wifi-connect-btn">Connect</button>`
+      }
+    </div>
+    <div class="wifi-connect-status hint"></div>
+  `;
+
+  card.querySelector('.pd-iface-header').addEventListener('click', () => {
+    const expanding = body.classList.contains('hidden');
+    body.classList.toggle('hidden');
+    card.querySelector('.pd-iface-toggle').innerHTML = chevronIconSvg(expanding ? 'down' : 'right');
+  });
+
+  const statusEl = body.querySelector('.wifi-connect-status');
+  const stop = (e) => e.stopPropagation();
+
+  const connectBtn = body.querySelector('.wifi-connect-btn');
+  if (connectBtn) {
+    connectBtn.addEventListener('click', async (e) => {
+      stop(e);
+      const passwordInput = body.querySelector('.wifi-connect-password');
+      const password = passwordInput && passwordInput.value ? passwordInput.value : undefined;
+      connectBtn.disabled = true;
+      statusEl.textContent = 'Connecting…';
+      try {
+        const result = await connectWifiWithRetry(piId, {
+          ssid: net.ssid || undefined,
+          bssid: net.bssid || undefined,
+          password,
+          interface: iface,
+        });
+        statusEl.textContent = result && result.connected ? 'Connected.' : `Failed to connect${result && result.output ? ': ' + result.output : ''}`;
+        if (result && result.connected) applyWifiPasswordMemory(body, net, password);
+        // Only touch the Pi detail page's own cache/icon if this card is
+        // actually being shown there for this same Pi - this card is also
+        // reused for scan results on the Fleet Actions panel and History
+        // tab, where there's no detail-page interface list to refresh.
+        if (detailPiId === piId) {
+          delete detailLinkInfoCache[iface];
+          detailIfaceDetailsCache = null;
+          detailIfaceDetailsPromise = null;
+          refreshWifiIcon(piId, iface);
+        }
+      } catch (err) {
+        statusEl.textContent = `Failed: ${err.message}`;
+      } finally {
+        connectBtn.disabled = false;
+      }
+    });
+  }
+  const passwordInput = body.querySelector('.wifi-connect-password');
+  if (passwordInput) passwordInput.addEventListener('click', stop);
+  const rememberCheckbox = body.querySelector('.wifi-remember-checkbox');
+  if (rememberCheckbox) rememberCheckbox.addEventListener('click', stop);
+
+  const disconnectBtn = body.querySelector('.wifi-disconnect-btn');
+  if (disconnectBtn) {
+    disconnectBtn.addEventListener('click', async (e) => {
+      stop(e);
+      disconnectBtn.disabled = true;
+      statusEl.textContent = 'Disconnecting…';
+      try {
+        const res = await postCmd(piId, 'disconnect_wifi', { interface: iface });
+        if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+        const data = await res.json();
+        await awaitCommandResult(data.command_id, 320);
+        statusEl.textContent = 'Disconnected.';
+        if (detailPiId === piId) {
+          delete detailLinkInfoCache[iface];
+          detailIfaceDetailsCache = null;
+          detailIfaceDetailsPromise = null;
+          refreshWifiIcon(piId, iface);
+        }
+      } catch (err) {
+        statusEl.textContent = `Failed: ${err.message}`;
+      } finally {
+        disconnectBtn.disabled = false;
+      }
+    });
+  }
+
+  return card;
+}
+
+// Icon-only toggle (refresh glyph, rotates like a chevron) that triggers a
+// fresh scan and shows/hides the results panel - collapsing just hides the
+// last scan, expanding always re-scans since which APs are in range/what
+// their signal is goes stale almost immediately.
+async function toggleWifiScan(piId, iface, btn, resultsEl, listEl) {
+  const expanding = resultsEl.classList.contains('hidden');
+  resultsEl.classList.toggle('hidden');
+  btn.classList.toggle('open', expanding);
+  if (expanding) await scanWifiNetworks(piId, iface, listEl, btn);
+}
+
+// Hides scanned-network cards whose SSID doesn't contain the typed text -
+// pure client-side narrowing of the last scan, no re-scan involved.
+function applyWifiSearchFilter(listEl, query) {
+  const q = query.trim().toLowerCase();
+  listEl.querySelectorAll('.pd-iface-card').forEach(card => {
+    const ssid = (card.querySelector('.pd-iface-name')?.textContent || '').toLowerCase();
+    card.classList.toggle('hidden', !!q && !ssid.includes(q));
+  });
+}
+
+async function scanWifiNetworks(piId, iface, listEl, scanBtn) {
+  scanBtn.disabled = true;
+  renderWifiScanLoading(listEl, `Scanning ${iface} for networks…`);
+  try {
+    const res = await postCmd(piId, 'scan_wifi', { interface: iface });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    const data = await res.json();
+    const result = await awaitCommandResult(data.command_id, 30);
+    const networks = sortNetworksBySsid((result && result.networks) || []);
+    listEl.innerHTML = '';
+    if (!networks.length) {
+      listEl.innerHTML = '<div class="pi-log-empty">no networks found</div>';
+      return;
+    }
+    const connectedBssid = (detailLinkInfoCache[iface] && detailLinkInfoCache[iface].connected)
+      ? detailLinkInfoCache[iface].bssid : null;
+    networks.forEach(net => listEl.appendChild(renderWifiNetworkCard(piId, iface, net, connectedBssid)));
+    const searchInput = listEl.closest('.pd-wifi-scan-results')?.querySelector('.pd-wifi-search-input');
+    if (searchInput && searchInput.value) applyWifiSearchFilter(listEl, searchInput.value);
+  } catch (err) {
+    listEl.innerHTML = `<div class="pi-log-empty">scan failed: ${err.message}</div>`;
+  } finally {
+    scanBtn.disabled = false;
+  }
+}
+
+// In-flight list_interfaces fetch, so the eager per-interface load below
+// (fired once per interface as soon as the page opens) issues exactly one
+// list_interfaces command instead of one per interface racing each other.
+let detailIfaceDetailsPromise = null;
+
+async function fetchDetailIfaceDetails(piId) {
+  if (detailIfaceDetailsCache !== null) return detailIfaceDetailsCache;
+  if (!detailIfaceDetailsPromise) {
+    detailIfaceDetailsPromise = (async () => {
+      try {
+        const res = await postCmd(piId, 'list_interfaces', {});
+        if (res.ok) {
+          const data = await res.json();
+          const result = await awaitCommandResult(data.command_id, 10);
+          detailIfaceDetailsCache = (result && result.interfaces) || [];
+        } else {
+          detailIfaceDetailsCache = [];
+        }
+      } catch {
+        detailIfaceDetailsCache = [];
+      }
+      return detailIfaceDetailsCache;
+    })();
+  }
+  return detailIfaceDetailsPromise;
+}
+
+// Fetches whatever's missing for one card - list_interfaces (shared across
+// all cards, fetched at most once per Pi visit) and, for wifi interfaces,
+// link_info (usually already cached by refreshWifiIcon by the time a user
+// expands the card).
+async function loadDetailIfaceInfo(piId, name) {
+  await fetchDetailIfaceDetails(piId);
+  if (isWifiInterface(name) && !(name in detailLinkInfoCache)) {
+    try {
+      const res = await postCmd(piId, 'link_info', { interface: name });
+      if (res.ok) {
+        const data = await res.json();
+        detailLinkInfoCache[name] = await awaitCommandResult(data.command_id, 10);
+      }
+    } catch {
+      // leave unset - body will just omit the wifi rows
+    }
+  }
+}
+
+// Info is already fetched eagerly (see renderDetailInterfaceList), so
+// expanding a card just reveals it - only re-fetch if that eager load
+// hasn't landed yet (e.g. a slow/unresponsive Pi) or hasn't run at all.
+async function toggleDetailIfaceCard(piId, card, name) {
+  const body = card.querySelector('.pd-iface-body');
+  const info = body.querySelector('.pd-iface-info');
+  const toggle = card.querySelector('.pd-iface-toggle');
+  const expanding = body.classList.contains('hidden');
+  body.classList.toggle('hidden');
+  toggle.innerHTML = chevronIconSvg(expanding ? 'down' : 'right');
+  if (!expanding) return;
+  if (!info.innerHTML.trim()) {
+    info.innerHTML = '<div class="pi-log-empty">loading…</div>';
+    await loadDetailIfaceInfo(piId, name);
+  }
+  renderDetailIfaceBody(body, name);
+}
+
+function renderDetailInterfaceList(piId) {
+  const interfaces = piInterfaces(piId);
+  const list = document.getElementById('pdInterfaceList');
+  list.innerHTML = interfaces.length ? interfaces.map(name => `
+    <div class="pd-iface-card" data-iface="${name}">
+      <div class="pd-iface-header">
+        <span class="pd-iface-name">${name}</span>
+        ${isWifiInterface(name) ? `
+          <span class="wifi-icon wifi-unknown" data-iface="${name}" title="checking…">${WIFI_ICON_SVG}</span>
+          <span class="pd-iface-connected-mark badge badge-online hidden" data-iface="${name}"></span>
+        ` : ''}
+        <span class="pd-iface-toggle">${chevronIconSvg('right')}</span>
+      </div>
+      <div class="pd-iface-body hidden">
+        <div class="pd-iface-info"></div>
+        ${isWifiInterface(name) ? `
+          <div class="pd-wifi-scan-heading">
+            <span>Nearby networks</span>
+            <button type="button" class="pd-scan-wifi-toggle icon-btn" title="Scan for nearby networks">${SCAN_TRIGGER_ICON_SVG}</button>
+          </div>
+          <div class="pd-wifi-scan-results hidden">
+            <div class="pd-wifi-search-wrap">
+              ${SEARCH_ICON_SVG}
+              <input type="text" class="pd-wifi-search-input" placeholder="Filter by SSID…">
+            </div>
+            <div class="pd-wifi-scan-list"></div>
+          </div>
+        ` : ''}
+      </div>
+    </div>
+  `).join('') : '<div class="pi-log-empty">no interfaces</div>';
+
+  list.querySelectorAll('.pd-iface-card').forEach(card => {
+    const name = card.dataset.iface;
+    card.querySelector('.pd-iface-header').addEventListener('click', () => toggleDetailIfaceCard(piId, card, name));
+  });
+
+  list.querySelectorAll('.pd-scan-wifi-toggle').forEach(btn => {
+    const card = btn.closest('.pd-iface-card');
+    const name = card.dataset.iface;
+    const resultsEl = card.querySelector('.pd-wifi-scan-results');
+    const listEl = card.querySelector('.pd-wifi-scan-list');
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleWifiScan(piId, name, btn, resultsEl, listEl);
+    });
+    const searchInput = card.querySelector('.pd-wifi-search-input');
+    searchInput.addEventListener('click', (e) => e.stopPropagation());
+    searchInput.addEventListener('input', () => applyWifiSearchFilter(listEl, searchInput.value));
+  });
+
+  interfaces.filter(isWifiInterface).forEach(name => refreshWifiIcon(piId, name));
+
+  // Load every interface's list_interfaces/link_info info as soon as the
+  // page is shown, not just when its card is expanded - so opening a card
+  // shows data immediately instead of a "loading…" flash.
+  interfaces.forEach(async (name) => {
+    await loadDetailIfaceInfo(piId, name);
+    const card = list.querySelector(`.pd-iface-card[data-iface="${CSS.escape(name)}"]`);
+    const body = card && card.querySelector('.pd-iface-body');
+    if (body) renderDetailIfaceBody(body, name);
+  });
+}
+
+// Middle panel: syslog/tcpdump log windows, built once per visit to the
+// detail page and reusing the same connectPiLog/toggleCapture/
+// setStreamInterface functions the fleet table's inline rows use - those
+// only ever touch the entry object by key, so a plain object standing in
+// for a table row's state works without any changes to that logic. Unlike
+// the fleet table, both windows are always "expanded" here (no toggle),
+// so the socket opens immediately and closes when leaving the page.
+function buildDetailLogEntry(piId) {
+  const entry = { captureState: null, pcapState: null, ws: null, tcpdumpStreaming: false };
+  document.querySelectorAll('#pdLogPanel .pd-log-block').forEach(block => {
+    const kind = block.dataset.kind;
+    const spec = PANELS.find(p => p.kind === kind);
+    block.classList.remove('pd-log-collapsed');
+    const existingCollapseBtn = block.querySelector('.pi-log-collapse');
+    if (existingCollapseBtn) {
+      existingCollapseBtn.innerHTML = chevronIconSvg('up');
+      existingCollapseBtn.title = 'Collapse';
+    }
+    entry[spec.panelKey] = block.querySelector('.pi-log-panel');
+    resetLogPanel(entry[spec.panelKey], spec);
+    if (kind === 'tcpdump') setupWiresharkTable(entry[spec.panelKey]);
+
+    const ifaceSelect = block.querySelector('.pi-stream-iface');
+    entry[kind + 'IfaceSelect'] = ifaceSelect;
+    ifaceSelect.value = '';
+
+    // Explicit start/stop for tcpdump only - opening/expanding the panel
+    // never auto-starts a capture (see performToggleTcpdumpStream).
+    const streamBtn = block.querySelector('.pi-log-stream');
+    if (streamBtn) {
+      streamBtn.classList.remove('streaming');
+      streamBtn.innerHTML = PLAY_ICON_SVG;
+      streamBtn.title = 'Start streaming';
+      streamBtn.onclick = () => toggleDetailTcpdumpStream(piId, entry, streamBtn);
+    }
+
+    // Switching the interface dropdown never used to have any effect for
+    // tcpdump (unlike logs, which restarts its stream via
+    // setStreamInterface) - so picking a new interface while a stream was
+    // running left the button stuck showing "streaming" for an interface
+    // that was no longer selected, and the panel kept showing packets from
+    // the old interface instead of the newly picked one.
+    ifaceSelect.onchange = kind === 'tcpdump'
+      ? (e) => onDetailTcpdumpIfaceChange(piId, entry, streamBtn, e.target.value)
+      : (e) => setStreamInterface(piId, entry, spec, e.target.value);
+
+    const captureBtn = block.querySelector('.pi-log-capture');
+    captureBtn.innerHTML = '&#9210;';
+    captureBtn.title = 'Start Capture';
+    captureBtn.classList.remove('recording');
+    captureBtn.onclick = () => toggleCapture(piId, spec, entry, captureBtn);
+
+    block.querySelector('.pi-log-clear').onclick = () => clearPanel(piId, spec, entry[spec.panelKey]);
+
+    // Pure screen-space toggle, independent of streaming state - collapsing
+    // one block (down to just its heading) lets the other's flex-grow claim
+    // the freed height, since it's the only block left competing for space.
+    const collapseBtn = block.querySelector('.pi-log-collapse');
+    collapseBtn.onclick = () => {
+      const collapsed = block.classList.toggle('pd-log-collapsed');
+      collapseBtn.innerHTML = chevronIconSvg(collapsed ? 'down' : 'up');
+      collapseBtn.title = collapsed ? 'Expand' : 'Collapse';
+    };
+  });
+  return entry;
+}
+
+// Detail-page wrapper for the tcpdump panel's explicit start/stop
+// streaming button - the page keeps one persistent websocket open for its
+// whole visit (see showPiDetail), so unlike the fleet table there's no
+// per-toggle connect/disconnect to manage here, just the backend command.
+async function toggleDetailTcpdumpStream(piId, entry, btn) {
+  const iface = entry.tcpdumpIfaceSelect ? entry.tcpdumpIfaceSelect.value : '';
+  if (!iface) {
+    alert('Select an interface for the tcpdump panel first.');
+    return;
+  }
+  const starting = await performToggleTcpdumpStream(piId, iface, btn, entry.tcpdumpPanel);
+  if (starting === null) return;
+  entry.tcpdumpStreaming = starting;
+  entry.tcpdumpActiveIface = starting ? iface : null;
+
+  // Same reasoning as the fleet table: starting a stream while the block
+  // is collapsed (the space-saving toggle, not this streaming toggle)
+  // would accumulate rows nobody can see.
+  if (starting) {
+    const block = document.querySelector('#pdLogPanel .pd-log-block[data-kind="tcpdump"]');
+    if (block && block.classList.contains('pd-log-collapsed')) {
+      block.classList.remove('pd-log-collapsed');
+      const collapseBtn = block.querySelector('.pi-log-collapse');
+      if (collapseBtn) {
+        collapseBtn.innerHTML = chevronIconSvg('up');
+        collapseBtn.title = 'Collapse';
+      }
+    }
+  }
+}
+
+// Fired when the tcpdump panel's interface dropdown changes. If a stream
+// was running on the interface being switched away from, stop it
+// server-side and reset the button back to "Start streaming" - otherwise
+// the button kept showing "streaming" for an interface no longer selected,
+// and the orphaned stream on the old interface would just keep running.
+// Either way, the panel is cleared since whatever it's showing belongs to
+// the previously selected interface, not the new one.
+async function onDetailTcpdumpIfaceChange(piId, entry, btn, newIface) {
+  const panel = entry.tcpdumpPanel;
+  const spec = PANELS.find(p => p.kind === 'tcpdump');
+  if (panel) resetLogPanel(panel, spec);
+
+  if (entry.tcpdumpActiveIface && entry.tcpdumpActiveIface !== newIface) {
+    const prevIface = entry.tcpdumpActiveIface;
+    entry.tcpdumpStreaming = false;
+    entry.tcpdumpActiveIface = null;
+    btn.classList.remove('streaming');
+    btn.innerHTML = PLAY_ICON_SVG;
+    btn.title = 'Start streaming';
+    try {
+      await postCmd(piId, 'stop_tcpdump', { interface: prevIface });
+    } catch {
+      // backend unreachable; button/panel are already reset locally
+    }
+  }
+}
+
+function refreshDetailLogIfaceOptions(piId, entry) {
+  const interfaces = piInterfaces(piId);
+  PANELS.forEach(spec => {
+    const select = entry[spec.kind + 'IfaceSelect'];
+    if (!select) return;
+    const current = select.value;
+    select.innerHTML = '<option value="">select interface</option>' +
+      interfaces.map(i => `<option value="${i}">${i}</option>`).join('');
+    if (interfaces.includes(current)) select.value = current;
+  });
+}
+
+function closeDetailLogEntry() {
+  if (detailLogEntry && detailLogEntry.ws) detailLogEntry.ws.close();
+  detailLogEntry = null;
+}
+
+// Called on every refreshPis() poll (5s) so status/last-seen/interfaces
+// stay current without rebuilding the whole page (which would tear down
+// the log WebSocket and reset in-progress captures every 5s).
+function refreshDetailView() {
+  if (!detailPiId || !document.getElementById('piDetail').classList.contains('active')) return;
+  renderDetailInfo(detailPiId);
+
+  const interfaces = piInterfaces(detailPiId);
+  const key = JSON.stringify(interfaces);
+  if (key === lastDetailInterfacesKey) return;
+  lastDetailInterfacesKey = key;
+
+  document.getElementById('pdActionParams').querySelectorAll('.iface-dropdown[data-param]').forEach(box => {
+    const current = getDropdownSelected(box);
+    setDropdownOptions(box, interfaces, current.filter(v => interfaces.includes(v)));
+  });
+  renderDetailInterfaceList(detailPiId);
+  if (detailLogEntry) refreshDetailLogIfaceOptions(detailPiId, detailLogEntry);
+}
+
+function showPiDetail(piId) {
+  closeDetailLogEntry();
+  detailPiId = piId;
+  lastDetailInterfacesKey = null;
+  detailIfaceDetailsCache = null;
+  detailIfaceDetailsPromise = null;
+  detailLinkInfoCache = {};
+  tabs.forEach(b => b.classList.remove('active'));
+  views.forEach(v => v.classList.remove('active'));
+  document.getElementById('piDetail').classList.add('active');
+  document.getElementById('piDetailTitle').textContent = piId;
+
+  renderDetailInfo(piId);
+  renderDetailInterfaceList(piId);
+
+  detailLogEntry = buildDetailLogEntry(piId);
+  refreshDetailLogIfaceOptions(piId, detailLogEntry);
+  detailLogEntry.ws = connectPiLog(piId, detailLogEntry);
+
+  setupDetailBar(
+    document.getElementById('pdAction'), document.getElementById('pdActionParams'),
+    document.getElementById('pdActionSendBtn'), document.getElementById('pdActionResults'),
+    Object.keys(ACTION_PARAMS), piId
+  );
+}
+
+function showFleetView() {
+  closeDetailLogEntry();
+  detailPiId = null;
+  document.getElementById('piDetail').classList.remove('active');
+  tabs.forEach(b => b.classList.remove('active'));
+  views.forEach(v => v.classList.remove('active'));
+  tabs[0].classList.add('active');
+  document.getElementById('fleet').classList.add('active');
+}
+
+document.getElementById('piDetailBack').addEventListener('click', () => {
+  location.hash = '';
+});
+
+function routeDetail() {
+  const m = location.hash.match(/^#pi\/(.+)$/);
+  if (m) showPiDetail(decodeURIComponent(m[1]));
+  else showFleetView();
+}
+window.addEventListener('hashchange', routeDetail);
+routeDetail();
+
+const footerYearEl = document.getElementById('footerYear');
+if (footerYearEl) footerYearEl.textContent = new Date().getFullYear();
