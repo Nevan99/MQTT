@@ -143,6 +143,16 @@ function isWifiInterface(name) {
   return /^(wl|wlan)/.test(name);
 }
 
+// Best-effort name-based guess for a monitor-mode interface (mon0,
+// wlan0mon, etc.) - used only for the quick synchronous checks (which
+// interfaces get a default band/channel control, the bulk action's fan-out)
+// that can't afford to fetch list_interfaces' real, name-independent
+// "type": "monitor" (see pi_agent.get_interface_details) for every
+// interface up front.
+function isMonitorInterfaceName(name) {
+  return /mon/i.test(name);
+}
+
 // Classic curved-bars wifi glyph (like the Windows taskbar icon), drawn in
 // currentColor so the connected/disconnected/unknown CSS classes can just
 // recolor it instead of swapping emoji glyphs.
@@ -243,6 +253,15 @@ function renderDetailIfaceBody(body, name) {
       e.stopPropagation();
       disconnectDetailWifi(name, e.currentTarget);
     });
+  }
+
+  const isMonitor = details ? details.type === 'monitor' : isMonitorInterfaceName(name);
+  if ((isWifiInterface(name) || isMonitor) && detailPiId) {
+    const pi = pis.find(p => p.pi_id === detailPiId);
+    const current = (pi && pi.interface_defaults && pi.interface_defaults[name]) || null;
+    renderInterfaceDefaultControl(info, detailPiId, name, current, (updated) => {
+      if (pi) pi.interface_defaults = updated;
+    }, isMonitor);
   }
 }
 

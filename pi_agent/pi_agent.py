@@ -681,6 +681,29 @@ class PiAgent:
         subprocess.run(["systemctl", "restart", "hostapd"])
         return {"restarted": True, "channel": channel}
 
+    def set_monitor_channel(self, interface, channel):
+        """Sets a monitor-mode interface's capture channel via `iw` - unlike
+        connect_wifi/disconnect_wifi/scan_wifi/link_info, there's no nmcli
+        equivalent here: a monitor-mode interface has no SSID/association to
+        manage, NetworkManager doesn't touch it at all, and `iw` is the only
+        tool that can set its channel. Band isn't a separate parameter -
+        `iw ... set channel` infers it from the channel number, same as
+        connect_wifi's own inference."""
+        if not interface:
+            return {"error": "interface is required"}
+        if not channel:
+            return {"error": "channel is required"}
+        ret = subprocess.run(
+            ["iw", "dev", interface, "set", "channel", str(channel)],
+            capture_output=True, text=True, timeout=30,
+        )
+        return {
+            "interface": interface,
+            "channel": channel,
+            "applied": ret.returncode == 0,
+            "output": (ret.stdout or ret.stderr).strip(),
+        }
+
     @staticmethod
     def wait_until(iso_timestamp):
         """Block until the synchronized start time given by the controller."""
@@ -765,6 +788,8 @@ class PiAgent:
                 return
             elif action == "scan_wifi":
                 result = self.get_wifi_scan(payload.get("interface"))
+            elif action == "set_monitor_channel":
+                result = self.set_monitor_channel(payload.get("interface"), payload.get("channel"))
             elif action == "list_interfaces":
                 self.publish_registration()
                 result = {"interfaces": self.get_interface_details()}
@@ -876,8 +901,17 @@ class PiAgent:
                 "mac_address": link_m.group(2) if link_m else None,
                 "state": state_m.group(1) if state_m else ("UP" if "UP" in flags else "DOWN"),
                 "flags": flags,
-                "type": "wifi" if name.startswith(("wl", "wlan")) else
-                        ("ethernet" if link_type == "ether" else link_type),
+                # A monitor-mode interface reports link/ieee802.11/radiotap
+                # (confirmed from an actual `ip -o link show` on the fleet -
+                # it's "ieee802.11/radiotap" with a slash, not the commonly
+                # assumed "ieee802.11_radiotap" with an underscore) regardless
+                # of its name (mon0, wlan0mon, whatever it was created as) -
+                # a reliable signal, unlike station/AP mode wifi, which
+                # reports link/ether just like plain ethernet does and so
+                # still has to be told apart by name prefix.
+                "type": "monitor" if link_type and "radiotap" in link_type else
+                        ("wifi" if name.startswith(("wl", "wlan")) else
+                         ("ethernet" if link_type == "ether" else link_type)),
                 "ip_address": self.get_interface_ip(name),
                 "ipv6_address": self.get_interface_ipv6(name),
             })
@@ -977,3 +1011,5 @@ class PiAgent:
 
 if __name__ == "__main__":
     PiAgent().run()
+
+

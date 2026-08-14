@@ -18,6 +18,9 @@ class Pi(SQLModel, table=True):
     last_seen: datetime = Field(default_factory=utcnow)
     metadata_json: str = "{}"         # role-specific config, e.g. {"target_ssid": "..."}
     primary_interfaces_json: str = "[]"  # interfaces this Pi targets when included in a multicast command
+    interface_defaults_json: str = "{}"  # interface name -> {"band": "bg"|"a"|None, "channel": int|None},
+                                          # auto-applied to connect_wifi calls against that interface when
+                                          # the request itself doesn't specify a channel/band
 
     @property
     def topics(self) -> list:
@@ -30,6 +33,10 @@ class Pi(SQLModel, table=True):
     @property
     def primary_interfaces(self) -> list:
         return json.loads(self.primary_interfaces_json)
+
+    @property
+    def interface_defaults(self) -> dict:
+        return json.loads(self.interface_defaults_json)
 
 
 class LogEntry(SQLModel, table=True):

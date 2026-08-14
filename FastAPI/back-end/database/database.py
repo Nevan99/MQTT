@@ -37,6 +37,10 @@ def _add_missing_columns():
             ))
             conn.execute(text("UPDATE pi SET primary_interfaces_json = '[]' WHERE primary_interfaces_json IS NULL"))
             conn.commit()
+        if "interface_defaults_json" not in existing:
+            conn.execute(text("ALTER TABLE pi ADD COLUMN interface_defaults_json VARCHAR DEFAULT '{}'"))
+            conn.execute(text("UPDATE pi SET interface_defaults_json = '{}' WHERE interface_defaults_json IS NULL"))
+            conn.commit()
 
 
 def get_session():

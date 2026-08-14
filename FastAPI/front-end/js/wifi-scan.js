@@ -217,6 +217,21 @@ async function pollCommand(commandId, entry, piId, action) {
         if (data.status === 'complete' && action === 'syslog' && Array.isArray(data.result?.logs)) {
           pushToPiLogPanel(piId, data.result.logs);
         }
+        // The dedicated Wifi Scan card's own Connect button refreshes the
+        // fleet icon right away (see renderMergedWifiNetworkCard); a
+        // connect_wifi/disconnect_wifi sent from this generic Action panel
+        // otherwise only picks up the new state on the next ~15s poll (see
+        // pisPollCount in fleet-table.js), which reads as the icon never
+        // turning green at all if the user isn't still watching by then.
+        if (data.status === 'complete' && WIFI_CONNECTED_ACTIONS.has(action) && data.result?.interface) {
+          const entry = piRows.get(piId);
+          const cardState = entry && entry.ifaceCards.get(data.result.interface);
+          if (entry && cardState) {
+            entry.ifaceDetailsCache = null;
+            entry.ifaceDetailsPromise = null;
+            refreshFleetWifiIcon(piId, entry, cardState);
+          }
+        }
         if (data.status !== 'pending') return;
       }
     } catch {
@@ -264,6 +279,14 @@ sendCmdBtn.addEventListener('click', async () => {
   const target = targetSelect.value;
   const action = actionSelect.value;
   const params = collectParams();
+
+  // Not a real Pi-agent action - no command_id/MQTT round-trip, so it
+  // skips the whole target-fan-out/postCmd machinery below entirely.
+  if (action === 'set_interface_defaults') {
+    addSetInterfaceDefaultsEntry(params);
+    return;
+  }
+
   const needsInterface = (ACTION_PARAMS[action] || []).some(f => f.type === 'interface');
 
   sendCmdBtn.disabled = true;

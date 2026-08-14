@@ -16,6 +16,22 @@ router = APIRouter(tags=["commands"], dependencies=[Depends(get_current_user)])
 def _dispatch(pi_id: str, req: CommandRequest, session: Session) -> CommandOut:
     command_id = str(uuid.uuid4())
 
+    # A connect_wifi/set_monitor_channel call that doesn't pin its own
+    # channel/band falls back to that interface's stored default (see
+    # Pis.set_interface_default) - lets an interface be pinned to a
+    # band/channel once instead of retyping it every time, from any of the
+    # several UI paths that can trigger these (Action panel, fleet scan
+    # card, detail page, per-interface card's own Save).
+    if req.action in ("connect_wifi", "set_monitor_channel") and pi_id != "all":
+        interface = req.params.get("interface")
+        pi = session.get(Pi, pi_id)
+        defaults = pi.interface_defaults.get(interface) if pi and interface else None
+        if defaults:
+            if "channel" not in req.params and defaults.get("channel"):
+                req.params["channel"] = defaults["channel"]
+            if "band" not in req.params and defaults.get("band"):
+                req.params["band"] = defaults["band"]
+
     # link_info (and any other TRANSIENT_ACTIONS) is polled far too often -
     # by wifi status icons, connected marks, interface cards, wifi scans -
     # to persist as a Command row; it's tracked in memory only, still

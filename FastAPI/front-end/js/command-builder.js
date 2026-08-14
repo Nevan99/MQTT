@@ -31,6 +31,23 @@ const ACTION_PARAMS = {
   disconnect_wifi: [{ name: 'interface', label: 'Interface', type: 'interface', required: true }],
   list_interfaces: [],
   scan_wifi: [{ name: 'interface', label: 'Interface', type: 'interface', required: true }],
+  // Monitor-mode's own channel setter (via iw, not nmcli - see
+  // pi_agent.set_monitor_channel) - no band field, since iw's "set channel"
+  // infers band from the channel number, same as connect_wifi's own default.
+  set_monitor_channel: [
+    { name: 'interface', label: 'Interface', type: 'interface', required: true },
+    { name: 'channel', label: 'Channel', type: 'number', required: true },
+  ],
+  // Not a real Pi-agent action - see applySetInterfaceDefaults below. Applies
+  // to every wifi interface of whichever Pi(s) Target resolves to, so no
+  // "interface" field here (unlike every other action above).
+  set_interface_defaults: [
+    {
+      name: 'band', label: 'Band (optional)', type: 'select',
+      options: [{ value: '', label: 'any band' }, { value: 'bg', label: '2.4GHz' }, { value: 'a', label: '5GHz' }],
+    },
+    { name: 'channel', label: 'Channel (optional - leave both blank to clear)', type: 'number' },
+  ],
 };
 
 function currentTargetInterfaces() {
@@ -63,11 +80,27 @@ function renderParamFields() {
         </div>
       `;
     }
+    if (f.type === 'select') {
+      return `
+        <label>${f.label}</label>
+        <select class="field" data-param="${f.name}">
+          ${f.options.map(o => `<option value="${o.value}">${o.label}</option>`).join('')}
+        </select>
+      `;
+    }
     return `
       <label>${f.label}</label>
       <input class="field" data-param="${f.name}" type="${f.type}" ${f.default !== undefined ? `value="${f.default}"` : ''}>
     `;
   }).join('');
+
+  // set_interface_defaults has no "interface" field of its own (see
+  // ACTION_PARAMS) - it always applies to every wifi interface of whichever
+  // Pi(s) Target above resolves to, so make that scope explicit here.
+  if (actionSelect.value === 'set_interface_defaults') {
+    paramFields.insertAdjacentHTML('afterbegin',
+      '<div class="hint">Applies to every wifi/monitor interface of the Pi(s) selected by Target above (all / multicast-checked / one Pi). Monitor interfaces are applied immediately; wifi interfaces on the next connect.</div>');
+  }
 
   // The dropdown widget is real DOM built by JS, not a string - each mount
   // placeholder above gets replaced by a freshly built one, carrying the
@@ -383,5 +416,100 @@ function renderCommandResult(container, action, result, piId) {
   } else {
     renderResultTable(container, result);
   }
+}
+
+// --- set_interface_defaults: bulk band/channel default action --------------
+// Not a real Pi-agent action (no MQTT round-trip) - it's a backend-only
+// setting, applied to every wifi interface of however many Pis the Target
+// select resolves to ("all", "multicast" via checkedPiIds, or one Pi),
+// fanned out client-side as one PUT per (Pi, wifi interface) pair against
+// the same endpoint the individual per-interface card control uses.
+// sendCmdBtn's click handler (wifi-scan.js) special-cases this action and
+// calls applySetInterfaceDefaults() instead of dispatching a real command.
+function bulkDefaultTargetPiIds() {
+  const target = targetSelect.value;
+  if (target === 'all') return pis.map(p => p.pi_id);
+  if (target === 'multicast') return [...checkedPiIds];
+  return target ? [target] : [];
+}
+
+async function applySetInterfaceDefaults(params, entry) {
+  const statusEl = entry.querySelector('.cmd-status');
+  const resultEl = entry.querySelector('.result');
+  const band = params.band || null;
+  const channel = params.channel || null;
+
+  if (!bandMatchesChannel(band, channel)) {
+    const inferred = channel <= 14 ? '2.4GHz' : '5GHz';
+    statusEl.textContent = 'failed';
+    statusEl.className = 'cmd-status failed';
+    resultEl.textContent = `Channel ${channel} is ${inferred} - pick a matching band, "any band", or a different channel.`;
+    return;
+  }
+
+  const piIds = bulkDefaultTargetPiIds();
+  const tasks = [];
+  piIds.forEach(piId => {
+    const pi = pis.find(p => p.pi_id === piId);
+    const ifaces = ((pi && pi.metadata && pi.metadata.interfaces) || [])
+      .filter(iface => isWifiInterface(iface) || isMonitorInterfaceName(iface));
+    ifaces.forEach(iface => tasks.push({ piId, iface, isMonitor: isMonitorInterfaceName(iface) && !isWifiInterface(iface) }));
+  });
+  if (!tasks.length) {
+    statusEl.textContent = 'failed';
+    statusEl.className = 'cmd-status failed';
+    resultEl.textContent = 'No wifi/monitor interfaces found on the Pi(s) selected by Target.';
+    return;
+  }
+
+  // A monitor interface never goes through a connect_wifi-style event to
+  // pick this default up later - it has to be applied right now too, same
+  // as the per-interface card's own Save (renderInterfaceDefaultControl).
+  const results = await Promise.allSettled(tasks.map(async ({ piId, iface, isMonitor }) => {
+    const res = await apiFetch(`${API}/pis/${encodeURIComponent(piId)}/interfaces/${encodeURIComponent(iface)}/default`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ band, channel }),
+    });
+    if (!res.ok) throw new Error(`${piId}/${iface}: ${res.status} ${await res.text()}`);
+    const updated = await res.json();
+    const pi = pis.find(p => p.pi_id === piId);
+    if (pi) pi.interface_defaults = updated.interface_defaults;
+
+    if (isMonitor && channel) {
+      const cmdRes = await postCmd(piId, 'set_monitor_channel', { interface: iface, channel });
+      if (!cmdRes.ok) throw new Error(`${piId}/${iface}: applying now failed - ${cmdRes.status} ${await cmdRes.text()}`);
+      const data = await cmdRes.json();
+      const result = await awaitCommandResult(data.command_id, 30);
+      if (!result || !result.applied) {
+        throw new Error(`${piId}/${iface}: saved as default, but applying it now failed - ${(result && result.output) || 'unknown error'}`);
+      }
+    }
+  }));
+
+  const failed = results.filter(r => r.status === 'rejected');
+  statusEl.textContent = failed.length ? 'failed' : 'complete';
+  statusEl.className = `cmd-status ${failed.length ? 'failed' : 'complete'}`;
+  resultEl.textContent = failed.length
+    ? `Applied to ${tasks.length - failed.length}/${tasks.length}. Failed:\n${failed.map(r => r.reason.message).join('\n')}`
+    : `Applied to all ${tasks.length} wifi interface(s) across ${piIds.length} Pi(s).`;
+}
+
+// Same cmd-entry look as a real command (see addCommandEntry) so it sits in
+// the same results feed, but with no command_id/polling - the work here is
+// a handful of synchronous-ish PUTs, not a Pi round-trip.
+function addSetInterfaceDefaultsEntry(params) {
+  const entry = document.createElement('div');
+  entry.className = 'cmd-entry';
+  entry.innerHTML = `
+    <div class="hdr"><span><span class="toggle">&#9660;</span>set_interface_defaults</span><span><span class="cmd-status pending">pending</span></span></div>
+    <div class="result"></div>
+  `;
+  entry.querySelector('.hdr').addEventListener('click', () => {
+    entry.classList.toggle('collapsed');
+    entry.querySelector('.toggle').innerHTML = entry.classList.contains('collapsed') ? '&#9654;' : '&#9660;';
+  });
+  cmdResults.prepend(entry);
+  applySetInterfaceDefaults(params, entry);
 }
 

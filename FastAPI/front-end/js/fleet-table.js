@@ -9,22 +9,11 @@ let selectedPiId = null;
 // Pi ids checked in the fleet table's select column. Independent of
 // targetSelect's own value/DOM - this is what actually drives "multicast".
 const checkedPiIds = new Set();
-
-// Rebuilds the Target dropdown's options (all / multicast / one per Pi) and
-// auto-switches to "multicast" the moment more than one Pi is checked in the
-// table, per the requirement that multi-selecting Pis there should drive the
-// dropdown rather than the other way around.
-//
-// Called on every 5s refreshPis() poll (fleet composition can change at any
-// time), so this only touches the DOM - and only calls renderParamFields(),
-// which wipes the whole param form - when something actually changed.
-// Otherwise a field mid-edit (e.g. wifi SSID/password) gets reset out from
-// under the user's typing every single poll.
 let lastTargetOptionsKey = null;
 
 function renderTargetSelect() {
   const current = targetSelect.value;
-  const optionsKey = JSON.stringify([pis.map(p => p.pi_id), checkedPiIds.size > 1]);
+  const optionsKey = JSON.stringify([pis.map(p => p.pi_id), checkedPiIds.size > 1 ? checkedPiIds.size : 0]);
 
   if (optionsKey !== lastTargetOptionsKey) {
     lastTargetOptionsKey = optionsKey;
@@ -51,9 +40,6 @@ function renderTargetSelect() {
   if (targetSelect.value !== current) renderParamFields();
 }
 
-// One entry per Pi: { summaryRow, logRow, logPanel, expanded, ws }.
-// Kept alive across refreshPis() calls so expanding a row and its live
-// log feed survive the 5s poll instead of being torn down and rebuilt.
 const piRows = new Map();
 
 function statusBadge(status) {
@@ -61,11 +47,6 @@ function statusBadge(status) {
   return `<span class="badge ${cls}">${status}</span>`;
 }
 
-// Shared toggle-dropdown-of-checkboxes widget, used for both the fleet
-// table's Primary IF column and the Action panel's Interface param - lets a
-// Pi have several primary interfaces, and a command target several
-// interfaces at once, presented closed (a one-line summary) until clicked,
-// rather than a native <select multiple> permanently taking up space.
 function buildIfaceDropdown() {
   const wrap = document.createElement('div');
   wrap.className = 'iface-dropdown field';
@@ -82,38 +63,22 @@ function buildIfaceDropdown() {
     document.querySelectorAll('.iface-dropdown-panel').forEach(p => p.classList.add('hidden'));
     if (!wasOpen) panel.classList.remove('hidden');
   });
-  // Keeps clicks inside the panel (checkbox rows) from bubbling to the
-  // document-level listener below, which would immediately close it, and
-  // from bubbling to a Pi row's own click handler (which sets the target).
   wrap.addEventListener('click', (e) => e.stopPropagation());
   return wrap;
 }
 
-// One global listener closes whatever dropdown is open when clicking
-// anywhere else on the page - registered once, not per widget instance.
 document.addEventListener('click', () => {
   document.querySelectorAll('.iface-dropdown-panel').forEach(p => p.classList.add('hidden'));
 });
 
-// Slim chevron used for every collapse/expand toggle (side panels and the
-// syslog/tcpdump blocks) - one thin stroked path, just rotated per
-// direction, instead of the bold filled-triangle unicode glyphs.
 function chevronIconSvg(direction) {
   const rotation = { right: 0, down: 90, left: 180, up: 270 }[direction] || 0;
   return `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform: rotate(${rotation}deg);"><polyline points="9 6 15 12 9 18"/></svg>`;
 }
-
-// Play/stop glyphs for the explicit "start streaming" toggle on the
-// tcpdump panel - separate from the view expand/collapse chevron, so
-// opening the panel to look at a previous capture doesn't itself start a
-// new live capture.
 const CLOSE_ICON_SVG = `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
 const PLAY_ICON_SVG = `<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><polygon points="6 4 20 12 6 20"/></svg>`;
 const STOP_ICON_SVG = `<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><rect x="6" y="6" width="12" height="12"/></svg>`;
 
-// Open-eye / eye-with-slash glyphs for the password show/hide toggle,
-// replacing the old eye/see-no-evil-monkey emoji pair with a matched icon
-// set consistent with the app's other inline-SVG icons.
 const EYE_ICON_SVG = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/>
   <circle cx="12" cy="12" r="3"/>
@@ -124,10 +89,6 @@ const EYE_OFF_ICON_SVG = `<svg viewBox="0 0 24 24" width="15" height="15" fill="
   <line x1="1" y1="1" x2="23" y2="23"/>
 </svg>`;
 
-// Delegated show/hide toggle for every password field on the page (login
-// form and any dynamically-built Action panel password param) - one
-// listener instead of wiring each toggle button individually, so newly
-// rendered password fields (e.g. after switching actions) work for free.
 document.addEventListener('click', (e) => {
   const btn = e.target.closest('.password-toggle');
   if (!btn) return;
@@ -194,12 +155,6 @@ function getDropdownSelected(wrap) {
   return [...wrap.querySelectorAll('input[type="checkbox"]:checked:not(.iface-select-all)')].map(cb => cb.value);
 }
 
-// Category -> which panel it's routed to. registration/status/result are
-// command acks and fleet metadata, not something to show in a log feed.
-// Both categories now arrive via capture_socket_server.py's view-only
-// socket connections (stream_syslog/stream_tcpdump) instead of MQTT, but
-// the category names and this routing are unchanged - only the transport
-// on the backend moved.
 const CATEGORY_PANEL = { logs: 'logPanel', tcpdump: 'tcpdumpPanel' };
 
 function connectPiLog(piId, entry) {
@@ -217,22 +172,8 @@ function connectPiLog(piId, entry) {
     const panelKey = CATEGORY_PANEL[msg.category];
     if (!panelKey) return;
     const payload = msg.payload !== undefined ? msg.payload : msg;
-    // tcpdump lines arrive batched (capture_socket_server groups whatever
-    // decoded from one read-chunk into one message instead of publishing
-    // per packet, to avoid flooding the browser on busy interfaces) - logs
-    // lines still arrive one per message.
     const lines = Array.isArray(payload) ? payload : [payload];
 
-    // Only show lines for the interface actually being streamed - tracked
-    // separately from the dropdown's live value (entry.<kind>ActiveIface,
-    // set when the stream is actually started/stopped) rather than read
-    // straight off the <select> here. refreshDetailLogIfaceOptions rebuilds
-    // that <select>'s options on every interfaces refresh and can
-    // transiently reset its value to "" for a tick if the interface list
-    // it's rebuilding from doesn't (yet) include the current selection -
-    // reading the live value at message-arrival time meant that one bad
-    // tick silently dropped every packet from then on, even though the
-    // stream itself kept running fine server-side.
     const selectedIface = entry[msg.category + 'ActiveIface'];
     if (!selectedIface) return;
 
@@ -259,16 +200,11 @@ function connectPiLog(piId, entry) {
   return ws;
 }
 
-// Each Pi has two independently-collapsible windows sharing one lazily
-// opened WebSocket; the socket stays open as long as either is expanded.
 const PANELS = [
   { kind: 'logs', rowKey: 'logRow', panelKey: 'logPanel', toggleKey: 'logToggle', expandedKey: 'logExpanded', label: 'syslog / stream_logs', short: 'syslog / stream_logs' },
   { kind: 'tcpdump', rowKey: 'tcpdumpRow', panelKey: 'tcpdumpPanel', toggleKey: 'tcpdumpToggle', expandedKey: 'tcpdumpExpanded', label: 'tcpdump', short: 'tcpdump' },
 ];
 
-// Polls a command until it's no longer pending and returns its result (or
-// throws on failure/timeout), mirroring pollCommand() below but returning
-// instead of rendering into the command-builder feed.
 async function awaitCommandResult(commandId, maxAttempts = 30) {
   for (let i = 0; i < maxAttempts; i++) {
     const res = await apiFetch(`${API}/commands/${commandId}`);
@@ -284,17 +220,6 @@ async function awaitCommandResult(commandId, maxAttempts = 30) {
   throw new Error('timed out waiting for the Pi');
 }
 
-// Start/stop capture (the RECORDING feature - separate from the streaming
-// view toggle below). Nothing is persisted server-side for either live
-// stream until a capture is actually armed:
-//  - syslog: lines are buffered client-side (see connectPiLog's
-//    ws.onmessage) for exactly the window between Start and Stop, then
-//    saved as a text capture via POST /captures - so the panel must stay
-//    expanded (WebSocket connected) for the whole capture.
-//  - tcpdump: a wholly separate tcpdump process on the Pi (start_pcap_capture)
-//    pipes raw pcap bytes to capture_socket_server over its own socket
-//    connection, saved straight to a .pcap file - independent of the
-//    view-only decoded stream, both can run on the same interface at once.
 async function toggleCapture(piId, spec, entry, btn) {
   if (spec.kind === 'tcpdump') return togglePcapCapture(piId, entry, btn);
 
@@ -414,12 +339,119 @@ function postCmd(piId, action, params) {
     body: JSON.stringify({ action, params }),
   });
 }
+function bandMatchesChannel(band, channel) {
+  if (!band || !channel) return true;
+  return band === (channel <= 14 ? 'bg' : 'a');
+}
 
-// Sends connect_wifi and, if the Pi reports it didn't connect, sends it
-// exactly one more time before giving up - covers the common case of a
-// one-off transient failure (AP busy, brief scan/negotiation hiccup)
-// without silently retrying forever. Returns whichever attempt's result
-// (the successful one, or the last failure if both attempts failed).
+function renderInterfaceDefaultControl(container, piId, iface, current, onSaved, isMonitor) {
+  const wrap = document.createElement('div');
+  wrap.className = 'wifi-connect-row';
+  // Monitor interfaces have no band field at all - iw's own "set channel"
+  // has no separate band flag, band is just implied by the channel number,
+  // so a band control here couldn't do anything but mislead.
+  wrap.innerHTML = `
+    <label style="width:100%;">Default channel${isMonitor ? ' (applied immediately)' : '/band for connect_wifi'}</label>
+    ${isMonitor ? '' : `
+      <select class="field iface-default-band" style="flex:0 0 6.5rem;">
+        <option value="">any band</option>
+        <option value="bg">2.4GHz</option>
+        <option value="a">5GHz</option>
+      </select>
+    `}
+    <input class="field iface-default-channel" type="number" min="1" placeholder="channel" style="flex:0 0 6.5rem;">
+    <button type="button" class="iface-default-save">Save</button>
+    <button type="button" class="iface-default-clear">Clear</button>
+    <div class="iface-default-error login-error" style="width:100%;"></div>
+    <div class="iface-default-success" style="width:100%; color:#6f6; font-size:0.8rem; min-height:1.2em; margin-top:0.5rem;"></div>
+  `;
+  const bandEl = wrap.querySelector('.iface-default-band');
+  const channelEl = wrap.querySelector('.iface-default-channel');
+  const errorEl = wrap.querySelector('.iface-default-error');
+  const successEl = wrap.querySelector('.iface-default-success');
+  if (bandEl) bandEl.value = (current && current.band) || '';
+  channelEl.value = (current && current.channel) || '';
+
+  const stop = (e) => e.stopPropagation();
+  [bandEl, channelEl].forEach(el => el && el.addEventListener('click', stop));
+
+  function describeBandChannel(band, channel) {
+    const bandLabel = band === 'bg' ? '2.4GHz' : band === 'a' ? '5GHz' : null;
+    if (bandLabel && channel) return `${bandLabel}, channel ${channel}`;
+    if (channel) return `channel ${channel}`;
+    if (bandLabel) return bandLabel;
+    return 'any band/channel';
+  }
+
+  async function save(band, channel) {
+    successEl.textContent = '';
+    if (!bandMatchesChannel(band, channel)) {
+      const inferred = channel <= 14 ? '2.4GHz' : '5GHz';
+      errorEl.textContent = `Channel ${channel} is ${inferred} - pick a matching band, "any band", or a different channel.`;
+      return;
+    }
+    errorEl.textContent = '';
+
+    const btn = wrap.querySelector('.iface-default-save');
+    btn.disabled = true;
+    try {
+      const res = await apiFetch(`${API}/pis/${encodeURIComponent(piId)}/interfaces/${encodeURIComponent(iface)}/default`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ band: band || null, channel: channel || null }),
+      });
+      if (!res.ok) {
+        errorEl.textContent = `Failed to save default: ${res.status} ${await res.text()}`;
+        return;
+      }
+      const updated = await res.json();
+      if (onSaved) onSaved(updated.interface_defaults);
+
+      if (!band && !channel) {
+        successEl.textContent = 'Cleared.';
+        return;
+      }
+
+      // A monitor interface never goes through a connect_wifi-style event
+      // to pick this default up later - it has to be applied right now, so
+      // its confirmation is "the radio is actually on that channel now"
+      // rather than just "the default was saved".
+      if (isMonitor && channel) {
+        const cmdRes = await postCmd(piId, 'set_monitor_channel', { interface: iface, channel });
+        if (!cmdRes.ok) throw new Error(`${cmdRes.status} ${await cmdRes.text()}`);
+        const data = await cmdRes.json();
+        const result = await awaitCommandResult(data.command_id, 30);
+        if (!result || !result.applied) {
+          errorEl.textContent = `Saved as default, but applying it now failed: ${(result && result.output) || 'unknown error'}`;
+        } else {
+          successEl.textContent = `Applied: ${describeBandChannel(band, channel)}.`;
+        }
+      } else {
+        successEl.textContent = `Saved as default: ${describeBandChannel(band, channel)}. Applies on this interface's next connect.`;
+      }
+    } catch (err) {
+      errorEl.textContent = `Failed to save default: ${err.message}`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  wrap.querySelector('.iface-default-save').addEventListener('click', (e) => {
+    stop(e);
+    const channel = channelEl.value ? Number(channelEl.value) : null;
+    save(bandEl ? (bandEl.value || null) : null, channel);
+  });
+  wrap.querySelector('.iface-default-clear').addEventListener('click', (e) => {
+    stop(e);
+    if (bandEl) bandEl.value = '';
+    channelEl.value = '';
+    errorEl.textContent = '';
+    save(null, null);
+  });
+
+  container.appendChild(wrap);
+}
+
 async function connectWifiWithRetry(piId, params, maxAttempts = 2) {
   let result = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -435,12 +467,6 @@ async function connectWifiWithRetry(piId, params, maxAttempts = 2) {
 const STREAM_START_ACTION = { logs: 'stream_logs', tcpdump: 'tcpdump' };
 const STREAM_STOP_ACTION = { logs: 'stop_logs', tcpdump: 'stop_tcpdump' };
 
-// Explicit start/stop for the tcpdump panel's live capture - a dedicated
-// button (▶/■), separate from the panel's own expand/collapse chevron, so
-// opening the panel to look at previously-captured packets doesn't itself
-// kick off a brand new live capture. Returns the new streaming state
-// (true/false), or null if the request failed (caller should leave state
-// untouched in that case).
 async function performToggleTcpdumpStream(piId, iface, btn, panel) {
   if (!iface) {
     alert('No interface for this panel.');
@@ -460,12 +486,6 @@ async function performToggleTcpdumpStream(piId, iface, btn, panel) {
   btn.innerHTML = starting ? STOP_ICON_SVG : PLAY_ICON_SVG;
   btn.title = starting ? 'Stop streaming' : 'Start streaming';
 
-  // Pause state (from scrolling up to inspect old packets) otherwise
-  // survives collapsing/re-expanding the panel and stopping/restarting the
-  // stream, since only switching to a different Pi ever clears it
-  // (resetLogPanel). Starting a fresh capture is a clear enough signal
-  // that the user wants live view again, regardless of where they'd left
-  // the scrollbar last time.
   if (starting && panel) {
     const tbody = panel.querySelector('tbody');
     if (tbody) resumeLiveCapture(tbody);
@@ -473,14 +493,6 @@ async function performToggleTcpdumpStream(piId, iface, btn, panel) {
   return starting;
 }
 
-// Called only from the explicit Watch/Stop toggle, never from picking an
-// interface in a dropdown by itself - selecting an interface is just
-// choosing a target, it has no side effects on its own. Wipes the panel
-// locally on every call, since re-pointing at a new interface would
-// otherwise leave old lines from the previous one sitting alongside (or
-// ahead of) new ones. tcpdump can run several interfaces at once
-// server-side, so switching here also explicitly stops the previously
-// watched one; syslog only ever runs one stream per Pi.
 async function setStreamInterface(piId, entry, spec, interface_) {
   const panel = entry[spec.panelKey];
   resetLogPanel(panel, spec);
@@ -498,15 +510,6 @@ async function setStreamInterface(piId, entry, spec, interface_) {
   }
 }
 
-// One shared WebSocket per Pi, routing incoming lines to whichever
-// *interface card's* panel they belong to instead of a single Pi-level
-// panel:
-//  - tcpdump: each line carries its own "interface" field (see
-//    capture_socket_server.py's stream_tcpdump handler), so lines route to
-//    the matching card - several interfaces can stream tcpdump concurrently.
-//  - logs (syslog): the agent only ever runs one syslog stream per Pi at a
-//    time (start_syslog_stream replaces any other), so lines route to
-//    whichever single card currently has its syslog panel open.
 function connectFleetPiLog(piId, entry) {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(withToken(`${proto}://${location.host}/ws/live/${encodeURIComponent(piId)}`));
@@ -555,20 +558,6 @@ function connectFleetPiLog(piId, entry) {
   return ws;
 }
 
-// Opens/closes one interface card's syslog or tcpdump viewing panel (the
-// STREAMING toggle - separate from the Start/Stop Capture recording
-// button above). syslog also starts/stops the actual stream on the Pi
-// (the agent only runs one at a time, so opening a different card's
-// syslog panel first closes whichever other card on this Pi had it open).
-// tcpdump stays view-only through its own dedicated stream_tcpdump
-// connection (see pi_agent.py's start_tcpdump_stream) - independent of the
-// separate recording process, both can run on the same interface at once.
-// Pure view expand/collapse for syslog: syslog still auto-starts/stops on
-// this toggle (the agent only ever runs one stream at a time, so there's
-// nothing to separately "arm" - opening the panel IS the request to watch
-// it). tcpdump does NOT auto-stream from this toggle anymore - it only
-// shows/hides the packet table; starting/stopping the actual capture is
-// the explicit "start streaming" button (see toggleFleetTcpdumpStream).
 async function toggleFleetIfaceLogPanel(piId, entry, cardState, spec) {
   const expanding = !cardState[spec.expandedKey];
 
@@ -609,19 +598,11 @@ async function toggleFleetIfaceLogPanel(piId, entry, cardState, spec) {
   }
 }
 
-// Fleet wrapper for the tcpdump panel's explicit start/stop streaming
-// button - manages the shared per-Pi websocket around the common
-// start/stop core (performToggleTcpdumpStream).
 async function toggleFleetTcpdumpStream(piId, entry, cardState, btn) {
   const starting = await performToggleTcpdumpStream(piId, cardState.iface, btn, cardState.tcpdumpPanel);
   if (starting === null) return;
   cardState.tcpdumpStreaming = starting;
 
-  // Starting a stream while the packet table's row is still collapsed
-  // would accumulate rows nobody can see (the row itself is display:none
-  // until its own chevron is expanded) - auto-expand it so packets are
-  // visible immediately. This doesn't reintroduce auto-streaming-on-
-  // toggle: it's the view following an explicit start, not the reverse.
   if (starting && !cardState.tcpdumpExpanded) {
     cardState.tcpdumpExpanded = true;
     cardState.tcpdumpRow.classList.remove('pd-log-collapsed');
@@ -638,8 +619,6 @@ async function toggleFleetTcpdumpStream(piId, entry, cardState, btn) {
   }
 }
 
-// Expands/collapses one interface card's info body (list_interfaces +
-// link_info details), fetching on first expand and caching per Pi.
 async function toggleFleetIfaceCard(piId, entry, cardState) {
   const body = cardState.card.querySelector('.pd-iface-body');
   const toggleEl = cardState.card.querySelector('.pd-iface-toggle');
@@ -725,10 +704,17 @@ function renderFleetIfaceBody(entry, cardState) {
       disconnectFleetWifi(cardState, e.currentTarget);
     });
   }
+
+  const isMonitor = details ? details.type === 'monitor' : isMonitorInterfaceName(cardState.iface);
+  if (isWifiInterface(cardState.iface) || isMonitor) {
+    const pi = pis.find(p => p.pi_id === cardState.piId);
+    const current = (pi && pi.interface_defaults && pi.interface_defaults[cardState.iface]) || null;
+    renderInterfaceDefaultControl(cardState.infoEl, cardState.piId, cardState.iface, current, (updated) => {
+      if (pi) pi.interface_defaults = updated;
+    }, isMonitor);
+  }
 }
 
-// Disconnects one interface card's wifi directly (no need to go through
-// the Actions panel or a scanned network's own Disconnect button).
 async function disconnectFleetWifi(cardState, btn) {
   const piId = cardState.piId;
   btn.disabled = true;
@@ -754,9 +740,6 @@ async function disconnectFleetWifi(cardState, btn) {
   }
 }
 
-// Colors one card's wifi icon and "connected — SSID" mark via link_info -
-// called for every wifi-capable interface card, not just primary ones, so
-// connection status is visible fleet-wide (mirrors the Pi detail page).
 async function refreshFleetWifiIcon(piId, entry, cardState) {
   if (!isWifiInterface(cardState.iface) || !cardState.wifiIconEl) return;
   try {
@@ -803,12 +786,6 @@ async function saveFleetPrimaryInterfaces(piId, entry) {
   }
 }
 
-// One interface card in a Pi's expanded row: checkbox to mark it primary
-// (same PATCH endpoint/semantics as before, just moved out of a closed
-// dropdown), a wifi icon + "connected — SSID" mark, a toggle that reveals
-// list_interfaces/link_info details, and its own syslog/tcpdump viewers -
-// each with an independent streaming toggle (view, socket-based) and a
-// separate Start/Stop Capture button (recording, saved to the Captures tab).
 function buildFleetIfaceCard(piId, entry, iface) {
   const isWifi = isWifiInterface(iface);
   const card = document.createElement('div');
@@ -893,9 +870,6 @@ function buildFleetIfaceCard(piId, entry, iface) {
   return cardState;
 }
 
-// Rebuilds every interface card for a Pi (only when its interface set
-// actually changes) - tears down the shared websocket first since cards
-// (and their expanded/streaming state) are being thrown away.
 function rebuildFleetIfaceCards(piId, entry, interfaces) {
   if (entry.ws) {
     entry.ws.close();
@@ -918,17 +892,11 @@ function toggleRow(piId) {
   entry.mainToggle.innerHTML = chevronIconSvg(entry.rowExpanded ? 'down' : 'right');
 
   if (entry.rowExpanded) {
-    // A tcpdump capture (or syslog stream) started before the row was
-    // collapsed keeps running server-side regardless - only the live
-    // relay's websocket was torn down, so reconnect it if still needed.
     const anyActive = [...entry.ifaceCards.values()].some(c => c.logExpanded || c.tcpdumpStreaming);
     if (anyActive && !entry.ws) entry.ws = connectFleetPiLog(piId, entry);
     return;
   }
 
-  // Collapsing the Pi row also hides every interface card's log windows
-  // and tears down the shared websocket (view only - doesn't stop an
-  // in-progress capture/stream).
   entry.ifaceCards.forEach(cardState => {
     cardState.card.querySelector('.pd-iface-body').classList.add('hidden');
     cardState.card.querySelector('.pd-iface-toggle').innerHTML = chevronIconSvg('right');
@@ -983,9 +951,6 @@ function createPiRow(piId) {
     location.hash = `#pi/${encodeURIComponent(piId)}`;
   });
 
-  // Multi-select checkbox: independent of the row-click single target above,
-  // this drives the "multicast" target - checking more than one Pi here
-  // auto-switches the Target dropdown to multicast (see renderTargetSelect).
   const selectCheckbox = summaryRow.querySelector('.pi-select-checkbox');
   selectCheckbox.addEventListener('click', (e) => e.stopPropagation());
   selectCheckbox.addEventListener('change', () => {
@@ -994,10 +959,6 @@ function createPiRow(piId) {
     renderTargetSelect();
   });
 
-  // Interfaces row: only visible once the Pi row itself is expanded; holds
-  // one card per interface (see buildFleetIfaceCard) - each individually
-  // toggleable, with its own primary-interface checkbox, connected-status
-  // mark, and syslog/tcpdump viewers.
   const ifacesRow = document.createElement('tr');
   ifacesRow.className = 'pi-ifaces-row hidden';
   const ifacesCell = document.createElement('td');
@@ -1049,15 +1010,10 @@ function renderPis() {
       rebuildFleetIfaceCards(p.pi_id, entry, interfaces);
     }
 
-    // Each card's primary-interface checkbox is config, not a live filter -
-    // it always mirrors the server's p.primary_interfaces.
     entry.ifaceCards.forEach((cardState, iface) => {
       cardState.checkboxEl.checked = p.primary_interfaces.includes(iface);
     });
 
-    // Wifi connected-status refresh: every interface card, not just primary
-    // ones, but only every few polls (~15s) to avoid a link_info command per
-    // wifi interface per Pi every single 5s tick.
     if (pisPollCount % 3 === 0) {
       entry.ifaceCards.forEach(cardState => refreshFleetWifiIcon(p.pi_id, entry, cardState));
     }

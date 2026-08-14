@@ -6,8 +6,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/home/ats/MQTT/pi_agent
-ExecStart=/home/ats/MQTT/.venv/bin/python /home/ats/MQTT/pi_agent/pi_agent.py
+WorkingDirectory=__PI_AGENT_DIR__
+ExecStart=__VENV_DIR__/bin/python __PI_AGENT_DIR__/pi_agent.py
 Restart=on-failure
 RestartSec=5
 

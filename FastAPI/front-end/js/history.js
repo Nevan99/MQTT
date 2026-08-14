@@ -1,7 +1,3 @@
-// --- History: persisted command results (view + delete only - this is not
-// the live per-session feed under the Actions/command builder panels, which
-// now always starts empty on page load; this is the durable record kept in
-// the backend, browsable and prunable on its own). ------------------------
 
 const historyTableBody = document.getElementById('historyTableBody');
 const historySelectAll = document.getElementById('historySelectAll');
@@ -62,6 +58,7 @@ async function loadHistory() {
       cb.addEventListener('change', () => {
         if (cb.checked) checkedHistoryIds.add(id); else checkedHistoryIds.delete(id);
         syncHistorySelectAll();
+
         updateHistoryDeleteBtn();
       });
     });

@@ -46,10 +46,27 @@ password, the agent process itself runs as root via systemd (see below).
 
 This copies `pi-agent.service` to `/etc/systemd/system/`, reloads systemd,
 enables it (so it runs as root and starts on boot and on failure), and
-restarts it so it's running the current code.
+restarts it so it's running the current code. It also installs and enables
+`pi-monitor-setup.service`, a oneshot unit that runs `setup-monitor-interfaces.sh`
+before `pi-agent.service` starts on every boot - see below.
 
 Requires `.env` to already exist in this directory — `load_dotenv()` finds
 it via the service's `WorkingDirectory`.
+
+### Monitor-mode interfaces
+
+`setup-monitor-interfaces.sh` creates one monitor-mode interface per wifi
+radio (phy), on every phy except `phy0` - `phy0` is left managed-only (it's
+the Pi's primary radio, `wlan0` in the fleet's actual layout), while every
+other phy ends up with both its existing managed interface *and* a new
+monitor one (named `mon<phy number>`, e.g. `mon1` on `phy1`), matching how
+`phy1`/`wlan1`/`mon1` is already wired up on the fleet today. It's idempotent
+(skips a phy that already has a monitor interface) and safe to re-run.
+
+It has to run on every boot, not just once at install time - interfaces
+created via `iw ... interface add` don't survive a reboot, so
+`pi-monitor-setup.service` (installed by `install.sh`) recreates them before
+`pi-agent.service` starts, every time.
 
 **Re-run `./install.sh` any time you edit `Pi_agent.py`, `.env`, or
 `pi-agent.service`** — it always restarts the service at the end, so the

@@ -1,0 +1,13 @@
+[Unit]
+Description=Create monitor-mode wifi interfaces (every phy except phy0)
+Before=pi-agent.service
+After=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=__PI_AGENT_DIR__/setup-monitor-interfaces.sh
+
+[Install]
+WantedBy=multi-user.target

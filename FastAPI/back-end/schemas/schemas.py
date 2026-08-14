@@ -12,10 +12,19 @@ class PiOut(BaseModel):
     last_seen: datetime
     metadata: dict = {}
     primary_interfaces: list[str] = []
+    interface_defaults: dict = {}
 
 
 class PrimaryInterfaceRequest(BaseModel):
     primary_interfaces: list[str] = []
+
+
+class InterfaceDefaultRequest(BaseModel):
+    # band is nmcli's own value ("bg" for 2.4GHz, "a" for 5GHz) so it can be
+    # passed straight through to connect_wifi with no translation - the
+    # front end maps its "2.4GHz"/"5GHz" labels to these before sending.
+    band: Optional[str] = None
+    channel: Optional[int] = None
 
 
 class CommandRequest(BaseModel):
