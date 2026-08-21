@@ -1,0 +1,343 @@
+// --- Nearby Hotspot popup: detailed per-AP scan table for one Pi interface -
+// Triggered from the "Nearby Hotspot" button on a wifi-capable interface card
+// (see renderDetailInterfaceList). Reads GET /pis/{id}/wifi-history every
+// 3s while open - a buffer pi_agent keeps continuously fresh in the
+// background (PiAgent._wifi_background_scan_loop, same 3s cadence - see
+// WIFI_BACKGROUND_SCAN_INTERVAL_SECONDS), not a scan triggered by this
+// popup - so data is always ready immediately, at the cost of being up to
+// that loop's interval stale rather than strictly real-time.
+
+const WIFI_INFO_POLL_MS = 3000;
+
+const WIFI_INFO_COLUMNS = [
+  ['SSID', net => net.ssid || '(hidden)'],
+  ['MAC Address', net => net.bssid],
+  ['PHY Type', net => net.phy_type],
+  ['RSSI', net => net.rssi_dbm != null ? `${net.rssi_dbm} dBm` : null],
+  ['Signal Quality', net => net.signal_quality_percent != null ? `${net.signal_quality_percent}%` : null],
+  ['Average Signal Quality', net => net.avg_signal_percent != null ? `${net.avg_signal_percent}%` : null],
+  ['Frequency', net => net.frequency_mhz != null ? `${net.frequency_mhz} MHz` : null],
+  ['Channel', net => net.channel],
+  ['Information Size', net => net.information_size],
+  ['Elements Count', net => net.elements_count],
+  ['Company', net => net.company],
+  ['Router Model', net => net.router_model],
+  ['Router Name', net => net.router_name],
+  ['Security', net => net.security],
+  ['Cipher', net => net.cipher],
+  ['Maximum Speed', net => net.max_speed_mbps != null ? `${net.max_speed_mbps} Mbps` : null],
+  ['Channel Width', net => net.channel_width],
+  ['Channels Range', net => net.channels_range],
+  ['BSS Type', net => net.bss_type],
+  ['WPS Support', net => net.wps_support == null ? null : (net.wps_support ? 'Yes' : 'No')],
+  ['First Detection', net => net.first_seen ? new Date(net.first_seen).toLocaleString() : null],
+  ['Last Detection', net => net.last_seen ? new Date(net.last_seen).toLocaleString() : null],
+  ['Detection Count', net => net.detection_count],
+  ['Start Time', net => net.first_seen ? new Date(net.first_seen).toLocaleString() : null],
+  ['Minimum Signal Quality', net => net.min_signal_percent != null ? `${net.min_signal_percent}%` : null],
+  ['Maximum Signal Quality', net => net.max_signal_percent != null ? `${net.max_signal_percent}%` : null],
+  ['802.11 Standards', net => net.phy_type],
+  ['Connected', net => net.connected == null ? null : (net.connected ? 'Yes' : 'No')],
+  ['Stations Count', net => net.stations_count],
+  ['Channel Utilization', net => net.channel_utilization_percent != null ? `${net.channel_utilization_percent}%` : null],
+  ['Country Code', net => net.country_code],
+  ['Description', net => net.description],
+  ['MAC Group', net => net.mac_group],
+];
+
+let wifiInfoModalState = null;   // { piId, iface, timer, overlay } while the scan-list popup is open
+let wifiHotspotModalState = null; // { overlay } while a hotspot's own detail popup (double-click) is open
+
+function closeWifiHotspotDetailModal() {
+  if (!wifiHotspotModalState) return;
+  wifiHotspotModalState.overlay.remove();
+  wifiHotspotModalState = null;
+}
+
+function closeWifiInfoModal() {
+  closeWifiHotspotDetailModal();
+  if (!wifiInfoModalState) return;
+  clearInterval(wifiInfoModalState.timer);
+  wifiInfoModalState.overlay.remove();
+  wifiInfoModalState = null;
+  document.removeEventListener('keydown', onWifiInfoModalKeydown);
+}
+
+// The hotspot detail popup is stacked on top of the scan-list one - Escape
+// should close just the top one, not both at once.
+function onWifiInfoModalKeydown(e) {
+  if (e.key !== 'Escape') return;
+  if (wifiHotspotModalState) closeWifiHotspotDetailModal();
+  else closeWifiInfoModal();
+}
+
+function wifiInfoCellValue(v) {
+  return v === null || v === undefined || v === '' ? '—' : v;
+}
+
+// After a successful connect from the hotspot detail popup, refresh
+// whichever wifi icon(s) might be showing this (piId, iface) - it can be
+// reached from both the Fleet table's interface cards and the Pi detail
+// page's, and either, both, or neither may currently exist in the DOM.
+// Same reasoning/pattern as renderWifiNetworkCard and wifi-scan.js's
+// pollCommand use for their own Connect buttons.
+function wifiInfoRefreshWifiIcons(piId, iface) {
+  const entry = typeof piRows !== 'undefined' && piRows.get(piId);
+  const cardState = entry && entry.ifaceCards.get(iface);
+  if (entry && cardState) {
+    entry.ifaceDetailsCache = null;
+    entry.ifaceDetailsPromise = null;
+    refreshFleetWifiIcon(piId, entry, cardState);
+  }
+  if (typeof detailPiId !== 'undefined' && detailPiId === piId) {
+    delete detailLinkInfoCache[iface];
+    detailIfaceDetailsCache = null;
+    detailIfaceDetailsPromise = null;
+    refreshWifiIcon(piId, iface);
+  }
+}
+
+// Connect/Disconnect control for the hotspot detail popup - same fields/
+// flow as every other Connect button in the app (renderWifiNetworkCard in
+// detail-page.js): password field for a secured network, "remember
+// password", connectWifiWithRetry, then refresh whatever icon(s) show this
+// interface's state.
+function wifiInfoConnectSectionHtml(net) {
+  const open = isOpenSecurity(net.security);
+  return `
+    <div class="wifi-connect-row">
+      ${open ? '' : wifiPasswordFieldHtml(net)}
+      <button type="button" class="wifi-connect-btn">Connect</button>
+    </div>
+    <div class="wifi-connect-status hint"></div>
+  `;
+}
+
+function wireWifiInfoConnectSection(container, piId, iface, net) {
+  const statusEl = container.querySelector('.wifi-connect-status');
+  const connectBtn = container.querySelector('.wifi-connect-btn');
+  if (!connectBtn) return;
+  connectBtn.addEventListener('click', async () => {
+    const passwordInput = container.querySelector('.wifi-connect-password');
+    const password = passwordInput && passwordInput.value ? passwordInput.value : undefined;
+    connectBtn.disabled = true;
+    statusEl.textContent = 'Connecting…';
+    try {
+      const result = await connectWifiWithRetry(piId, {
+        ssid: net.ssid || undefined,
+        bssid: net.bssid || undefined,
+        password,
+        interface: iface,
+      });
+      statusEl.textContent = result && result.connected ? 'Connected.' : `Failed to connect${result && result.output ? ': ' + result.output : ''}`;
+      if (result && result.connected) {
+        applyWifiPasswordMemory(container, net, password);
+        wifiInfoRefreshWifiIcons(piId, iface);
+      }
+    } catch (err) {
+      statusEl.textContent = `Failed: ${err.message}`;
+    } finally {
+      connectBtn.disabled = false;
+    }
+  });
+}
+
+// One hotspot's full detail (every WIFI_INFO_COLUMNS field), opened by
+// double-clicking its row in the scan-list popup - a static snapshot of
+// that row as of the double-click, with its own explicit close button and
+// a Connect control for that AP on the same (piId, iface) the popup was
+// opened for.
+function openWifiHotspotDetailModal(piId, iface, net) {
+  closeWifiHotspotDetailModal();
+
+  const overlay = document.createElement('div');
+  overlay.className = 'wifi-info-overlay wifi-hotspot-detail-overlay';
+  overlay.innerHTML = `
+    <div class="wifi-info-modal wifi-hotspot-detail-modal">
+      <div class="wifi-info-modal-header">
+        <span>${net.ssid || '(hidden)'} &mdash; ${net.bssid || ''}</span>
+        <span class="wifi-info-modal-status hint"></span>
+        <button type="button" class="icon-btn wifi-hotspot-detail-close" title="Close">&times;</button>
+      </div>
+      <div class="wifi-info-modal-body">
+        <table class="result-table">${WIFI_INFO_COLUMNS.map(([k, get]) =>
+          `<tr><td class="result-key">${k}</td><td class="result-value">${wifiInfoCellValue(get(net))}</td></tr>`
+        ).join('')}</table>
+        ${wifiInfoConnectSectionHtml(net)}
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closeWifiHotspotDetailModal();
+  });
+  overlay.querySelector('.wifi-hotspot-detail-close').addEventListener('click', closeWifiHotspotDetailModal);
+  wireWifiInfoConnectSection(overlay.querySelector('.wifi-info-modal-body'), piId, iface, net);
+
+  wifiHotspotModalState = { overlay };
+}
+
+// Every non-empty filter input has to match (AND, not OR).
+function wifiInfoRowMatchesFilters(bodyEl, net) {
+  const inputs = bodyEl.querySelectorAll('.table-filter-input');
+  for (const input of inputs) {
+    const q = input.value.trim().toLowerCase();
+    if (!q) continue;
+    const col = WIFI_INFO_COLUMNS.find(([label]) => label === input.dataset.key);
+    const value = wifiInfoCellValue(col[1](net));
+    if (!String(value).toLowerCase().includes(q)) return false;
+  }
+  return true;
+}
+
+// null/undefined always sort last regardless of direction - a missing
+// value isn't meaningfully "less than" or "greater than" a real one.
+function wifiInfoCompareValues(a, b) {
+  if (a == null && b == null) return 0;
+  if (a == null) return 1;
+  if (b == null) return -1;
+  const an = Number(a), bn = Number(b);
+  if (!Number.isNaN(an) && !Number.isNaN(bn) && a !== '' && b !== '') return an - bn;
+  return String(a).localeCompare(String(b), undefined, { sensitivity: 'base' });
+}
+
+// null = whatever order the API returned (most-recently-seen first - see
+// routers/Pis.get_wifi_scan_history).
+let wifiInfoSortKey = null;
+let wifiInfoSortDir = 1;   // 1 = ascending, -1 = descending
+
+function wifiInfoUpdateSortHeaders(bodyEl) {
+  bodyEl.querySelectorAll('.table-sort-row th').forEach(th => {
+    th.classList.toggle('sorted', th.dataset.key === wifiInfoSortKey);
+    th.dataset.dir = th.dataset.key === wifiInfoSortKey ? (wifiInfoSortDir === 1 ? 'asc' : 'desc') : '';
+  });
+}
+
+function wifiInfoSortNetworks(networks) {
+  if (!wifiInfoSortKey) return networks;
+  const col = WIFI_INFO_COLUMNS.find(([label]) => label === wifiInfoSortKey);
+  return [...networks].sort((a, b) => wifiInfoSortDir * wifiInfoCompareValues(col[1](a), col[1](b)));
+}
+
+function renderWifiInfoTbody(bodyEl, networks) {
+  const tbody = bodyEl.querySelector('.wifi-info-table tbody');
+  if (!networks.length) {
+    tbody.innerHTML = `<tr><td colspan="${WIFI_INFO_COLUMNS.length}" class="pi-log-empty">no networks found</td></tr>`;
+    return;
+  }
+  const filtered = wifiInfoSortNetworks(networks.filter(net => wifiInfoRowMatchesFilters(bodyEl, net)));
+  if (!filtered.length) {
+    tbody.innerHTML = `<tr><td colspan="${WIFI_INFO_COLUMNS.length}" class="pi-log-empty">no networks match the filters</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = filtered.map((net, i) => `
+    <tr class="wifi-info-row" data-index="${i}" title="Double-click for full details">
+      ${WIFI_INFO_COLUMNS.map(([, get]) => `<td>${wifiInfoCellValue(get(net))}</td>`).join('')}
+    </tr>
+  `).join('');
+
+  tbody.querySelectorAll('.wifi-info-row').forEach(row => {
+    row.addEventListener('dblclick', () => {
+      // Only one Nearby Hotspot popup can be open at a time (see
+      // wifiInfoModalState) - reading piId/iface from it here instead of
+      // threading them through every render function in between.
+      if (!wifiInfoModalState) return;
+      openWifiHotspotDetailModal(wifiInfoModalState.piId, wifiInfoModalState.iface, filtered[Number(row.dataset.index)]);
+    });
+  });
+}
+
+// The header (labels + filter row) is only ever built once per popup open -
+// rebuilding it on every 3s poll (the old behavior) would wipe out whatever
+// the user had typed into a filter input each time. Only the tbody, via
+// renderWifiInfoTbody, is rebuilt per poll.
+let wifiInfoLastNetworks = [];
+
+function renderWifiInfoTable(bodyEl, networks) {
+  if (!bodyEl.querySelector('.wifi-info-table')) {
+    bodyEl.innerHTML = `
+      <table class="wifi-info-table">
+        <thead>
+          <tr class="table-sort-row">${WIFI_INFO_COLUMNS.map(([label]) => `<th data-key="${label}">${label}</th>`).join('')}</tr>
+          <tr class="table-filter-row">${WIFI_INFO_COLUMNS.map(([label]) =>
+            `<th><input type="text" class="table-filter-input" data-key="${label}" placeholder="Filter…"></th>`
+          ).join('')}</tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    `;
+    bodyEl.querySelectorAll('.table-filter-input').forEach(input => {
+      input.addEventListener('input', () => renderWifiInfoTbody(bodyEl, wifiInfoLastNetworks));
+    });
+    bodyEl.querySelectorAll('.table-sort-row th').forEach(th => {
+      th.addEventListener('click', () => {
+        if (wifiInfoSortKey === th.dataset.key) {
+          wifiInfoSortDir = -wifiInfoSortDir;
+        } else {
+          wifiInfoSortKey = th.dataset.key;
+          wifiInfoSortDir = 1;
+        }
+        wifiInfoUpdateSortHeaders(bodyEl);
+        renderWifiInfoTbody(bodyEl, wifiInfoLastNetworks);
+      });
+    });
+    // The sort choice (wifiInfoSortKey/-Dir) persists across popup opens
+    // (a plain module-level global, not reset per-open) - so a freshly
+    // built skeleton needs its arrow indicator set to match immediately,
+    // not just after the next click.
+    wifiInfoUpdateSortHeaders(bodyEl);
+  }
+  wifiInfoLastNetworks = networks;
+  renderWifiInfoTbody(bodyEl, networks);
+}
+
+async function refreshWifiInfoModal(bodyEl, statusEl, piId, iface) {
+  try {
+    const res = await apiFetch(`${API}/pis/${encodeURIComponent(piId)}/wifi-history?interface=${encodeURIComponent(iface)}`);
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    const networks = await res.json();
+    // Only bail out on the very first load - a transient failure on a later
+    // 5s poll shouldn't blank out the last-good table the user is looking at.
+    renderWifiInfoTable(bodyEl, networks);
+    statusEl.textContent = `Buffered as of ${new Date().toLocaleTimeString()}`;
+  } catch (err) {
+    if (!bodyEl.querySelector('.wifi-info-table')) {
+      bodyEl.innerHTML = `<div class="pi-log-empty">failed to load: ${err.message}</div>`;
+    }
+    statusEl.textContent = `Last update failed: ${err.message}`;
+  }
+}
+
+function openWifiInfoModal(piId, iface) {
+  closeWifiInfoModal();
+
+  const overlay = document.createElement('div');
+  overlay.className = 'wifi-info-overlay';
+  overlay.innerHTML = `
+    <div class="wifi-info-modal">
+      <div class="wifi-info-modal-header">
+        <span>Nearby Hotspot &mdash; ${iface}</span>
+        <span class="wifi-info-modal-status hint"></span>
+        <button type="button" class="icon-btn wifi-info-modal-close" title="Close">&times;</button>
+      </div>
+      <div class="wifi-info-modal-body">
+        <div class="pi-log-empty">Scanning&hellip;</div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closeWifiInfoModal();
+  });
+  overlay.querySelector('.wifi-info-modal-close').addEventListener('click', closeWifiInfoModal);
+  document.addEventListener('keydown', onWifiInfoModalKeydown);
+
+  const bodyEl = overlay.querySelector('.wifi-info-modal-body');
+  const statusEl = overlay.querySelector('.wifi-info-modal-status');
+
+  const timer = setInterval(() => refreshWifiInfoModal(bodyEl, statusEl, piId, iface), WIFI_INFO_POLL_MS);
+  wifiInfoModalState = { piId, iface, timer, overlay };
+  refreshWifiInfoModal(bodyEl, statusEl, piId, iface);
+}

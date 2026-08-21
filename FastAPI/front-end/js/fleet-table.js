@@ -89,6 +89,15 @@ const EYE_OFF_ICON_SVG = `<svg viewBox="0 0 24 24" width="15" height="15" fill="
   <line x1="1" y1="1" x2="23" y2="23"/>
 </svg>`;
 
+// Duplicate button icon (Testcases/Testsuites tables) - two overlapping
+// rounded rects, the standard "copy" glyph. stroke="currentColor" so it
+// matches every other icon-btn glyph: gray by default (.icon-btn's own
+// color:#888), lighter on hover (.icon-btn:hover's color:#eee).
+const DUPLICATE_ICON_SVG = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="9" y="9" width="12" height="12" rx="2"/>
+  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+</svg>`;
+
 document.addEventListener('click', (e) => {
   const btn = e.target.closest('.password-toggle');
   if (!btn) return;
@@ -689,6 +698,7 @@ function renderFleetIfaceBody(entry, cardState) {
     if (link.signal_dbm != null) rows.push(['Signal', `${link.signal_dbm} dBm`]);
     if (link.rx_bitrate_mbps != null) rows.push(['RX bitrate', `${link.rx_bitrate_mbps} Mbps`]);
     if (link.tx_bitrate_mbps != null) rows.push(['TX bitrate', `${link.tx_bitrate_mbps} Mbps`]);
+    if (link.gateway) rows.push(['Gateway', link.gateway]);
   }
   cardState.infoEl.innerHTML = rows.length
     ? `<table class="result-table">${rows.map(([k, v]) =>
@@ -697,6 +707,14 @@ function renderFleetIfaceBody(entry, cardState) {
     : '<div class="pi-log-empty">no data</div>';
 
   if (link && link.connected) {
+    if (link.gateway) {
+      cardState.infoEl.insertAdjacentHTML('beforeend',
+        '<div class="wifi-disconnect-row"><button type="button" class="ap-weblink-btn">AP Configuration</button></div>');
+      cardState.infoEl.querySelector('.ap-weblink-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        openApWebUi(cardState.piId, cardState.iface, e.currentTarget);
+      });
+    }
     cardState.infoEl.insertAdjacentHTML('beforeend',
       '<div class="wifi-disconnect-row"><button type="button" class="wifi-disconnect-btn">Disconnect</button></div>');
     cardState.infoEl.querySelector('.wifi-disconnect-btn').addEventListener('click', (e) => {
@@ -706,12 +724,107 @@ function renderFleetIfaceBody(entry, cardState) {
   }
 
   const isMonitor = details ? details.type === 'monitor' : isMonitorInterfaceName(cardState.iface);
+  // The mode toggle needs a trustworthy current mode (details.type, from
+  // list_interfaces - name-independent), not the isMonitorInterfaceName
+  // fallback, since a wifi-named interface can now legitimately be in
+  // monitor mode - so this button only appears once details are loaded.
+  if (details && (isWifiInterface(cardState.iface) || isMonitor)) {
+    const targetMode = isMonitor ? 'managed' : 'monitor';
+    cardState.infoEl.insertAdjacentHTML('beforeend',
+      `<div class="wifi-disconnect-row"><button type="button" class="iface-mode-switch-btn${isMonitor ? ' recording' : ''}">Monitor mode: ${isMonitor ? 'On' : 'Off'}</button></div>`);
+    cardState.infoEl.querySelector('.iface-mode-switch-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      switchFleetInterfaceMode(entry, cardState, e.currentTarget, targetMode);
+    });
+  }
+
   if (isWifiInterface(cardState.iface) || isMonitor) {
     const pi = pis.find(p => p.pi_id === cardState.piId);
     const current = (pi && pi.interface_defaults && pi.interface_defaults[cardState.iface]) || null;
     renderInterfaceDefaultControl(cardState.infoEl, cardState.piId, cardState.iface, current, (updated) => {
       if (pi) pi.interface_defaults = updated;
     }, isMonitor);
+  }
+}
+
+async function switchFleetInterfaceMode(entry, cardState, btn, targetMode) {
+  const piId = cardState.piId;
+  if (targetMode === 'monitor') {
+    const link = entry.linkInfoCache[cardState.iface];
+    if (link && link.connected &&
+        !confirm(`${cardState.iface} is currently connected. Switching to monitor mode will disconnect it. Continue?`)) {
+      return;
+    }
+  }
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  btn.textContent = 'Switching…';
+  try {
+    const res = await postCmd(piId, 'set_interface_mode', { interface: cardState.iface, mode: targetMode });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    const data = await res.json();
+    // NetworkManager re-taking/re-associating the device can take a while -
+    // same 3-minute allowance as connect_wifi, not the usual 30s.
+    const result = await awaitCommandResult(data.command_id, 180);
+    if (!result || !result.applied) {
+      alert(`Failed to switch ${cardState.iface} to ${targetMode} mode: ${(result && result.output) || 'unknown error'}`);
+      return;
+    }
+  } catch (err) {
+    alert(`Failed to switch mode: ${err.message}`);
+    return;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+  // Type/link state both just changed on the Pi - force a fresh read
+  // instead of showing stale cached details, same as disconnectFleetWifi.
+  entry.ifaceDetailsCache = null;
+  entry.ifaceDetailsPromise = null;
+  delete entry.linkInfoCache[cardState.iface];
+  await loadFleetIfaceInfo(piId, entry, cardState.iface);
+  renderFleetIfaceBody(entry, cardState);
+  refreshFleetWifiIcon(piId, entry, cardState);
+}
+
+// Shared by fleet-table.js and detail-page.js - starts (or extends the TTL
+// of) the Pi-side DNAT proxy for this interface's AP (see pi_agent's
+// start_ap_webui_proxy), then opens it in a new tab through the Pi's own
+// registered IP instead of the AP's gateway IP directly, since only the Pi
+// is actually on the AP's network.
+//
+// The tab is opened synchronously, before the async postCmd/awaitCommandResult
+// round-trip, and navigated afterward - opening it only after the command
+// resolves would happen outside the click's original user-gesture context,
+// which popup blockers treat as an unsolicited window.open and block.
+async function openApWebUi(piId, iface, btn) {
+  const win = window.open('', '_blank');
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  btn.textContent = 'Opening…';
+  try {
+    const res = await postCmd(piId, 'start_ap_webui_proxy', { interface: iface });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    const data = await res.json();
+    const result = await awaitCommandResult(data.command_id, 30);
+    if (!result || !result.applied) {
+      if (win) win.close();
+      alert(`Failed to open AP web UI: ${(result && result.error) || 'unknown error'}`);
+      return;
+    }
+    const pi = pis.find(p => p.pi_id === piId);
+    if (!pi || !pi.ip_address) {
+      if (win) win.close();
+      alert('This Pi has no known registered IP to proxy through.');
+      return;
+    }
+    if (win) win.location.href = `http://${pi.ip_address}:${result.port}`;
+  } catch (err) {
+    if (win) win.close();
+    alert(`Failed to open AP web UI: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
   }
 }
 
@@ -738,6 +851,54 @@ async function disconnectFleetWifi(cardState, btn) {
     entry.ifaceDetailsPromise = null;
     refreshFleetWifiIcon(piId, entry, cardState);
   }
+}
+
+// --- Buffered interface status (list_interfaces + link_info, continuously
+// refreshed server-side every INTERFACE_STATUS_INTERVAL_SECONDS by
+// pi_agent - see PiAgent._interface_status_loop and
+// routers/Pis.get_interface_status) - used for the fleet table's passive
+// periodic refresh below instead of firing a live command per interface
+// icon on every poll. A user-triggered action (connect/disconnect/mode
+// switch) still calls refreshFleetWifiIcon/loadFleetIfaceInfo directly for
+// its own instant live feedback - this is only the idle-refresh path.
+
+async function fetchInterfaceStatusBuffer(piId) {
+  try {
+    const res = await apiFetch(`${API}/pis/${encodeURIComponent(piId)}/interface-status`);
+    return res.ok ? await res.json() : [];
+  } catch {
+    return [];
+  }
+}
+
+function applyWifiIconStatus(cardState, status) {
+  if (!isWifiInterface(cardState.iface) || !cardState.wifiIconEl) return;
+  const connected = !!(status && status.connected);
+  cardState.wifiIconEl.classList.remove('wifi-unknown');
+  cardState.wifiIconEl.classList.add(connected ? 'wifi-connected' : 'wifi-disconnected');
+  cardState.wifiIconEl.title = connected ? `Wi-Fi connected${status.ssid ? ' — ' + status.ssid : ''}` : 'Wi-Fi not connected';
+  cardState.connectedMarkEl.classList.toggle('hidden', !connected);
+  if (connected) cardState.connectedMarkEl.textContent = status.ssid ? `connected — ${status.ssid}` : 'connected';
+}
+
+async function refreshFleetInterfaceStatusBuffer(piId, entry) {
+  const statusList = await fetchInterfaceStatusBuffer(piId);
+  if (!statusList.length) return;
+  entry.ifaceDetailsCache = statusList.map(s => ({
+    name: s.interface, mac_address: s.mac_address, state: s.state, type: s.type,
+    ip_address: s.ip_address, ipv6_address: s.ipv6_address,
+  }));
+  entry.ifaceDetailsPromise = null;
+  const byIface = new Map(statusList.map(s => [s.interface, s]));
+  entry.ifaceCards.forEach((cardState, iface) => {
+    const status = byIface.get(iface);
+    if (!status) return;
+    entry.linkInfoCache[iface] = status;
+    applyWifiIconStatus(cardState, status);
+    if (!cardState.card.querySelector('.pd-iface-body').classList.contains('hidden')) {
+      renderFleetIfaceBody(entry, cardState);
+    }
+  });
 }
 
 async function refreshFleetWifiIcon(piId, entry, cardState) {
@@ -798,6 +959,7 @@ function buildFleetIfaceCard(piId, entry, iface) {
       ${isWifi ? `
         <span class="wifi-icon wifi-unknown" title="checking…">${WIFI_ICON_SVG}</span>
         <span class="pd-iface-connected-mark badge badge-online hidden"></span>
+        <button type="button" class="pd-wifi-info-btn">Nearby Hotspot</button>
       ` : ''}
       <span class="pd-iface-toggle">${chevronIconSvg('right')}</span>
     </div>
@@ -865,6 +1027,14 @@ function buildFleetIfaceCard(piId, entry, iface) {
   checkboxEl.addEventListener('click', (e) => e.stopPropagation());
   checkboxEl.addEventListener('change', () => saveFleetPrimaryInterfaces(piId, entry));
 
+  const wifiInfoBtn = card.querySelector('.pd-wifi-info-btn');
+  if (wifiInfoBtn) {
+    wifiInfoBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openWifiInfoModal(piId, iface);
+    });
+  }
+
   card.querySelector('.pd-iface-header').addEventListener('click', () => toggleFleetIfaceCard(piId, entry, cardState));
 
   return cardState;
@@ -878,9 +1048,16 @@ function rebuildFleetIfaceCards(piId, entry, interfaces) {
   entry.ifaceCards = new Map();
   entry.ifacesListEl.innerHTML = '';
   interfaces.forEach(iface => {
-    const cardState = buildFleetIfaceCard(piId, entry, iface);
-    entry.ifaceCards.set(iface, cardState);
-    entry.ifacesListEl.appendChild(cardState.card);
+    // Isolated per-interface: one interface's card failing to build
+    // (unexpected data) shouldn't take every other interface on this same
+    // Pi down with it - same reasoning as renderPis's own per-Pi isolation.
+    try {
+      const cardState = buildFleetIfaceCard(piId, entry, iface);
+      entry.ifaceCards.set(iface, cardState);
+      entry.ifacesListEl.appendChild(cardState.card);
+    } catch (err) {
+      console.error(`[fleet] failed to build interface card for ${piId}/${iface}:`, err);
+    }
   });
 }
 
@@ -978,48 +1155,67 @@ function createPiRow(piId) {
   return entry;
 }
 
-let pisPollCount = 0;
-
 function renderPis() {
   const seen = new Set();
 
+  // Each Pi's update is isolated - an exception building/refreshing one
+  // Pi's row (e.g. unexpected interface data) used to propagate out of
+  // this whole forEach uncaught, silently aborting every Pi processed
+  // after it in the array too, for every 5s tick from then on. That read
+  // as "this one Pi's row is stuck" (its own update never got that far)
+  // while quietly breaking updates for other Pis as collateral damage.
   pis.forEach(p => {
-    seen.add(p.pi_id);
-    let entry = piRows.get(p.pi_id);
-    if (!entry) {
-      entry = createPiRow(p.pi_id);
-      piRows.set(p.pi_id, entry);
-      piTableBody.appendChild(entry.summaryRow);
-      piTableBody.appendChild(entry.ifacesRow);
-    }
-    entry.summaryRow.classList.toggle('selected', p.pi_id === selectedPiId);
-    entry.summaryRow.querySelector('.c-id-link').textContent = p.pi_id;
-    entry.summaryRow.querySelector('.c-ip').textContent = p.ip_address || '';
-    entry.summaryRow.querySelector('.c-role').textContent = p.role || '';
-    entry.summaryRow.querySelector('.c-status').innerHTML = statusBadge(p.status);
-    entry.summaryRow.querySelector('.c-seen').textContent = p.last_seen ? new Date(p.last_seen).toLocaleString() : '';
-    entry.summaryRow.querySelector('.pi-select-checkbox').checked = checkedPiIds.has(p.pi_id);
-
-    const interfaces = (p.metadata && Array.isArray(p.metadata.interfaces)) ? p.metadata.interfaces : [];
-    const key = JSON.stringify(interfaces);
-    if (entry.ifaceListKey !== key) {
-      entry.ifaceListKey = key;
-      entry.ifaceDetailsCache = null;
-      entry.ifaceDetailsPromise = null;
-      entry.linkInfoCache = {};
-      rebuildFleetIfaceCards(p.pi_id, entry, interfaces);
-    }
-
-    entry.ifaceCards.forEach((cardState, iface) => {
-      cardState.checkboxEl.checked = p.primary_interfaces.includes(iface);
-    });
-
-    if (pisPollCount % 3 === 0) {
-      entry.ifaceCards.forEach(cardState => refreshFleetWifiIcon(p.pi_id, entry, cardState));
+    try {
+      renderOnePiRow(p, seen);
+    } catch (err) {
+      console.error(`[fleet] failed to render Pi ${p.pi_id}:`, err);
     }
   });
-  pisPollCount++;
 
+  finishRenderPis(seen);
+}
+
+function renderOnePiRow(p, seen) {
+  seen.add(p.pi_id);
+  let entry = piRows.get(p.pi_id);
+  if (!entry) {
+    entry = createPiRow(p.pi_id);
+    piRows.set(p.pi_id, entry);
+    piTableBody.appendChild(entry.summaryRow);
+    piTableBody.appendChild(entry.ifacesRow);
+  }
+  entry.summaryRow.classList.toggle('selected', p.pi_id === selectedPiId);
+  entry.summaryRow.querySelector('.c-id-link').textContent = p.pi_id;
+  entry.summaryRow.querySelector('.c-ip').textContent = p.ip_address || '';
+  entry.summaryRow.querySelector('.c-role').textContent = p.role || '';
+  entry.summaryRow.querySelector('.c-status').innerHTML = statusBadge(p.status);
+  entry.summaryRow.querySelector('.c-seen').textContent = p.last_seen ? new Date(p.last_seen).toLocaleString() : '';
+  entry.summaryRow.querySelector('.pi-select-checkbox').checked = checkedPiIds.has(p.pi_id);
+
+  const interfaces = (p.metadata && Array.isArray(p.metadata.interfaces)) ? p.metadata.interfaces : [];
+  // Sorted before comparing - list_interfaces re-registration reflects
+  // `ip -o link show`'s current order, which can shift a same-named
+  // interface's position after a mode switch deletes and recreates its
+  // netdev (new ifindex). A pure reorder shouldn't blow away every
+  // interface card (and the wifi icon state just refreshed on it) - only
+  // an actual interface being added/removed should.
+  const key = JSON.stringify([...interfaces].sort());
+  if (entry.ifaceListKey !== key) {
+    entry.ifaceListKey = key;
+    entry.ifaceDetailsCache = null;
+    entry.ifaceDetailsPromise = null;
+    entry.linkInfoCache = {};
+    rebuildFleetIfaceCards(p.pi_id, entry, interfaces);
+  }
+
+  entry.ifaceCards.forEach((cardState, iface) => {
+    cardState.checkboxEl.checked = p.primary_interfaces.includes(iface);
+  });
+
+  if (entry.ifaceCards.size) refreshFleetInterfaceStatusBuffer(p.pi_id, entry);
+}
+
+function finishRenderPis(seen) {
   // Drop rows for Pis that disappeared, closing any open log socket.
   [...piRows.keys()].forEach(id => {
     if (seen.has(id)) return;
@@ -1035,6 +1231,7 @@ function renderPis() {
 
   if (typeof refreshInterfaceOptions === 'function') refreshInterfaceOptions();
   if (typeof refreshDetailView === 'function') refreshDetailView();
+  if (typeof refreshInterfacesTab === 'function') refreshInterfacesTab();
 }
 
 async function refreshPis() {

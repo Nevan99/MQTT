@@ -33,6 +33,8 @@
   <h1>Pi Fleet Controller</h1>
   <nav>
     <button class="tab active" data-view="fleet">Fleet</button>
+    <button class="tab" data-view="interfaces">Interfaces</button>
+    <button class="tab" data-view="testcases">Testcases</button>
     <button class="tab" data-view="captures">Captures</button>
     <button class="tab" data-view="history">History</button>
   </nav>
@@ -88,6 +90,200 @@
     <div id="cmdResults"></div>
   </div>
 </section>
+
+<section id="interfaces" class="view">
+  <div class="panel captures-panel">
+    <table class="wifi-info-table">
+      <thead>
+        <tr id="interfacesSortRow" class="table-sort-row">
+          <th data-key="pi_id">Pi ID</th><th data-key="interface">Interface</th><th data-key="state">State</th>
+          <th data-key="type">Type</th><th data-key="mac_address">MAC address</th><th data-key="ip_address">IP address</th>
+          <th data-key="connected">Wi-Fi connected</th><th data-key="ssid">SSID</th><th data-key="bssid">BSSID</th>
+          <th data-key="frequency_mhz">Frequency</th><th data-key="band">Band</th><th data-key="signal_dbm">Signal</th>
+          <th data-key="rx_bitrate_mbps">RX bitrate</th><th data-key="tx_bitrate_mbps">TX bitrate</th><th data-key="gateway">Gateway</th>
+        </tr>
+        <tr id="interfacesFilterRow" class="table-filter-row">
+          <th><input type="text" class="table-filter-input" data-key="pi_id" placeholder="Filter…"></th>
+          <th><input type="text" class="table-filter-input" data-key="interface" placeholder="Filter…"></th>
+          <th><input type="text" class="table-filter-input" data-key="state" placeholder="Filter…"></th>
+          <th><input type="text" class="table-filter-input" data-key="type" placeholder="Filter…"></th>
+          <th><input type="text" class="table-filter-input" data-key="mac_address" placeholder="Filter…"></th>
+          <th><input type="text" class="table-filter-input" data-key="ip_address" placeholder="Filter…"></th>
+          <th><input type="text" class="table-filter-input" data-key="connected" placeholder="Filter…"></th>
+          <th><input type="text" class="table-filter-input" data-key="ssid" placeholder="Filter…"></th>
+          <th><input type="text" class="table-filter-input" data-key="bssid" placeholder="Filter…"></th>
+          <th><input type="text" class="table-filter-input" data-key="frequency_mhz" placeholder="Filter…"></th>
+          <th><input type="text" class="table-filter-input" data-key="band" placeholder="Filter…"></th>
+          <th><input type="text" class="table-filter-input" data-key="signal_dbm" placeholder="Filter…"></th>
+          <th><input type="text" class="table-filter-input" data-key="rx_bitrate_mbps" placeholder="Filter…"></th>
+          <th><input type="text" class="table-filter-input" data-key="tx_bitrate_mbps" placeholder="Filter…"></th>
+          <th><input type="text" class="table-filter-input" data-key="gateway" placeholder="Filter…"></th>
+        </tr>
+      </thead>
+      <tbody id="interfacesTableBody"></tbody>
+    </table>
+  </div>
+</section>
+
+<section id="testcases" class="view">
+  <div id="tcListView">
+    <div class="panel captures-panel ts-list-panel">
+      <h3 style="margin: 0 0 0.5rem;">Testsuites</h3>
+      <div class="row" style="margin-bottom: 0.5rem; align-items: center; gap: 0.5rem;">
+        <input type="text" id="tsSearchInput" class="field" placeholder="Search…" style="flex: 1 1 auto;">
+        <button type="button" id="tsRunHistoryBtn" style="flex: 0 0 auto;">History</button>
+        <button type="button" id="tsNewBtn" style="flex: 0 0 auto;">+ New</button>
+      </div>
+      <input type="text" id="tsTagFilterInput" class="field" placeholder="Filter by tag" style="margin-bottom: 0.5rem;">
+      <table>
+        <thead>
+          <tr><th>Name</th><th>Testcases</th><th></th></tr>
+        </thead>
+        <tbody id="tsTableBody"></tbody>
+      </table>
+    </div>
+
+    <div class="panel captures-panel tc-list-panel">
+      <div class="row" style="margin-bottom: 0.5rem; align-items: center; gap: 0.5rem;">
+        <input type="text" id="tcSearchInput" class="field" placeholder="Search name/description…" style="flex: 1 1 auto;">
+        <input type="text" id="tcTagFilterInput" class="field" placeholder="Filter by tag" style="flex: 0 0 160px;">
+        <button type="button" id="tcRunHistoryBtn" style="flex: 0 0 auto;">Run History</button>
+        <button type="button" id="tcNewBtn" style="flex: 0 0 auto;">+ New Testcase</button>
+      </div>
+      <table>
+        <thead>
+          <tr><th>Name</th><th>Tags</th><th>Status</th><th>Steps</th><th>Author</th><th>Updated</th><th></th></tr>
+        </thead>
+        <tbody id="tcTableBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="tcRunView" class="panel captures-panel hidden">
+    <div class="row" style="align-items: center; margin-bottom: 0.75rem;">
+      <button type="button" id="tcRunBackBtn" style="flex: 0 0 auto;">&larr; Back</button>
+      <h2 id="tcRunTitle" style="margin: 0 0 0 0.75rem; font-size: 1rem; flex: 1 1 auto;"></h2>
+      <span id="tcRunStatus" class="cmd-status pending"></span>
+    </div>
+    <div id="tcRunSteps"></div>
+  </div>
+
+  <div id="tcRunHistoryView" class="panel captures-panel hidden">
+    <div class="row" style="align-items: center; margin-bottom: 0.75rem;">
+      <button type="button" id="tcRunHistoryBackBtn" style="flex: 0 0 auto;">&larr; Back</button>
+      <h2 style="margin: 0 0 0 0.75rem; font-size: 1rem;">Run History</h2>
+    </div>
+    <table>
+      <thead><tr><th>Testcase</th><th>Status</th><th>Started</th><th>Completed</th><th></th></tr></thead>
+      <tbody id="tcRunHistoryBody"></tbody>
+    </table>
+  </div>
+</section>
+
+<div id="tcEditorOverlay" class="wifi-info-overlay tc-editor-overlay hidden">
+  <div class="wifi-info-modal tc-editor-modal">
+    <div class="wifi-info-modal-header">
+      <span id="tcEditorTitle">New Testcase</span>
+      <span class="wifi-info-modal-status hint"></span>
+      <button type="button" class="icon-btn" id="tcEditorCloseBtn" title="Close">&times;</button>
+    </div>
+    <div class="wifi-info-modal-body">
+      <label>Name</label>
+      <input type="text" id="tcName" class="field">
+      <label>Description</label>
+      <textarea id="tcDescription" class="field" rows="2"></textarea>
+      <label>Tags (comma separated)</label>
+      <input type="text" id="tcTags" class="field" placeholder="e.g. wifi roaming, throughput">
+      <label>Author</label>
+      <input type="text" id="tcAuthor" class="field">
+      <div class="row" style="gap: 1.5rem; align-items: center; margin: 0.6rem 0;">
+        <label style="display: flex; align-items: center; gap: 0.35rem; margin: 0;">
+          <input type="checkbox" id="tcStopOnFailure" checked> Stop on failure
+        </label>
+        <label style="display: flex; align-items: center; gap: 0.35rem; margin: 0;">
+          Repeat whole testcase
+          <input type="number" id="tcRepeatCount" class="field" value="1" min="1" style="width: 4.5rem;">
+        </label>
+      </div>
+
+      <div class="row" style="justify-content: space-between; align-items: center; margin: 1rem 0 0.5rem;">
+        <h3 style="margin: 0;">Steps</h3>
+        <button type="button" id="tcAddStepBtn">+ Add step</button>
+      </div>
+      <div id="tcStepsList"></div>
+
+      <div class="row" style="margin-top: 1rem; gap: 0.5rem;">
+        <button type="button" id="tcSaveDraftBtn">Save Draft</button>
+        <button type="button" id="tcSaveRunBtn">Save &amp; Run</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="tsRunOverlay" class="wifi-info-overlay tc-editor-overlay hidden">
+  <div class="wifi-info-modal tc-editor-modal">
+    <div class="wifi-info-modal-header">
+      <span id="tsRunTitle"></span>
+      <span id="tsRunStatus" class="cmd-status pending"></span>
+      <button type="button" class="icon-btn" id="tsRunCloseBtn" title="Close">&times;</button>
+    </div>
+    <div class="wifi-info-modal-body">
+      <div id="tsRunTestcases"></div>
+    </div>
+  </div>
+</div>
+
+<div id="tsRunHistoryOverlay" class="wifi-info-overlay tc-editor-overlay hidden">
+  <div class="wifi-info-modal tc-editor-modal">
+    <div class="wifi-info-modal-header">
+      <span>Testsuite Run History</span>
+      <span class="wifi-info-modal-status hint"></span>
+      <button type="button" class="icon-btn" id="tsRunHistoryCloseBtn" title="Close">&times;</button>
+    </div>
+    <div class="wifi-info-modal-body">
+      <table>
+        <thead><tr><th>Testsuite</th><th>Status</th><th>Started</th><th>Completed</th><th></th></tr></thead>
+        <tbody id="tsRunHistoryBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div id="tsEditorOverlay" class="wifi-info-overlay tc-editor-overlay hidden">
+  <div class="wifi-info-modal tc-editor-modal">
+    <div class="wifi-info-modal-header">
+      <span id="tsEditorTitle">New Testsuite</span>
+      <span class="wifi-info-modal-status hint"></span>
+      <button type="button" class="icon-btn" id="tsEditorCloseBtn" title="Close">&times;</button>
+    </div>
+    <div class="wifi-info-modal-body">
+      <label>Name</label>
+      <input type="text" id="tsName" class="field">
+      <label>Description</label>
+      <textarea id="tsDescription" class="field" rows="2"></textarea>
+      <label>Tags (comma separated)</label>
+      <input type="text" id="tsTags" class="field" placeholder="e.g. regression, nightly">
+      <label>Author</label>
+      <input type="text" id="tsAuthor" class="field">
+      <label style="display: flex; align-items: center; gap: 0.35rem; margin: 0.6rem 0;">
+        <input type="checkbox" id="tsStopOnFailure" checked> Stop on failure (skip remaining testcases once one fails)
+      </label>
+
+      <h3 style="margin: 1rem 0 0.5rem;">Testcases in this suite</h3>
+      <div id="tsSelectedList" class="ts-picker-list"></div>
+
+      <h3 style="margin: 1rem 0 0.5rem;">Available testcases</h3>
+      <div class="hint" style="margin: -0.25rem 0 0.5rem;">Picked from every testcase that exists, including ones already used in other testsuites - adding one here doesn't remove it from anywhere else.</div>
+      <input type="text" id="tsAvailableSearchInput" class="field" placeholder="Search available testcases…" style="margin-bottom: 0.5rem;">
+      <div id="tsAvailableList" class="ts-picker-list"></div>
+
+      <div class="row" style="margin-top: 1rem; gap: 0.5rem;">
+        <button type="button" id="tsSaveBtn">Save</button>
+        <button type="button" id="tsSaveRunBtn">Save &amp; Run</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <section id="captures" class="view">
   <div class="panel captures-panel">
@@ -223,10 +419,14 @@
 <script src="js/auth.js"></script>
 <script src="js/layout.js"></script>
 <script src="js/fleet-table.js"></script>
+<script src="js/interfaces-tab.js"></script>
 <script src="js/captures.js"></script>
 <script src="js/history.js"></script>
 <script src="js/command-builder.js"></script>
+<script src="js/testcases-tab.js"></script>
+<script src="js/testsuites-tab.js"></script>
 <script src="js/wifi-scan.js"></script>
+<script src="js/wifi-info-modal.js"></script>
 <script src="js/log-rendering.js"></script>
 <script src="js/wireshark-table.js"></script>
 <script src="js/detail-page.js"></script>

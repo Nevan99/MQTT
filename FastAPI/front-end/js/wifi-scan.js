@@ -220,9 +220,10 @@ async function pollCommand(commandId, entry, piId, action) {
         // The dedicated Wifi Scan card's own Connect button refreshes the
         // fleet icon right away (see renderMergedWifiNetworkCard); a
         // connect_wifi/disconnect_wifi sent from this generic Action panel
-        // otherwise only picks up the new state on the next ~15s poll (see
-        // pisPollCount in fleet-table.js), which reads as the icon never
-        // turning green at all if the user isn't still watching by then.
+        // otherwise only picks up the new state on the next ~5s buffered
+        // refresh (see refreshFleetInterfaceStatusBuffer in fleet-table.js),
+        // which reads as the icon never turning green at all if the user
+        // isn't still watching by then.
         if (data.status === 'complete' && WIFI_CONNECTED_ACTIONS.has(action) && data.result?.interface) {
           const entry = piRows.get(piId);
           const cardState = entry && entry.ifaceCards.get(data.result.interface);

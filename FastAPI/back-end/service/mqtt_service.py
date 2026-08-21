@@ -8,20 +8,13 @@ from dotenv import load_dotenv
 from sqlmodel import select
 
 from database.database import get_session_direct
-from database.models import Pi, LogEntry, Command
+from database.models import Pi, Command, WifiScanHistory, InterfaceStatus
 from src.connection_manager import manager
 
 load_dotenv()
 
 MQTT_BROKER_HOST = os.environ["MQTT_BROKER_HOST"]
 MQTT_BROKER_PORT = int(os.environ["MQTT_BROKER_PORT"])
-
-# Live-only categories: relayed to the browser over WebSocket for on-page
-# monitoring but never persisted. Both are high-volume streams, and captures
-# are now built purely from what the browser saw live while "Start Capture"
-# was armed, rather than replayed out of a DB history window - so nothing
-# here needs to survive past the WebSocket relay.
-NO_LOG_CATEGORIES = {"tcpdump", "logs"}
 
 # link_info is polled constantly (wifi status icons, connected marks,
 # interface detail cards, wifi scan "connected" checks - all over the fleet
@@ -30,7 +23,7 @@ NO_LOG_CATEGORIES = {"tcpdump", "logs"}
 # history and the DB with rows nobody ever wants to see or keep - so these
 # are tracked purely in memory, correlated by command_id the same way, but
 # never written to the database or surfaced by GET /commands.
-TRANSIENT_ACTIONS = {"link_info"}
+TRANSIENT_ACTIONS = {"link_info", "wifi_detail_scan", "interface_status"}
 
 # How long a transient command's result stays available for polling before
 # being pruned - comfortably longer than the ~1s poll interval the frontend
@@ -98,8 +91,6 @@ class MQTTService:
             elif category == "result":
                 self._update_command_result(session, pi_id, payload)
 
-            if category not in NO_LOG_CATEGORIES:
-                session.add(LogEntry(pi_id=pi_id, category=category, payload_json=json.dumps(payload)))
             session.commit()
 
         # Relay to any connected browsers - schedule onto the asyncio loop
@@ -138,6 +129,10 @@ class MQTTService:
         command_id = payload.get("command_id")
         if not command_id:
             return
+        if payload.get("action") == "wifi_detail_scan":
+            self._update_wifi_scan_history(session, pi_id, payload)
+        elif payload.get("action") == "interface_status":
+            self._update_interface_status(session, pi_id, payload)
         transient = self._transient_commands.get(command_id)
         if transient is not None:
             transient["status"] = "failed" if "error" in payload else "complete"
@@ -151,6 +146,69 @@ class MQTTService:
         command.result_json = json.dumps(payload)
         command.completed_at = datetime.now(timezone.utc)
         session.add(command)
+
+    def _update_wifi_scan_history(self, session, pi_id: str, payload: dict):
+        """Rolls each network in a wifi_detail_scan result into
+        WifiScanHistory - see that model for why. Runs even for a scan
+        result that ends up failing to correlate to any live command/
+        transient entry (e.g. after a page reload), since the history table
+        has no such timing dependency."""
+        interface = payload.get("interface")
+        networks = payload.get("networks")
+        if not interface or not networks:
+            return
+        now = datetime.now(timezone.utc)
+        for net in networks:
+            bssid = net.get("bssid")
+            if not bssid:
+                continue
+            row = session.exec(
+                select(WifiScanHistory).where(
+                    WifiScanHistory.pi_id == pi_id,
+                    WifiScanHistory.interface == interface,
+                    WifiScanHistory.bssid == bssid,
+                )
+            ).first()
+            if row is None:
+                row = WifiScanHistory(
+                    pi_id=pi_id, interface=interface, bssid=bssid, first_seen=now,
+                )
+            row.ssid = net.get("ssid") or row.ssid
+            row.last_seen = now
+            row.detection_count += 1
+            quality = net.get("signal_quality_percent")
+            if quality is not None:
+                row.min_signal_percent = quality if row.min_signal_percent is None else min(row.min_signal_percent, quality)
+                row.max_signal_percent = quality if row.max_signal_percent is None else max(row.max_signal_percent, quality)
+                row.signal_sum += quality
+            row.last_result_json = json.dumps(net)
+            session.add(row)
+
+    def _update_interface_status(self, session, pi_id: str, payload: dict):
+        """Upserts one InterfaceStatus row per (pi_id, interface) - see that
+        model for why. Ignores an error result for an interface (e.g. a wifi
+        lock held by an in-progress connect_wifi at the moment
+        PiAgent._publish_interface_status ran) rather than overwriting a
+        previously-good row with error/missing fields."""
+        interface = payload.get("interface")
+        if not interface or "error" in payload:
+            return
+        row = session.exec(
+            select(InterfaceStatus).where(
+                InterfaceStatus.pi_id == pi_id, InterfaceStatus.interface == interface,
+            )
+        ).first()
+        if row is None:
+            row = InterfaceStatus(pi_id=pi_id, interface=interface)
+        for field in (
+            "mac_address", "state", "type", "ip_address", "ipv6_address",
+            "connected", "ssid", "bssid", "frequency_mhz", "band",
+            "signal_dbm", "rx_bitrate_mbps", "tx_bitrate_mbps", "gateway",
+        ):
+            if field in payload:
+                setattr(row, field, payload[field])
+        row.updated_at = datetime.now(timezone.utc)
+        session.add(row)
 
     # --- transient (non-persisted) commands -----------------------------
 

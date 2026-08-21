@@ -45,12 +45,6 @@ function formatPacketTime(iso) {
 
 const PACKET_TABLE_PROTO_CLASSES = new Set(['tcp', 'udp', 'arp', 'icmp']);
 
-// Per-table state, keyed by <tbody>. Mirrors Wireshark's own behavior:
-// scrolling away from the bottom to inspect a packet pauses the live view
-// entirely (new packets buffer in `pending` instead of touching the DOM,
-// and the visible 500-row cap stops pruning) so nothing shifts under you
-// or gets deleted out from under your cursor; scrolling back to the
-// bottom (or clicking Resume) flushes whatever arrived while paused.
 const packetTableQueues = new WeakMap();
 
 function getPacketTableState(tbody) {
@@ -66,19 +60,6 @@ function getPacketTableState(tbody) {
   return state;
 }
 
-// A single shared margin, deliberately NOT split into a wider "resume"
-// margin and a tighter "pause" margin - that was tried and actively broke
-// pausing: setting scrollTop (even just once) queues the browser's own
-// native 'scroll' event asynchronously, in addition to any listener-driven
-// checks, so the handler below re-evaluates the SAME resting position more
-// than once. With resume's margin wider than pause's, any distance in the
-// overlap (was 40-150px) reads as "paused" on the first evaluation and
-// "close enough to resume" on the very next one at that identical spot -
-// so it pauses and immediately un-pauses again, repeatedly, on every
-// scroll event through that range. A live scroll gesture crosses that
-// whole range on its way further out, so this fired constantly - "slight
-// pause, then it runs again" on every attempt. One shared margin, applied
-// the same way in both directions, can't produce that overlap.
 const SCROLL_BOTTOM_MARGIN_PX = 60;
 
 function isScrolledNearBottom(scrollEl, marginPx = SCROLL_BOTTOM_MARGIN_PX) {
@@ -110,11 +91,6 @@ function resumeLiveCapture(tbody) {
   if (state.scrollEl) state.scrollEl.scrollTop = state.scrollEl.scrollHeight;
 }
 
-// Wires up the scroll-to-pause behavior, the Resume button, and
-// click-a-row-for-details - called once per tcpdump panel when its table
-// markup is built (fleet: fresh element per card; detail page: same
-// static element every Pi visit, so this uses property assignment
-// throughout instead of addEventListener to avoid piling up listeners).
 function setupWiresharkTable(panel) {
   const tbody = panel.querySelector('tbody');
   const scrollEl = panel.querySelector('.wireshark-table-scroll');
@@ -139,15 +115,6 @@ function setupWiresharkTable(panel) {
     };
   }
 
-  // Scrolling more than SCROLL_BOTTOM_MARGIN_PX away from the bottom
-  // pauses live capture (new packets go into state.pending instead of the
-  // DOM, so nothing shifts under the row you're reading); scrolling back
-  // within that same margin, or clicking Resume, picks it back up and
-  // flushes whatever queued up while paused. One shared margin for both
-  // directions - see SCROLL_BOTTOM_MARGIN_PX's comment for why splitting
-  // this into two different thresholds actively broke pausing. Shared by
-  // both the fleet table's inline cards and the single-Pi detail page -
-  // one fix here covers both.
   scrollEl.onscroll = () => {
     if (isScrolledNearBottom(scrollEl)) {
       if (state.paused) resumeLiveCapture(tbody);
@@ -287,11 +254,6 @@ function buildPacketRow(no, payload, filterQuery) {
   return tr;
 }
 
-// Same queue-and-flush-on-next-frame pattern as appendLineTo/flushLineQueue,
-// just building <tr> packet rows into a <tbody> instead of <div> lines -
-// batches a burst of packets into one DOM write instead of one per packet.
-// While paused (user scrolled up), packets go to `pending` instead - see
-// resumeLiveCapture.
 function appendPacketRow(tbody, payload) {
   const state = getPacketTableState(tbody);
   if (state.paused) {
@@ -313,14 +275,6 @@ function flushPacketQueue(tbody, state) {
   state.queue = [];
   if (!items.length) return;
 
-  // A packet can get queued (and its rAF scheduled) a moment before the
-  // user scrolls away and pauses - appendPacketRow only checks
-  // state.paused at arrival time, not at flush time. Without this
-  // re-check, that already-queued packet would still land in the DOM and,
-  // worse, force the scrollbar straight back to the bottom on line below,
-  // undoing the pause the instant it was set. Route it into `pending`
-  // instead, exactly like appendPacketRow would have if paused had been
-  // set a moment earlier.
   if (state.paused) {
     state.pending.push(...items);
     if (state.pending.length > 2000) state.pending.splice(0, state.pending.length - 2000);
@@ -341,27 +295,11 @@ function flushPacketQueue(tbody, state) {
   if (state.scrollEl) state.scrollEl.scrollTop = state.scrollEl.scrollHeight;
 }
 
-// Wipes a tcpdump panel's packet table back to empty (used by Clear and by
-// the initial "waiting for messages" reset) instead of clobbering the
-// table markup itself the way the plain-text log panels get reset.
 function resetLogPanel(panel, spec) {
   if (spec.kind === 'tcpdump') {
     const tbody = panel.querySelector('tbody');
     if (tbody) {
       tbody.innerHTML = '';
-      // Reset the EXISTING state object's fields in place rather than
-      // packetTableQueues.delete(tbody) - deleting it orphaned every
-      // closure setupWiresharkTable wired (scroll pause/resume,
-      // click-to-detail, the filter input), which all captured that one
-      // object by reference and are never rewired again (resetLogPanel
-      // doesn't re-call setupWiresharkTable). Any call here that happens
-      // after initial setup - Clear, or switching the tcpdump interface -
-      // would leave those handlers updating a dead object while every
-      // subsequent packet went through a brand-new, disconnected one from
-      // getPacketTableState: pausing silently stopped affecting live
-      // capture, clicking a row tried to render into a null detailBody,
-      // and new packets stopped picking up the active filterQuery even
-      // though old rows stayed correctly filtered.
       const state = getPacketTableState(tbody);
       state.queue = [];
       state.scheduled = false;
@@ -383,12 +321,6 @@ function resetLogPanel(panel, spec) {
     if (filterInput) filterInput.value = '';
   } else {
     panel.innerHTML = '<div class="pi-log-empty">waiting for messages…</div>';
-    // Mirrors the tcpdump branch's packetTableQueues.delete(tbody) above -
-    // linePanelQueues holds `pinned`, keyed by this same persistent panel
-    // element (reused across every Pi visit). Without clearing it here,
-    // scrolling away from the bottom once, on any Pi, at any point in the
-    // session, would permanently stick every future stream at wherever
-    // that scroll landed - nothing else ever resets it back to true.
     linePanelQueues.delete(panel);
   }
 }

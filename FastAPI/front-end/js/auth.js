@@ -98,11 +98,13 @@ if (authToken) {
 }
 const tabs = document.querySelectorAll('nav .tab');
 const views = document.querySelectorAll('.view');
+// A tab click only ever changes the URL hash - routeApp (detail-page.js),
+// driven by the resulting hashchange, is what actually shows/hides views.
+// That's what makes a reload land back on whatever tab (or Pi detail page)
+// was open, and the browser Back/Forward buttons step between them - a
+// plain classList toggle here (the old behavior) did neither, since it
+// left no trace in the URL/history for a reload or Back to recover.
 tabs.forEach(btn => btn.addEventListener('click', () => {
-  if (location.hash) location.hash = '';
-  tabs.forEach(b => b.classList.remove('active'));
-  views.forEach(v => v.classList.remove('active'));
-  btn.classList.add('active');
-  document.getElementById(btn.dataset.view).classList.add('active');
+  location.hash = `#${btn.dataset.view}`;
 }));
 

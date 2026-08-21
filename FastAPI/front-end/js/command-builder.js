@@ -14,7 +14,10 @@ const ACTION_PARAMS = {
   signal_stats: [],
   band_channel_info: [{ name: 'interface', label: 'Interface', type: 'interface', required: true }],
   link_info: [{ name: 'interface', label: 'Interface', type: 'interface', required: true }],
-  throughput_test: [{ name: 'duration', label: 'Duration (s)', type: 'number', default: 10 }],
+  throughput_test: [
+    { name: 'interface', label: 'Interface (optional - default route if omitted)', type: 'interface' },
+    { name: 'duration', label: 'Duration (s)', type: 'number', default: 10 },
+  ],
   set_channel: [{ name: 'channel', label: 'Channel', type: 'number' }],
   syslog: [{ name: 'lines', label: 'Lines', type: 'number', default: 100 }],
   stream_logs: [{ name: 'interface', label: 'Interface', type: 'interface', required: true }],
@@ -37,6 +40,16 @@ const ACTION_PARAMS = {
   set_monitor_channel: [
     { name: 'interface', label: 'Interface', type: 'interface', required: true },
     { name: 'channel', label: 'Channel', type: 'number', required: true },
+  ],
+  // Switches an interface in place between managed and monitor mode (via
+  // `iw ... set type` on the Pi - see pi_agent.set_interface_mode), instead
+  // of the old permanent separate monitor interface per phy.
+  set_interface_mode: [
+    { name: 'interface', label: 'Interface', type: 'interface', required: true },
+    {
+      name: 'mode', label: 'Mode', type: 'select',
+      options: [{ value: 'monitor', label: 'monitor' }, { value: 'managed', label: 'managed' }],
+    },
   ],
   // Not a real Pi-agent action - see applySetInterfaceDefaults below. Applies
   // to every wifi interface of whichever Pi(s) Target resolves to, so no

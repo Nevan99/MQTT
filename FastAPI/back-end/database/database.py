@@ -42,6 +42,12 @@ def _add_missing_columns():
             conn.execute(text("UPDATE pi SET interface_defaults_json = '{}' WHERE interface_defaults_json IS NULL"))
             conn.commit()
 
+        wifi_history_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(wifiscanhistory)"))}
+        if wifi_history_cols and "last_result_json" not in wifi_history_cols:
+            conn.execute(text("ALTER TABLE wifiscanhistory ADD COLUMN last_result_json VARCHAR DEFAULT '{}'"))
+            conn.execute(text("UPDATE wifiscanhistory SET last_result_json = '{}' WHERE last_result_json IS NULL"))
+            conn.commit()
+
 
 def get_session():
     with Session(engine) as session:

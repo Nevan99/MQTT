@@ -46,27 +46,25 @@ password, the agent process itself runs as root via systemd (see below).
 
 This copies `pi-agent.service` to `/etc/systemd/system/`, reloads systemd,
 enables it (so it runs as root and starts on boot and on failure), and
-restarts it so it's running the current code. It also installs and enables
-`pi-monitor-setup.service`, a oneshot unit that runs `setup-monitor-interfaces.sh`
-before `pi-agent.service` starts on every boot - see below.
+restarts it so it's running the current code.
 
 Requires `.env` to already exist in this directory — `load_dotenv()` finds
 it via the service's `WorkingDirectory`.
 
 ### Monitor-mode interfaces
 
-`setup-monitor-interfaces.sh` creates one monitor-mode interface per wifi
-radio (phy), on every phy except `phy0` - `phy0` is left managed-only (it's
-the Pi's primary radio, `wlan0` in the fleet's actual layout), while every
-other phy ends up with both its existing managed interface *and* a new
-monitor one (named `mon<phy number>`, e.g. `mon1` on `phy1`), matching how
-`phy1`/`wlan1`/`mon1` is already wired up on the fleet today. It's idempotent
-(skips a phy that already has a monitor interface) and safe to re-run.
+There's no boot-time setup for this anymore — an interface's mode (managed
+vs monitor) is switched at runtime, in place, via the `set_interface_mode`
+action (`{"action": "set_interface_mode", "params": {"interface": "wlan1",
+"mode": "monitor"}}`), exposed as a toggle button per interface in the fleet
+UI. This replaces the old approach of a permanent, separate `monN` interface
+created per phy at boot: `set_interface_mode` flips the *same* interface
+in place via `iw dev <iface> set type <mode>` (handing it to/back from
+NetworkManager as needed), so `wlan1` itself becomes the monitor interface
+when needed instead of always keeping a second `mon1` around.
 
-It has to run on every boot, not just once at install time - interfaces
-created via `iw ... interface add` don't survive a reboot, so
-`pi-monitor-setup.service` (installed by `install.sh`) recreates them before
-`pi-agent.service` starts, every time.
+If this Pi still has `pi-monitor-setup.service` installed from before this
+change, disable it once: `sudo systemctl disable --now pi-monitor-setup.service`.
 
 **Re-run `./install.sh` any time you edit `Pi_agent.py`, `.env`, or
 `pi-agent.service`** — it always restarts the service at the end, so the

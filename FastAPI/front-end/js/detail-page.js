@@ -216,6 +216,50 @@ async function refreshWifiIcon(piId, iface) {
   }
 }
 
+// --- Buffered interface status (same InterfaceStatus buffer the fleet
+// table's refreshFleetInterfaceStatusBuffer reads - continuously refreshed
+// server-side every INTERFACE_STATUS_INTERVAL_SECONDS by pi_agent, see
+// PiAgent._interface_status_loop). refreshDetailView (below) calls this on
+// every 5s poll so wifi icons/connected-marks/interface info here stay
+// current without a per-interface list_interfaces/link_info round-trip on
+// every tick - unlike the eager one-shot load on page open (which still
+// uses live commands, via loadDetailIfaceInfo/refreshWifiIcon, so a fresh
+// page open doesn't have to wait on the buffer's first fill), and unlike a
+// user-triggered action, which still calls refreshWifiIcon directly for its
+// own instant feedback.
+async function refreshDetailInterfaceStatusBuffer(piId) {
+  let statusList;
+  try {
+    const res = await apiFetch(`${API}/pis/${encodeURIComponent(piId)}/interface-status`);
+    statusList = res.ok ? await res.json() : [];
+  } catch {
+    statusList = [];
+  }
+  if (!statusList.length || piId !== detailPiId) return;
+  detailIfaceDetailsCache = statusList.map(s => ({
+    name: s.interface, mac_address: s.mac_address, state: s.state, type: s.type,
+    ip_address: s.ip_address, ipv6_address: s.ipv6_address,
+  }));
+  statusList.forEach(status => {
+    const iface = status.interface;
+    detailLinkInfoCache[iface] = status;
+    const el = document.querySelector(`#pdInterfaceList .wifi-icon[data-iface="${CSS.escape(iface)}"]`);
+    if (!el) return;
+    const connected = !!status.connected;
+    el.classList.remove('wifi-unknown');
+    el.classList.add(connected ? 'wifi-connected' : 'wifi-disconnected');
+    el.title = connected ? `Wi-Fi connected${status.ssid ? ' — ' + status.ssid : ''}` : 'Wi-Fi not connected';
+    const card = el.closest('.pd-iface-card');
+    const mark = card && card.querySelector('.pd-iface-connected-mark');
+    if (mark) {
+      mark.classList.toggle('hidden', !connected);
+      if (connected) mark.textContent = status.ssid ? `connected — ${status.ssid}` : 'connected';
+    }
+    const body = card && card.querySelector('.pd-iface-body');
+    if (body && !body.classList.contains('hidden')) renderDetailIfaceBody(body, iface);
+  });
+}
+
 // Only ever touches the '.pd-iface-info' sub-div, not the whole card body -
 // the wifi scan section (button + scanned-network cards) lives in a sibling
 // div so a link_info refresh here doesn't wipe out an in-progress scan.
@@ -239,6 +283,7 @@ function renderDetailIfaceBody(body, name) {
     if (link.signal_dbm != null) rows.push(['Signal', `${link.signal_dbm} dBm`]);
     if (link.rx_bitrate_mbps != null) rows.push(['RX bitrate', `${link.rx_bitrate_mbps} Mbps`]);
     if (link.tx_bitrate_mbps != null) rows.push(['TX bitrate', `${link.tx_bitrate_mbps} Mbps`]);
+    if (link.gateway) rows.push(['Gateway', link.gateway]);
   }
   info.innerHTML = rows.length
     ? `<table class="result-table">${rows.map(([k, v]) =>
@@ -247,6 +292,14 @@ function renderDetailIfaceBody(body, name) {
     : '<div class="pi-log-empty">no data</div>';
 
   if (link && link.connected) {
+    if (link.gateway) {
+      info.insertAdjacentHTML('beforeend',
+        '<div class="wifi-disconnect-row"><button type="button" class="ap-weblink-btn">AP Configuration</button></div>');
+      info.querySelector('.ap-weblink-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        openApWebUi(detailPiId, name, e.currentTarget);
+      });
+    }
     info.insertAdjacentHTML('beforeend',
       '<div class="wifi-disconnect-row"><button type="button" class="wifi-disconnect-btn">Disconnect</button></div>');
     info.querySelector('.wifi-disconnect-btn').addEventListener('click', (e) => {
@@ -256,6 +309,20 @@ function renderDetailIfaceBody(body, name) {
   }
 
   const isMonitor = details ? details.type === 'monitor' : isMonitorInterfaceName(name);
+  // Needs a trustworthy current mode (details.type, from list_interfaces -
+  // name-independent), not the isMonitorInterfaceName fallback, since a
+  // wifi-named interface can now legitimately be in monitor mode - so this
+  // button only appears once details are loaded.
+  if (details && (isWifiInterface(name) || isMonitor) && detailPiId) {
+    const targetMode = isMonitor ? 'managed' : 'monitor';
+    info.insertAdjacentHTML('beforeend',
+      `<div class="wifi-disconnect-row"><button type="button" class="iface-mode-switch-btn${isMonitor ? ' recording' : ''}">Monitor mode: ${isMonitor ? 'On' : 'Off'}</button></div>`);
+    info.querySelector('.iface-mode-switch-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      switchDetailInterfaceMode(name, e.currentTarget, targetMode);
+    });
+  }
+
   if ((isWifiInterface(name) || isMonitor) && detailPiId) {
     const pi = pis.find(p => p.pi_id === detailPiId);
     const current = (pi && pi.interface_defaults && pi.interface_defaults[name]) || null;
@@ -263,6 +330,45 @@ function renderDetailIfaceBody(body, name) {
       if (pi) pi.interface_defaults = updated;
     }, isMonitor);
   }
+}
+
+async function switchDetailInterfaceMode(iface, btn, targetMode) {
+  const piId = detailPiId;
+  if (targetMode === 'monitor') {
+    const link = detailLinkInfoCache[iface];
+    if (link && link.connected &&
+        !confirm(`${iface} is currently connected. Switching to monitor mode will disconnect it. Continue?`)) {
+      return;
+    }
+  }
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  btn.textContent = 'Switching…';
+  try {
+    const res = await postCmd(piId, 'set_interface_mode', { interface: iface, mode: targetMode });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    const data = await res.json();
+    // NetworkManager re-taking/re-associating the device can take a while -
+    // same 3-minute allowance as connect_wifi, not the usual 30s.
+    const result = await awaitCommandResult(data.command_id, 180);
+    if (!result || !result.applied) {
+      alert(`Failed to switch ${iface} to ${targetMode} mode: ${(result && result.output) || 'unknown error'}`);
+      return;
+    }
+  } catch (err) {
+    alert(`Failed to switch mode: ${err.message}`);
+    return;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+  delete detailLinkInfoCache[iface];
+  detailIfaceDetailsCache = null;
+  detailIfaceDetailsPromise = null;
+  await loadDetailIfaceInfo(piId, iface);
+  const body = btn.closest('.pd-iface-body');
+  if (body) renderDetailIfaceBody(body, iface);
+  refreshWifiIcon(piId, iface);
 }
 
 // Disconnects one interface directly from its own card (no need to go
@@ -607,6 +713,7 @@ function renderDetailInterfaceList(piId) {
         ${isWifiInterface(name) ? `
           <span class="wifi-icon wifi-unknown" data-iface="${name}" title="checking…">${WIFI_ICON_SVG}</span>
           <span class="pd-iface-connected-mark badge badge-online hidden" data-iface="${name}"></span>
+          <button type="button" class="pd-wifi-info-btn" data-iface="${name}">Nearby Hotspot</button>
         ` : ''}
         <span class="pd-iface-toggle">${chevronIconSvg('right')}</span>
       </div>
@@ -632,6 +739,13 @@ function renderDetailInterfaceList(piId) {
   list.querySelectorAll('.pd-iface-card').forEach(card => {
     const name = card.dataset.iface;
     card.querySelector('.pd-iface-header').addEventListener('click', () => toggleDetailIfaceCard(piId, card, name));
+  });
+
+  list.querySelectorAll('.pd-wifi-info-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openWifiInfoModal(piId, btn.dataset.iface);
+    });
   });
 
   list.querySelectorAll('.pd-scan-wifi-toggle').forEach(btn => {
@@ -809,9 +923,14 @@ function closeDetailLogEntry() {
 function refreshDetailView() {
   if (!detailPiId || !document.getElementById('piDetail').classList.contains('active')) return;
   renderDetailInfo(detailPiId);
+  refreshDetailInterfaceStatusBuffer(detailPiId);
 
   const interfaces = piInterfaces(detailPiId);
-  const key = JSON.stringify(interfaces);
+  // Sorted before comparing - see the matching comment in fleet-table.js's
+  // renderPis: a mode switch's delete+recreate can reorder this list
+  // without actually adding/removing anything, and a pure reorder shouldn't
+  // rebuild every interface card (resetting wifi icon state etc).
+  const key = JSON.stringify([...interfaces].sort());
   if (key === lastDetailInterfacesKey) return;
   lastDetailInterfacesKey = key;
 
@@ -825,6 +944,15 @@ function refreshDetailView() {
 
 function showPiDetail(piId) {
   closeDetailLogEntry();
+  closeWifiInfoModal();
+  // Bypasses showTabView/its "tabshown" event (this isn't a tab), so every
+  // testcase/testsuite popup (see testcases-tab.js, testsuites-tab.js)
+  // needs its own explicit close here too, the same reason
+  // closeWifiInfoModal is called above.
+  if (typeof closeTcEditorModal === 'function') closeTcEditorModal();
+  if (typeof closeTsEditorModal === 'function') closeTsEditorModal();
+  if (typeof closeTsRunModal === 'function') closeTsRunModal();
+  if (typeof closeTsRunHistoryModal === 'function') closeTsRunHistoryModal();
   detailPiId = piId;
   lastDetailInterfacesKey = null;
   detailIfaceDetailsCache = null;
@@ -849,27 +977,59 @@ function showPiDetail(piId) {
   );
 }
 
-function showFleetView() {
+// Every top-level tab's data-view value doubles as its URL hash (see the
+// tab click handler in auth.js) and its section id (index.html) - this is
+// the one place both meanings have to agree, so it's read from the tabs
+// themselves rather than hardcoded, in case a tab's data-view ever changes.
+const KNOWN_VIEWS = [...tabs].map(b => b.dataset.view);
+
+function showTabView(viewId) {
   closeDetailLogEntry();
+  closeWifiInfoModal();
   detailPiId = null;
   document.getElementById('piDetail').classList.remove('active');
   tabs.forEach(b => b.classList.remove('active'));
   views.forEach(v => v.classList.remove('active'));
-  tabs[0].classList.add('active');
-  document.getElementById('fleet').classList.add('active');
+  const tabBtn = [...tabs].find(b => b.dataset.view === viewId);
+  if (tabBtn) tabBtn.classList.add('active');
+  document.getElementById(viewId).classList.add('active');
+  // Lets a tab's own script (e.g. interfaces-tab.js, testcases-tab.js) do
+  // an immediate data refresh whenever it becomes the visible view -
+  // covers a reload landing directly on that tab's hash and Back/Forward
+  // navigating into it, not just a literal click on its button (which a
+  // listener on the tab element itself would miss both of).
+  document.dispatchEvent(new CustomEvent('tabshown', { detail: { viewId } }));
 }
 
 document.getElementById('piDetailBack').addEventListener('click', () => {
-  location.hash = '';
+  location.hash = '#fleet';
 });
 
-function routeDetail() {
-  const m = location.hash.match(/^#pi\/(.+)$/);
-  if (m) showPiDetail(decodeURIComponent(m[1]));
-  else showFleetView();
+// Single router for the whole app - every tab (Fleet/Interfaces/Testcases/
+// Captures/History) and the Pi detail page are all just states of the URL
+// hash, restored here on load (so a reload lands back where it was, not
+// always on Fleet) and on every hashchange (so Back/Forward step through
+// them, since location.hash = '#...' pushes a real history entry - see the
+// tab click handler and fleet-table.js's #pi/<id> links).
+function routeApp() {
+  const hash = location.hash.slice(1);
+  const piMatch = hash.match(/^pi\/(.+)$/);
+  if (piMatch) {
+    showPiDetail(decodeURIComponent(piMatch[1]));
+    return;
+  }
+  if (KNOWN_VIEWS.includes(hash)) {
+    showTabView(hash);
+    return;
+  }
+  // No/unknown hash (fresh load with no fragment, or a stale/bad URL) -
+  // default to Fleet. Replaced rather than pushed so this fallback doesn't
+  // itself become an extra Back-button stop separate from just "how the
+  // app starts".
+  location.replace(`${location.pathname}${location.search}#fleet`);
 }
-window.addEventListener('hashchange', routeDetail);
-routeDetail();
+window.addEventListener('hashchange', routeApp);
+routeApp();
 
 const footerYearEl = document.getElementById('footerYear');
 if (footerYearEl) footerYearEl.textContent = new Date().getFullYear();

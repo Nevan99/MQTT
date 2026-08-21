@@ -1,0 +1,248 @@
+import json
+import re
+import socket
+import subprocess
+import threading
+import time
+import uuid
+from datetime import datetime, timezone
+
+
+class InterfacesMixin:
+    """Interface introspection (names/details/IPs), the AP-side signal-stats
+    dump, the ping diagnostic, and the background loop that keeps the
+    backend's InterfaceStatus buffer fresh. Relies on WifiMixin's
+    get_link_info and _wifi_lock_for for the wifi-specific fields."""
+
+    def get_signal_stats(self):
+        """Pull RSSI / link stats for connected stations (Pi acting as AP)."""
+        out = subprocess.run(
+            ["iw", "dev", "wlan0", "station", "dump"],
+            capture_output=True, text=True,
+        ).stdout
+        return out.strip()
+
+    def ping_internet(self, interface=None, target=None, count=5):
+        target = target or "8.8.8.8"
+        count = int(count) if count else 5
+
+        if interface:
+            subprocess.run(["ip", "neigh", "flush", "dev", interface],
+                            capture_output=True, text=True, timeout=10)
+
+        cmd = ["ping", target]
+        if interface:
+            cmd += ["-I", interface]
+        cmd += ["-c", str(count)]
+        ret = subprocess.run(cmd, capture_output=True, text=True, timeout=count * 2 + 5)
+
+        stats_match = re.search(
+            r'(\d+) packets transmitted, (\d+) (?:packets )?received, '
+            r'(?:\+\d+ errors, )?(\d+)% packet loss(?:, time (\d+)ms)?',
+            ret.stdout,
+        )
+        rtt_match = re.search(
+            r'(?:rtt|round-trip) min/avg/max/mdev = '
+            r'([\d.]+)/([\d.]+)/([\d.]+)/([\d.]+) ms',
+            ret.stdout,
+        )
+
+        result = {
+            "interface": interface,
+            "target": target,
+            "count": count,
+            "packet_lost": int(stats_match.group(3)) if stats_match else None,
+            "packets_transmitted": int(stats_match.group(1)) if stats_match else None,
+            "packets_received": int(stats_match.group(2)) if stats_match else None,
+            "time_ms": int(stats_match.group(4)) if stats_match and stats_match.group(4) else None,
+            "rtt_min_ms": float(rtt_match.group(1)) if rtt_match else None,
+            "rtt_avg_ms": float(rtt_match.group(2)) if rtt_match else None,
+            "rtt_max_ms": float(rtt_match.group(3)) if rtt_match else None,
+            "rtt_mdev_ms": float(rtt_match.group(4)) if rtt_match else None,
+        }
+        if not stats_match:
+            result["raw_output"] = ret.stdout.strip() or ret.stderr.strip()
+        return result
+
+    def get_network_interfaces(self):
+        """List local network interface names (excluding loopback)."""
+        out = subprocess.run(
+            ["ip", "-o", "link", "show"],
+            capture_output=True, text=True,
+        ).stdout
+        interfaces = []
+        for line in out.splitlines():
+            m = re.match(r'^\d+:\s+([^:@]+)', line)
+            if m and m.group(1) != "lo":
+                interfaces.append(m.group(1))
+        return interfaces
+
+    def get_interface_details(self):
+        """Per-interface details (excluding loopback): MAC, link state, MTU,
+        and type (wifi/ethernet/other) - richer than get_network_interfaces's
+        plain name list, for the list_interfaces UI table."""
+        out = subprocess.run(
+            ["ip", "-o", "link", "show"],
+            capture_output=True, text=True,
+        ).stdout
+        details = []
+        for line in out.splitlines():
+            head = re.match(r'^\d+:\s+([^:@]+)(?:@\S+)?:\s+<(\S*)>', line)
+            if not head:
+                continue
+            name = head.group(1)
+            if name == "lo":
+                continue
+            flags = head.group(2).split(",") if head.group(2) else []
+
+            state_m = re.search(r'\bstate (\S+)', line)
+            link_m = re.search(r'link/(\S+)\s+([0-9a-fA-F:]{17})?', line)
+            link_type = link_m.group(1) if link_m else None
+
+            details.append({
+                "name": name,
+                "mac_address": link_m.group(2) if link_m else None,
+                "state": state_m.group(1) if state_m else ("UP" if "UP" in flags else "DOWN"),
+                "flags": flags,
+                # A monitor-mode interface reports link/ieee802.11/radiotap
+                # (confirmed from an actual `ip -o link show` on the fleet -
+                # it's "ieee802.11/radiotap" with a slash, not the commonly
+                # assumed "ieee802.11_radiotap" with an underscore) regardless
+                # of its name (mon0, wlan0mon, whatever it was created as) -
+                # a reliable signal, unlike station/AP mode wifi, which
+                # reports link/ether just like plain ethernet does and so
+                # still has to be told apart by name prefix.
+                "type": "monitor" if link_type and "radiotap" in link_type else
+                        ("wifi" if name.startswith(("wl", "wlan")) else
+                         ("ethernet" if link_type == "ether" else link_type)),
+                "ip_address": self.get_interface_ip(name),
+                "ipv6_address": self.get_interface_ipv6(name),
+            })
+        return details
+
+    def _wired_source_ip(self):
+        """IP address of a connected wired interface, if any - used to bind
+        the MQTT connection's local socket to it (see run()), so the
+        agent's control-plane traffic prefers wired over wifi whenever both
+        are up, without touching system-wide routing."""
+        for iface in self.get_interface_details():
+            if iface["type"] == "ethernet" and iface["state"] == "UP" and iface["ip_address"]:
+                return iface["ip_address"]
+        return None
+
+    def get_interface_ip(self, interface, family="4"):
+        """Best-effort address currently assigned to a given interface.
+        family="4" (default) returns the IPv4 address, unchanged from
+        before. family="6" returns an IPv6 address, preferring a global
+        (routable) one over a link-local fe80::/10 address - every
+        interface has a link-local address just from being up, so it's
+        rarely what's actually useful to show; global is only reported
+        once real IPv6 connectivity/autoconf has happened."""
+        if not interface:
+            return None
+        out = subprocess.run(
+            ["ip", f"-{family}", "-o", "addr", "show", interface],
+            capture_output=True, text=True,
+        ).stdout
+        if family == "6":
+            addrs = re.findall(r'inet6 ([0-9a-fA-F:]+)/\d+', out)
+            global_addrs = [a for a in addrs if not a.startswith("fe80:")]
+            return global_addrs[0] if global_addrs else (addrs[0] if addrs else None)
+        m = re.search(r'inet (\d+\.\d+\.\d+\.\d+)', out)
+        return m.group(1) if m else None
+
+    def get_interface_ipv6(self, interface):
+        return self.get_interface_ip(interface, family="6")
+
+    def get_interface_ips(self):
+        """Map of interface name -> IPv4 address for every non-loopback interface."""
+        return {
+            interface: self.get_interface_ip(interface)
+            for interface in self.get_network_interfaces()
+        }
+
+    def get_ip_address(self):
+        """Best-effort local IP: the address used to reach the broker."""
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect((self.broker_host, self.broker_port))
+            return s.getsockname()[0]
+        except OSError:
+            return ""
+        finally:
+            s.close()
+
+    # Keeps the backend's InterfaceStatus buffer (see
+    # mqtt_service._update_interface_status) continuously fresh, so the
+    # fleet table/Pi detail page's interface cards always have a result to
+    # show instead of triggering their own list_interfaces/link_info
+    # round-trip on every render - at the cost of being up to this interval
+    # stale. A user-triggered action (connect/disconnect/mode switch) still
+    # fetches its own immediate live result for instant feedback; this loop
+    # only feeds the passive/periodic display.
+    INTERFACE_STATUS_INTERVAL_SECONDS = 5
+
+    def _interface_status_loop(self):
+        while True:
+            time.sleep(self.INTERFACE_STATUS_INTERVAL_SECONDS)
+            try:
+                details_list = self.get_interface_details()
+            except Exception as e:
+                print(f"[pi_agent] interface status: failed to list interfaces: {e}")
+                continue
+            for details in details_list:
+                threading.Thread(target=self._publish_interface_status, args=(details,), daemon=True).start()
+
+    def _publish_interface_status(self, details):
+        interface = details["name"]
+        link = None
+        # Name-based, not details["type"] == "wifi" - matches the frontend's
+        # own isWifiInterface() check (which is what actually decides
+        # whether an interface gets a wifi icon at all). get_interface_details'
+        # "type" is a richer, driver-dependent classification that can
+        # legitimately disagree (e.g. tag a normal managed-mode radio
+        # "monitor" on a driver that reports radiotap-ish link info) - gating
+        # on it here left connected/ssid permanently unpopulated for any
+        # interface where that happened, even though it's really connected.
+        if interface.startswith("wl"):
+            # Non-blocking, same reasoning as _wifi_background_scan_one - an
+            # interface a user-triggered wifi command currently holds the
+            # lock for is skipped this cycle rather than waited on.
+            lock = self._wifi_lock_for(interface)
+            if not lock.acquire(blocking=False):
+                return
+            try:
+                link = self.get_link_info(interface)
+            except Exception as e:
+                link = {"error": str(e)}
+            finally:
+                lock.release()
+
+        result = {
+            "interface": interface,
+            "mac_address": details.get("mac_address"),
+            "state": details.get("state"),
+            "type": details.get("type"),
+            "ip_address": details.get("ip_address"),
+            "ipv6_address": details.get("ipv6_address"),
+        }
+        if link and not link.get("error"):
+            result.update({
+                "connected": link.get("connected"),
+                "ssid": link.get("ssid"),
+                "bssid": link.get("bssid"),
+                "frequency_mhz": link.get("frequency_mhz"),
+                "band": link.get("band"),
+                "signal_dbm": link.get("signal_dbm"),
+                "rx_bitrate_mbps": link.get("rx_bitrate_mbps"),
+                "tx_bitrate_mbps": link.get("tx_bitrate_mbps"),
+                "gateway": link.get("gateway"),
+            })
+        result["command_id"] = str(uuid.uuid4())
+        result["action"] = "interface_status"
+        result["pi_id"] = self.pi_id
+        result["timestamp"] = datetime.now(timezone.utc).isoformat()
+        try:
+            self.client.publish(self.result_topic, json.dumps(result), qos=1)
+        except Exception as e:
+            print(f"[pi_agent] failed to publish interface status for {interface}: {e}")

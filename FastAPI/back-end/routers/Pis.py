@@ -1,12 +1,12 @@
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
 from database.database import get_session
-from database.models import Pi, LogEntry
+from database.models import Pi, LogEntry, WifiScanHistory, InterfaceStatus
 from schemas.schemas import PiOut, LogEntryOut, PrimaryInterfaceRequest, InterfaceDefaultRequest
 from service.auth import get_current_user
 
@@ -26,6 +26,27 @@ def _to_out(p: Pi) -> PiOut:
 def list_pis(session: Session = Depends(get_session)):
     pis = session.exec(select(Pi)).all()
     return [_to_out(p) for p in pis]
+
+
+@router.get("/interface-status", response_model=list[dict])
+def get_all_interface_status(session: Session = Depends(get_session)):
+    """Fleet-wide flat view of every managed Pi's every interface's buffered
+    status - the same InterfaceStatus buffer GET /{pi_id}/interface-status
+    reads, just without the pi_id filter - for the Interfaces tab. Declared
+    ahead of GET /{pi_id} below so this literal path isn't shadowed by that
+    route's {pi_id} matching "interface-status" as a literal Pi id."""
+    rows = session.exec(select(InterfaceStatus)).all()
+    return [
+        {
+            "pi_id": r.pi_id, "interface": r.interface, "mac_address": r.mac_address,
+            "state": r.state, "type": r.type, "ip_address": r.ip_address, "ipv6_address": r.ipv6_address,
+            "connected": r.connected, "ssid": r.ssid, "bssid": r.bssid,
+            "frequency_mhz": r.frequency_mhz, "band": r.band, "signal_dbm": r.signal_dbm,
+            "rx_bitrate_mbps": r.rx_bitrate_mbps, "tx_bitrate_mbps": r.tx_bitrate_mbps,
+            "gateway": r.gateway, "updated_at": r.updated_at.isoformat(),
+        }
+        for r in rows
+    ]
 
 
 @router.get("/{pi_id}", response_model=PiOut)
@@ -134,6 +155,86 @@ def clear_pi_logs(pi_id: str, category: str, session: Session = Depends(get_sess
         session.delete(e)
     session.commit()
     return {"deleted": len(entries)}
+
+
+# A WifiScanHistory row is upserted forever once a BSSID is first seen (see
+# mqtt_service._update_wifi_scan_history) - first_seen/detection_count only
+# make sense as a running history, not something that gets deleted. But an
+# AP that's since been turned off would otherwise sit in this endpoint's
+# result indefinitely with a last_seen that stops moving - at the current
+# ~3s scan cadence (see PiAgent.WIFI_BACKGROUND_SCAN_INTERVAL_SECONDS), a
+# row that hasn't been refreshed in this long is a reliable signal the AP
+# is actually gone, not just a slow poll cycle.
+WIFI_HISTORY_STALE_SECONDS = 60
+
+
+@router.get("/{pi_id}/wifi-history", response_model=list[dict])
+def get_wifi_scan_history(pi_id: str, interface: str, session: Session = Depends(get_session)):
+    """The "Wifi Info" popup's sole data source: one row per AP currently
+    visible on this (Pi, interface) - i.e. refreshed within the last
+    WIFI_HISTORY_STALE_SECONDS - continuously kept fresh in the background
+    by pi_agent (PiAgent._wifi_background_scan_loop) rather than a scan
+    triggered by opening the popup - so this always has a ready result
+    (up to WIFI_BACKGROUND_SCAN_INTERVAL_SECONDS stale) instead of the
+    caller waiting on a live `iw scan` round-trip. Each row is the latest
+    full per-AP snapshot (last_result_json - phy type, security, cipher,
+    etc.) plus the rollup columns (first/last seen, detection count,
+    min/max/avg signal quality) a single snapshot can't provide. Rows for
+    APs no longer in range stay in the database (detection history is never
+    deleted) - they're just filtered out of what this endpoint returns.
+    Ordered most-recently-seen first, so an AP still being actively
+    rescanned every cycle stays pinned near the top."""
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=WIFI_HISTORY_STALE_SECONDS)
+    rows = session.exec(
+        select(WifiScanHistory).where(
+            WifiScanHistory.pi_id == pi_id, WifiScanHistory.interface == interface,
+            WifiScanHistory.last_seen >= cutoff,
+        ).order_by(WifiScanHistory.last_seen.desc())
+    ).all()
+    out = []
+    for r in rows:
+        try:
+            net = json.loads(r.last_result_json)
+        except (TypeError, ValueError):
+            net = {}
+        net.update({
+            "bssid": r.bssid,
+            "ssid": r.ssid or net.get("ssid"),
+            "first_seen": r.first_seen.isoformat(),
+            "last_seen": r.last_seen.isoformat(),
+            "detection_count": r.detection_count,
+            "min_signal_percent": r.min_signal_percent,
+            "max_signal_percent": r.max_signal_percent,
+            "avg_signal_percent": round(r.signal_sum / r.detection_count, 1) if r.detection_count else None,
+        })
+        out.append(net)
+    return out
+
+
+@router.get("/{pi_id}/interface-status", response_model=list[dict])
+def get_interface_status(pi_id: str, session: Session = Depends(get_session)):
+    """One row per interface, continuously refreshed in the background by
+    pi_agent (PiAgent._interface_status_loop, every
+    INTERFACE_STATUS_INTERVAL_SECONDS) rather than a list_interfaces/
+    link_info round-trip triggered by whoever's asking - see InterfaceStatus
+    for why. Used by the fleet table and Pi detail page's interface cards
+    for their passive periodic refresh; a user-triggered action (connect,
+    disconnect, mode switch) still gets its own immediate live result
+    instead of waiting on this buffer to catch up."""
+    rows = session.exec(
+        select(InterfaceStatus).where(InterfaceStatus.pi_id == pi_id)
+    ).all()
+    return [
+        {
+            "interface": r.interface, "mac_address": r.mac_address, "state": r.state, "type": r.type,
+            "ip_address": r.ip_address, "ipv6_address": r.ipv6_address,
+            "connected": r.connected, "ssid": r.ssid, "bssid": r.bssid,
+            "frequency_mhz": r.frequency_mhz, "band": r.band, "signal_dbm": r.signal_dbm,
+            "rx_bitrate_mbps": r.rx_bitrate_mbps, "tx_bitrate_mbps": r.tx_bitrate_mbps,
+            "gateway": r.gateway, "updated_at": r.updated_at.isoformat(),
+        }
+        for r in rows
+    ]
 
 
 @router.delete("/{pi_id}")

@@ -43,6 +43,8 @@
   .view { display: none; flex: 1 1 auto; min-height: 0; }
   #fleet.active { display: grid; }
   #captures.active { display: flex; flex-direction: column; }
+  #interfaces.active { display: flex; flex-direction: column; }
+  #testcases.active { display: flex; flex-direction: column; }
   #history.active { display: flex; flex-direction: column; }
   .history-detail-row.hidden { display: none; }
   .history-detail-row td { background: #141414; padding: 0.5rem 0.75rem; }
@@ -101,9 +103,11 @@
   .wifi-connect-row { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin-top: 0.5rem; }
   .wifi-remember-row { display: flex; align-items: center; gap: 0.3rem; font-size: 0.75rem; color: #aaa; margin: 0; width: 100%; cursor: pointer; }
   .wifi-remember-row input { width: auto; margin: 0; }
-  .wifi-disconnect-row { margin-top: 0.5rem; }
+  .wifi-disconnect-row { margin-top: 0.5rem; display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
   .wifi-disconnect-btn { background: #522; border-color: #a44; color: #fbb; }
   .wifi-disconnect-btn:hover { background: #633; }
+  .ap-weblink-btn { padding: 0.4rem 0.9rem; border: 1px solid #444; background: #2a2a2a; color: #eee; border-radius: 4px; cursor: pointer; text-decoration: none; display: inline-block; }
+  .ap-weblink-btn:hover { background: #333; }
   .wifi-connect-row .password-wrap { flex: 1 1 auto; }
   .wifi-connect-status { margin-top: 0.3rem; min-height: 1em; }
   .wifi-icon { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; }
@@ -122,6 +126,7 @@
 
   #fleet { grid-template-columns: 1fr 6px 380px; gap: 1rem; padding: 1rem; }
   #captures { padding: 1rem; }
+  #interfaces { padding: 1rem; }
   .captures-panel { flex: 1 1 auto; min-height: 0; }
   #fleet.dragging { user-select: none; cursor: col-resize; }
   .panel { background: #1a1a1a; border: 1px solid #333; border-radius: 6px; padding: 0.75rem; overflow-y: auto; overflow-x: auto; min-width: 0; }
@@ -253,3 +258,114 @@
     padding: 0.6rem 1rem; background: #1a1a1a; border-top: 1px solid #333; color: #888; font-size: 0.78rem;
   }
   footer#appFooter img { height: 36px; width: auto; opacity: 0.85; }
+
+  .pd-wifi-info-btn {
+    font-size: 0.72rem; padding: 0.15rem 0.5rem; border: 1px solid #333; border-radius: 4px;
+    background: #202020; color: #ccc; cursor: pointer;
+  }
+  .pd-wifi-info-btn:hover { background: #2a2a2a; color: #eee; }
+
+  .wifi-info-overlay {
+    position: fixed; inset: 0; z-index: 200; display: flex; align-items: center; justify-content: center;
+    background: rgba(0, 0, 0, 0.6); padding: 2rem;
+  }
+  .wifi-info-modal {
+    background: #1a1a1a; border: 1px solid #333; border-radius: 6px;
+    width: 100%; max-width: 1400px; max-height: 100%; display: flex; flex-direction: column;
+  }
+  .wifi-info-modal-header {
+    display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 0.9rem;
+    border-bottom: 1px solid #333; font-size: 0.9rem; color: #eee;
+  }
+  .wifi-info-modal-status { flex: 1 1 auto; margin: 0; }
+  .wifi-info-modal-close { font-size: 1.4rem; }
+  .wifi-info-modal-body { padding: 0 0.9rem 0.75rem; overflow: auto; }
+  table.wifi-info-table { border-collapse: collapse; font-family: ui-monospace, monospace; font-size: 0.75rem; white-space: nowrap; }
+  table.wifi-info-table th, table.wifi-info-table td { padding: 0.25rem 0.6rem; border-bottom: 1px solid #262626; text-align: left; }
+  table.wifi-info-table th { color: #888; border-bottom: 1px solid #444; position: sticky; top: 0; background: #1a1a1a; }
+  table.wifi-info-table td { color: #ddd; }
+  table.wifi-info-table tr.wifi-info-row { cursor: pointer; user-select: none; }
+  table.wifi-info-table tr.wifi-info-row:hover td { background: #222; }
+
+  /* Per-column filter row (Interfaces tab, Nearby Hotspot popup) - sits
+     directly under the label row. Not sticky (unlike the label row above -
+     table.wifi-info-table th's own position:sticky/top:0 is overridden back
+     to static here): a second sticky row needs its top offset to exactly
+     match the first row's real rendered height, and any mismatch there
+     shows up as a visible gap - simplest to just let this row scroll away
+     with the body instead of chasing that measurement. */
+  table.wifi-info-table tr.table-filter-row th {
+    position: static; top: auto; padding: 0.2rem 0.4rem; border-bottom: 1px solid #262626; background: transparent;
+  }
+  .table-filter-input {
+    display: block; width: 100%; box-sizing: border-box; font-size: 0.72rem; padding: 0.15rem 0.4rem; margin: 0;
+    background: #111; border: 1px solid #333; border-radius: 3px; color: #ddd; font-weight: normal; line-height: normal;
+  }
+  .table-filter-input:focus { border-color: #555; outline: none; }
+
+  /* Click-to-sort label row (Interfaces tab, Nearby Hotspot popup) - the
+     arrow is a ::after driven by data-dir (set in JS on the active column
+     only) rather than a static glyph, so an unsorted column shows nothing. */
+  table.wifi-info-table tr.table-sort-row th { cursor: pointer; user-select: none; }
+  table.wifi-info-table tr.table-sort-row th:hover { color: #ccc; }
+  table.wifi-info-table tr.table-sort-row th.sorted { color: #eee; }
+  table.wifi-info-table tr.table-sort-row th[data-dir="asc"]::after { content: " \25B2"; font-size: 0.7em; }
+  table.wifi-info-table tr.table-sort-row th[data-dir="desc"]::after { content: " \25BC"; font-size: 0.7em; }
+
+  /* Hotspot detail popup (double-click a row) stacks above the scan-list
+     popup, needs a higher z-index and a narrower/shorter modal since it's
+     just one AP's vertical key/value table, not a wide list. */
+  .wifi-hotspot-detail-overlay { z-index: 210; }
+  .wifi-hotspot-detail-modal { max-width: 640px; max-height: 80vh; }
+  .wifi-hotspot-detail-modal .wifi-info-modal-body { max-height: 70vh; }
+
+  /* Testcases tab: list / run / run-history sub-views, only one shown at a
+     time within #testcases (see testcases-tab.js's tcHideAllViews). The
+     editor (new/edit testcase) is a separate popup, not one of these - see
+     .tc-editor-overlay below. #tcListView itself holds two side-by-side
+     panels (testcases, then testsuites - see .tc-list-panel/.ts-list-panel
+     below), not a .panel itself. */
+  #tcListView.hidden, #tcRunView.hidden, #tcRunHistoryView.hidden { display: none; }
+  #tcListView { display: flex; flex-direction: row; gap: 1rem; min-height: 0; }
+  .tc-list-panel { flex: 1 1 0; min-width: 0; overflow-y: auto; }
+  .ts-list-panel { flex: 0 0 320px; min-width: 0; overflow-y: auto; }
+
+  /* New/edit testcase popup - wider and taller than the hotspot detail
+     modal (.wifi-hotspot-detail-modal above) since it holds a full form
+     plus the step builder, not just one key/value table. Toggled via a
+     persistent "hidden" class (see testcases-tab.js's openTcEditorModal/
+     closeTcEditorModal) rather than created/destroyed each time, so a save
+     failure doesn't lose whatever was typed. */
+  .tc-editor-overlay.hidden { display: none; }
+  .tc-editor-modal { max-width: 900px; max-height: 88vh; }
+  .tc-editor-modal .wifi-info-modal-body { max-height: 80vh; }
+
+  /* Testsuites: no tab/section of its own - the list is a permanent panel
+     inside the Testcases tab (.ts-list-panel above); editor/run/run-history
+     are all popups reusing .tc-editor-overlay/-modal directly (see
+     #tsEditorOverlay/#tsRunOverlay/#tsRunHistoryOverlay in index.html)
+     rather than duplicating that styling. */
+
+  /* Testsuite editor's testcase picker - both the "selected, ordered" list
+     and the "available to add" list use the same row look. */
+  .ts-picker-list { max-height: 220px; overflow-y: auto; border: 1px solid #262626; border-radius: 4px; }
+  .ts-picker-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.6rem; border-bottom: 1px solid #262626; font-size: 0.85rem; }
+  .ts-picker-row:last-child { border-bottom: none; }
+  .ts-picker-num { color: #888; font-size: 0.78rem; flex: 0 0 auto; }
+  .ts-picker-name { flex: 1 1 auto; color: #ddd; }
+  .ts-picker-controls { display: flex; gap: 0.1rem; flex: 0 0 auto; }
+  .ts-run-toggle { cursor: pointer; }
+
+  .tc-step-card { border: 1px solid #262626; border-radius: 4px; padding: 0.6rem 0.75rem; margin-bottom: 0.6rem; background: #161616; }
+  .tc-step-header { display: flex; align-items: center; gap: 0.5rem; }
+  .tc-step-header .tc-step-action { flex: 1 1 auto; }
+  .tc-step-num { color: #888; font-size: 0.8rem; flex: 0 0 auto; }
+  .tc-step-controls { display: flex; gap: 0.1rem; flex: 0 0 auto; }
+  .tc-step-body { margin-top: 0.5rem; }
+  .tc-step-body label { display: block; margin-top: 0.5rem; font-size: 0.78rem; color: #aaa; }
+  .tc-step-body label:first-child { margin-top: 0; }
+  .tc-step-multicast-list { display: flex; flex-wrap: wrap; gap: 0.3rem 0.75rem; margin-top: 0.3rem; }
+  .tc-step-multicast-list.hidden { display: none; }
+  .tc-step-multicast-item { font-size: 0.8rem; display: flex; align-items: center; gap: 0.3rem; color: #ccc; }
+  .tc-step-expected.hidden { display: none; }
+  .tc-step-expected-toggle-row { display: flex; align-items: center; gap: 0.35rem; margin-top: 0.6rem; font-size: 0.8rem; color: #ccc; }
