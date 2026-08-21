@@ -369,7 +369,12 @@ class WifiScanMixin:
     # interface for this cycle rather than piling up, so the real cadence
     # for a slow-scanning radio is bounded by its own scan duration, not
     # this number.
-    WIFI_BACKGROUND_SCAN_INTERVAL_SECONDS = 3
+    #
+    # Kept comfortably above a typical scan duration on purpose. At the
+    # previous 3s a 2-5s `iw scan` meant the interface lock was held
+    # essentially continuously, so a user-triggered connect/disconnect
+    # almost always had to wait out a scan before it could even start.
+    WIFI_BACKGROUND_SCAN_INTERVAL_SECONDS = 12
 
     def _wifi_background_scan_loop(self):
         while True:
@@ -388,11 +393,18 @@ class WifiScanMixin:
                 threading.Thread(target=self._wifi_background_scan_one, args=(interface,), daemon=True).start()
 
     def _wifi_background_scan_one(self, interface):
-        # Non-blocking: an interface a user-triggered connect_wifi/
-        # disconnect_wifi/set_interface_mode is currently holding the lock
-        # for is skipped this cycle rather than waiting - that command's own
-        # result matters more than this cycle's scan, and _wifi_lock_for
-        # locks can be held for minutes.
+        # Skipped for this cycle if a user-triggered connect_wifi/
+        # disconnect_wifi/set_interface_mode is either already holding this
+        # interface's lock or queued for it - that command's own result
+        # matters more than this cycle's scan, and _wifi_lock_for locks can
+        # be held for tens of seconds.
+        #
+        # The pending check has to come first and is not redundant with the
+        # non-blocking acquire below: a command waiting on the lock does not
+        # hold it, so acquire() would succeed and hand this scan the radio
+        # ahead of the command that was already queued for it.
+        if self._wifi_command_pending(interface):
+            return
         lock = self._wifi_lock_for(interface)
         if not lock.acquire(blocking=False):
             return

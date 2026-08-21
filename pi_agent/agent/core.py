@@ -67,12 +67,18 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
         self._tcpdump_lock = threading.Lock()
 
         # One lock per interface, created on demand - connect_wifi/
-        # disconnect_wifi can now take minutes (nmcli timeout=300), so two
-        # commands aimed at the *same* interface must run strictly one
-        # after another instead of racing on the same NetworkManager
-        # profile; different interfaces still run fully concurrently.
+        # disconnect_wifi can take tens of seconds, so two commands aimed
+        # at the *same* interface must run strictly one after another
+        # instead of racing on the same interface state; different
+        # interfaces still run fully concurrently.
         self._wifi_locks = {}
         self._wifi_locks_guard = threading.Lock()
+        # interface -> count of user commands queued on that interface's
+        # lock. The background scan loop skips an interface with a pending
+        # count, so a user-triggered connect/disconnect doesn't have to
+        # wait out a scan that started moments before it arrived - see
+        # _wifi_pending_command / _wifi_background_scan_one.
+        self._wifi_pending = {}
         # Guards against on_connect (which can fire again on every
         # reconnect) starting a second/third background wifi scan loop.
         self._wifi_scan_loop_started = False

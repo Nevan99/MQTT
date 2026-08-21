@@ -6,6 +6,7 @@ import subprocess
 import threading
 import time
 import zlib
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
 
@@ -380,21 +381,26 @@ class WifiMixin:
         if not interface:
             return {"error": "interface is required"}
 
+        # These run strictly one after another, so every timeout here is
+        # additive on the caller's round-trip. They are hang budgets, not
+        # expected durations - each of these is normally sub-second, so
+        # they're kept tight; the one genuinely slow call is nmcli's
+        # synchronous device disconnect on the fallback path below.
         outputs = []
         if self._wpa_ctrl_socket_exists(interface):
-            term_ret = self._wpa_cli(interface, "terminate")
+            term_ret = self._wpa_cli(interface, "terminate", timeout=5)
             outputs.append((term_ret.stdout or term_ret.stderr).strip())
 
-            dhcp_ret = self._run_hard_timeout(["dhcpcd", "-k", interface], timeout=15)
+            dhcp_ret = self._run_hard_timeout(["dhcpcd", "-k", interface], timeout=8)
             outputs.append((dhcp_ret.stdout or dhcp_ret.stderr).strip())
 
-            nm_managed_ret = self._run_hard_timeout(["nmcli", "device", "set", interface, "managed", "yes"], timeout=15)
+            nm_managed_ret = self._run_hard_timeout(["nmcli", "device", "set", interface, "managed", "yes"], timeout=8)
             outputs.append((nm_managed_ret.stdout or nm_managed_ret.stderr).strip())
         else:
             nm_disconnect_ret = self._run_hard_timeout(["nmcli", "device", "disconnect", interface], timeout=30)
             outputs.append((nm_disconnect_ret.stdout or nm_disconnect_ret.stderr).strip())
 
-        subprocess.run(["ip", "addr", "flush", "dev", interface], capture_output=True, text=True, timeout=15)
+        self._run_hard_timeout(["ip", "addr", "flush", "dev", interface], timeout=5)
 
         return {
             "interface": interface,
@@ -472,8 +478,12 @@ class WifiMixin:
         can race it, which is why the caller re-verifies and retries rather
         than trusting iw's exit code alone."""
         if mode == "monitor":
+            # 30s, not the 300s this used to allow: this runs while holding
+            # the interface's wifi lock, so a stuck nmcli here blocks every
+            # later connect/disconnect on the same interface for as long as
+            # the timeout lets it run.
             subprocess.run(["nmcli", "device", "disconnect", interface],
-                            capture_output=True, text=True, timeout=300)
+                            capture_output=True, text=True, timeout=30)
             subprocess.run(["nmcli", "device", "set", interface, "managed", "no"],
                             capture_output=True, text=True, timeout=30)
             time.sleep(0.5)
@@ -548,30 +558,68 @@ class WifiMixin:
                 self._wifi_locks[interface] = lock
             return lock
 
+    @contextmanager
+    def _wifi_pending_command(self, interface):
+        """Marks `interface` as having a user command queued for its lock,
+        for as long as the command is waiting *and* running.
+
+        The background scan loop already skips an interface whose lock is
+        held (acquire(blocking=False)), but that only helps a command that
+        got there first: a scan that started moments earlier still owns the
+        radio, and the command's own blocking acquire() then waits out the
+        whole `iw scan` - up to ~37s once _run_scan_with_busy_retry's EBUSY
+        backoff is involved. Setting this before blocking on the lock lets
+        the *next* scan cycle skip this interface entirely, so the command
+        waits for at most the one scan already in flight."""
+        with self._wifi_locks_guard:
+            self._wifi_pending[interface] = self._wifi_pending.get(interface, 0) + 1
+        try:
+            yield
+        finally:
+            with self._wifi_locks_guard:
+                remaining = self._wifi_pending.get(interface, 1) - 1
+                if remaining > 0:
+                    self._wifi_pending[interface] = remaining
+                else:
+                    self._wifi_pending.pop(interface, None)
+
+    def _wifi_command_pending(self, interface):
+        with self._wifi_locks_guard:
+            return self._wifi_pending.get(interface, 0) > 0
+
+    @staticmethod
+    def _run_wifi_command(fn, args):
+        try:
+            return fn(*args)
+        except Exception as e:
+            return {"error": str(e)}
+
     def _dispatch_wifi_command(self, action, command_id, interface, fn, *args):
         """Runs connect_wifi/disconnect_wifi off the MQTT network thread and
         publishes their result itself once done, instead of handle_command
-        blocking on it directly. Both can now take up to 5 minutes
-        (nmcli timeout=300) - blocking the same thread paho's network loop
-        runs on for that long would starve the periodic keepalive PINGREQ
-        and get this client disconnected by the broker mid-command. Worse,
-        since the client connects with clean_session=True, any command
-        sent to this Pi during that disconnected window is dropped, not
-        queued - so a caller could see it silently never execute. Two
-        commands aimed at the same interface still serialize (via
-        _wifi_lock_for), so they don't race on the same NetworkManager
-        profile; different interfaces run fully in parallel."""
+        blocking on it directly. Both can take tens of seconds (connect_wifi
+        alone allows 60s for association plus 35s for DHCP) - blocking the
+        same thread paho's network loop runs on for that long would starve
+        the periodic keepalive PINGREQ and get this client disconnected by
+        the broker mid-command. Worse, since the client connects with
+        clean_session=True, any command sent to this Pi during that
+        disconnected window is dropped, not queued - so a caller could see
+        it silently never execute. Two commands aimed at the same interface
+        still serialize (via _wifi_lock_for), so they don't race on the same
+        interface state; different interfaces run fully in parallel."""
         def worker():
             lock = self._wifi_lock_for(interface) if interface else None
             if lock:
-                lock.acquire()
-            try:
-                result = fn(*args)
-            except Exception as e:
-                result = {"error": str(e)}
-            finally:
-                if lock:
-                    lock.release()
+                # Held across the acquire() too, not just the run - the
+                # point is to stop *new* scans starting while we queue.
+                with self._wifi_pending_command(interface):
+                    lock.acquire()
+                    try:
+                        result = self._run_wifi_command(fn, args)
+                    finally:
+                        lock.release()
+            else:
+                result = self._run_wifi_command(fn, args)
             result["command_id"] = command_id
             result["action"] = action
             result["pi_id"] = self.pi_id
