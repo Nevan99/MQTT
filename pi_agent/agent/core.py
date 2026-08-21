@@ -152,7 +152,14 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
             elif action == "scan_wifi":
                 result = self.get_wifi_scan(payload.get("interface"))
             elif action == "wifi_detail_scan":
-                result = self.get_wifi_scan_detail(payload.get("interface"))
+                # Served from cfg80211's scan cache, kept warm by
+                # _wifi_background_scan_one. This used to drive a fresh
+                # blocking `iw scan` right here on the MQTT network thread,
+                # which both starved paho's keepalive for seconds and had to
+                # queue behind any connect/disconnect holding the radio. A
+                # cache read needs no lock and returns in milliseconds, at
+                # the cost of results up to one background cycle stale.
+                result = self.get_wifi_scan_detail(payload.get("interface"), use_cache=True)
             elif action == "set_monitor_channel":
                 result = self.set_monitor_channel(payload.get("interface"), payload.get("channel"))
             elif action == "set_interface_mode":

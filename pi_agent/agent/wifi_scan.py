@@ -317,27 +317,75 @@ class WifiScanMixin:
     # WIFI_BACKGROUND_SCAN_INTERVAL_SECONDS tick to try again.
     SCAN_BUSY_RETRY_DELAYS_SECONDS = (1, 2, 4)
 
-    def get_wifi_scan_detail(self, interface):
+    def get_wifi_scan_detail(self, interface, use_cache=False):
         """Detailed per-AP scan for the "Wifi Info" popup - see
         _parse_scan_bss_block for what's decoded from `iw`'s output. History
         fields (first/last detection, detection count, min/max/avg signal)
         aren't included here - they're accumulated backend-side across
         repeated calls to this action (see mqtt_service._update_wifi_scan_history)
-        and merged in by the front end."""
+        and merged in by the front end.
+
+        use_cache picks which of `iw`'s two scan modes to use:
+
+          False - `iw dev <if> scan`: drive the radio through a fresh scan
+                  and block until it finishes (seconds). Only for callers
+                  that genuinely need this instant's air, and that already
+                  hold this interface's wifi lock.
+          True  - `iw dev <if> scan dump`: read cfg80211's cached BSS list.
+                  No radio access at all, returns in milliseconds, safe to
+                  call concurrently with anything - including while another
+                  thread is associating or disconnecting on this interface.
+                  Results are as fresh as the last completed scan, which
+                  _wifi_background_scan_one keeps topped up.
+
+        Both modes emit identical `BSS ...` blocks, so _parse_scan_bss_block
+        handles them the same way."""
         if not interface:
             return {"error": "interface is required"}
 
-        ret = self._run_scan_with_busy_retry(interface)
+        ret = self._scan_dump(interface) if use_cache else self._run_scan_with_busy_retry(interface)
         if ret.returncode != 0:
             return {"interface": interface, "error": (ret.stderr or ret.stdout).strip()}
 
-        link_out = subprocess.run(["iw", "dev", interface, "link"], capture_output=True, text=True).stdout
+        link_out = subprocess.run(
+            ["iw", "dev", interface, "link"], capture_output=True, text=True, timeout=10,
+        ).stdout
         link_m = re.match(r'Connected to ([0-9a-fA-F:]+)', link_out)
         connected_bssid = link_m.group(1).lower() if link_m else None
 
         blocks = re.split(r'^BSS ', ret.stdout, flags=re.MULTILINE)[1:]
         networks = [n for n in (self._parse_scan_bss_block(b, connected_bssid) for b in blocks) if n]
-        return {"interface": interface, "networks": networks}
+        return {"interface": interface, "networks": networks, "from_cache": use_cache}
+
+    def _scan_trigger(self, interface):
+        """Start a scan and return without waiting for it (`iw scan trigger`).
+
+        This is the half of a scan that actually needs the radio, and it
+        costs milliseconds instead of the 2-5s a full `iw scan` blocks for -
+        which is the whole point: the caller only has to hold this
+        interface's wifi lock for the trigger, not for the scan itself.
+        Results land in cfg80211's cache a few seconds later and are read
+        back lock-free via _scan_dump.
+
+        EBUSY here is not worth retrying the way _run_scan_with_busy_retry
+        does. That function sleeps up to 7s *while holding the lock* to win
+        a race against NetworkManager's own scan; for a periodic background
+        trigger the next cycle is along shortly anyway, and NM's in-progress
+        scan populates the same cache this reads from, so nothing is lost by
+        just skipping."""
+        return subprocess.run(
+            ["iw", "dev", interface, "scan", "trigger"],
+            capture_output=True, text=True, timeout=10,
+        )
+
+    def _scan_dump(self, interface):
+        """Read cfg80211's cached BSS list (`iw scan dump`) - a pure read of
+        kernel state that never touches the radio, so it needs no wifi lock
+        and cannot delay, or be delayed by, a connect/disconnect."""
+        return subprocess.run(
+            ["iw", "dev", interface, "scan", "dump"],
+            capture_output=True, text=True, timeout=15,
+        )
 
     def _run_scan_with_busy_retry(self, interface):
         delays = (0,) + self.SCAN_BUSY_RETRY_DELAYS_SECONDS
@@ -370,11 +418,15 @@ class WifiScanMixin:
     # for a slow-scanning radio is bounded by its own scan duration, not
     # this number.
     #
-    # Kept comfortably above a typical scan duration on purpose. At the
-    # previous 3s a 2-5s `iw scan` meant the interface lock was held
-    # essentially continuously, so a user-triggered connect/disconnect
-    # almost always had to wait out a scan before it could even start.
-    WIFI_BACKGROUND_SCAN_INTERVAL_SECONDS = 12
+    # What bounds this number is now RF airtime, not lock contention. Since
+    # _wifi_background_scan_one only holds the interface lock for a scan
+    # *trigger* (milliseconds) and reads results from the cache lock-free,
+    # a fast cadence no longer starves connect/disconnect the way it did
+    # when each cycle blocked on a full 2-5s `iw scan`. What a shorter
+    # interval does still cost is the radio going off-channel to probe,
+    # which eats into throughput on an associated link - so this is set for
+    # the freshness the "Wifi Info" popup wants, not pushed to the floor.
+    WIFI_BACKGROUND_SCAN_INTERVAL_SECONDS = 6
 
     def _wifi_background_scan_loop(self):
         while True:
@@ -393,34 +445,53 @@ class WifiScanMixin:
                 threading.Thread(target=self._wifi_background_scan_one, args=(interface,), daemon=True).start()
 
     def _wifi_background_scan_one(self, interface):
-        # Skipped for this cycle if a user-triggered connect_wifi/
-        # disconnect_wifi/set_interface_mode is either already holding this
-        # interface's lock or queued for it - that command's own result
-        # matters more than this cycle's scan, and _wifi_lock_for locks can
-        # be held for tens of seconds.
+        # Split into a locked trigger and a lock-free read, so this loop
+        # occupies the interface's wifi lock for milliseconds per cycle
+        # rather than the 2-5s a full blocking `iw scan` used to hold it
+        # for. That hold time was the direct cause of connect/disconnect
+        # commands stalling: they take the same lock, and at any realistic
+        # scan cadence a blocking scan meant the lock was almost never free
+        # when a command arrived.
         #
-        # The pending check has to come first and is not redundant with the
-        # non-blocking acquire below: a command waiting on the lock does not
-        # hold it, so acquire() would succeed and hand this scan the radio
-        # ahead of the command that was already queued for it.
+        # Only the trigger is serialised against connect/disconnect. The
+        # dump that follows is a read of kernel state and runs outside the
+        # lock, so it can overlap a command freely.
         if self._wifi_command_pending(interface):
             return
         lock = self._wifi_lock_for(interface)
         if not lock.acquire(blocking=False):
             return
         try:
-            # Scanned unconditionally, connected or not - `iw scan` on an
+            # Triggered unconditionally, connected or not - a scan on an
             # already-associated interface is an off-channel scan (cfg80211
             # tracks the current BSS independently of which channel the
             # radio is briefly sitting on for a probe), so it doesn't drop
             # the association. Keeping this always-on gives the WifiScanHistory
             # buffer the freshest possible results instead of freezing at
             # whatever was last scanned before the interface connected.
-            result = self.get_wifi_scan_detail(interface)
+            trigger = self._scan_trigger(interface)
         except Exception as e:
-            result = {"interface": interface, "error": str(e)}
+            print(f"[pi_agent] {interface}: scan trigger failed: {e}")
+            trigger = None
         finally:
             lock.release()
+
+        if trigger is not None and trigger.returncode != 0:
+            # Not fatal, and deliberately not retried under the lock - see
+            # _scan_trigger. The dump below still returns whatever the last
+            # completed scan (this loop's or NetworkManager's) left behind.
+            busy = "busy" in (trigger.stderr or trigger.stdout).lower()
+            if not busy:
+                print(f"[pi_agent] {interface}: scan trigger: {(trigger.stderr or trigger.stdout).strip()}")
+
+        # Outside the lock: this reads the cache, so it neither needs the
+        # radio nor blocks a command that wants it. The results are from
+        # the previous cycle's trigger (a scan takes a few seconds to
+        # complete), which is what makes the cadence below affordable.
+        try:
+            result = self.get_wifi_scan_detail(interface, use_cache=True)
+        except Exception as e:
+            result = {"interface": interface, "error": str(e)}
         result["command_id"] = str(uuid.uuid4())
         result["action"] = "wifi_detail_scan"
         result["pi_id"] = self.pi_id

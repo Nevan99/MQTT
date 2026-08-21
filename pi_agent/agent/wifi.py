@@ -299,13 +299,23 @@ class WifiMixin:
             return 5000 + channel * 5
         return 5950 + channel * 5
 
+    def _find_bssid_in_scan(self, interface, bssid, use_cache):
+        """One BSSID's entry from a scan, or None. See get_wifi_scan_detail
+        for what use_cache costs: True reads cfg80211's cache in
+        milliseconds, False drives a fresh multi-second scan."""
+        scan = self.get_wifi_scan_detail(interface, use_cache=use_cache)
+        return next(
+            (n for n in scan.get("networks", []) if n.get("bssid") == bssid.lower()),
+            None,
+        )
+
     def connect_wifi(self, ssid, password=None, interface=None, bssid=None, channel=None):
         """Connect to a wifi hotspot via wpa_supplicant + dhcpcd (see the
         module-level comment above for why this needs three pieces instead
         of nmcli's one call).
 
-        If bssid is given without ssid, the SSID is resolved from a live
-        scan (get_wifi_scan_detail, WifiScanMixin) matching that BSSID -
+        If bssid is given without ssid, the SSID is resolved by looking that
+        BSSID up in a scan (get_wifi_scan_detail, WifiScanMixin) -
         wpa_supplicant's network blocks are keyed by ssid, unlike nmcli's
         `device wifi connect <bssid>`, which resolved it from its own scan
         cache internally. If channel is given, the connection is pinned to
@@ -319,8 +329,14 @@ class WifiMixin:
             return {"error": "ssid is required"}
 
         if bssid and not ssid:
-            scan = self.get_wifi_scan_detail(interface)
-            match = next((n for n in scan.get("networks", []) if n.get("bssid") == bssid.lower()), None)
+            # Cache first (milliseconds, no radio), falling back to a real
+            # scan only if this BSSID isn't in it. The background scan loop
+            # keeps the cache warm, so the fallback is for a BSSID that has
+            # appeared since the last completed scan - or an interface that
+            # hasn't been scanned yet at all, e.g. right after a mode switch.
+            match = self._find_bssid_in_scan(interface, bssid, use_cache=True)
+            if not match:
+                match = self._find_bssid_in_scan(interface, bssid, use_cache=False)
             if not match or not match.get("ssid"):
                 return {
                     "bssid": bssid, "interface": interface, "connected": False,
