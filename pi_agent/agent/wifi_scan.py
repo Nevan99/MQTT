@@ -8,61 +8,149 @@ from . import proc
 
 
 class WifiScanMixin:
-    """Nearby-network scanning: the flat table (get_wifi_scan) the "Nearby
-    networks" list uses, the fuller `iw scan` decode (get_wifi_scan_detail)
-    behind the "Nearby Hotspot" popup, and the background loop that keeps
-    the backend's WifiScanHistory buffer fresh without the popup having to
-    trigger a scan itself. Relies on WifiMixin's _band_label/_wifi_lock_for
-    and InterfacesMixin's get_interface_details.
+    """Nearby-network scanning: the merged multi-radio list
+    (get_nearby_hotspots) the "Nearby hotspots" view uses, the fuller
+    per-interface `iw scan` decode (get_wifi_scan_detail) behind the "Wifi
+    Info" popup, and the background loop that keeps the backend's
+    WifiScanHistory buffer fresh without the popup having to trigger a scan
+    itself. Relies on WifiMixin's _band_label/_wifi_lock_for and
+    InterfacesMixin's get_interface_details.
 
-    Both scan paths go through `iw` and cfg80211's scan cache. Nothing here
+    Every path here goes through `iw` and cfg80211's scan cache. Nothing
     uses NetworkManager: install.sh marks every wl* interface unmanaged, so
     NM will not scan them or report their BSSes."""
 
-    async def get_wifi_scan(self, interface):
-        """Nearby APs for the "Nearby networks" list, via `iw`.
+    async def get_nearby_hotspots(self, interfaces=None):
+        """Nearby APs seen across one or more of this Pi's radios, merged.
 
-        This used to run `nmcli dev wifi list ... --rescan yes`, which
-        returned an empty list on every Pi in the fleet. install.sh ships
-        99-pi-agent-unmanaged-wifi.conf setting
-        `unmanaged-devices=interface-name:wl*`, and NetworkManager neither
-        scans nor reports BSSes for a device it does not manage - so the
-        command succeeded, printed nothing, and the action reported "no
-        networks" rather than an error. `iw` talks to cfg80211 directly and
-        is indifferent to NM's management state, which is why
-        get_wifi_scan_detail never had the problem.
+        Replaced scan_wifi, which was per-interface and built on `nmcli dev
+        wifi list` - NetworkManager does not manage wl* on these Pis (see
+        install.sh's 99-pi-agent-unmanaged-wifi.conf), so it reported an
+        empty list on every Pi while exiting 0.
 
-        Same source as that detail scan, then, just flattened to the
-        smaller shape this list renders. Cache-first for the same reason
-        wifi_detail_scan is: this runs inline on the MQTT message loop, so
-        it must not sit on a multi-second radio scan there. Falls back to a
-        real scan when the cache has nothing - a freshly booted Pi, or an
-        interface the background loop hasn't reached yet, would otherwise
-        show the same empty list this change exists to fix.
+        `interfaces` may be a single name, a list, or omitted for every
+        scannable radio (see is_scannable - a down or monitor-mode
+        interface is skipped rather than scanned and failed). Radios are
+        scanned concurrently and their results merged by BSSID, since the
+        point of having four of them is that they see overlapping but not
+        identical sets of APs: an AP only one radio can hear still belongs
+        in the list, and one that several can hear should appear once, with
+        the best signal any of them measured.
+
+        Each merged entry carries `seen_by` (which interfaces saw it) and
+        `best_interface` (which measured the strongest signal), so the UI
+        can offer "connect these radios to this hotspot" without a second
+        round-trip to find out which of them can actually reach it.
         """
-        if not interface:
-            return {"error": "interface is required"}
+        names = await self._resolve_scan_interfaces(interfaces)
+        if isinstance(names, dict):
+            return names                                   # an error result
 
-        detail = await self.get_wifi_scan_detail(interface, use_cache=True)
-        if not detail.get("networks"):
-            detail = await self.get_wifi_scan_detail(interface, use_cache=False)
-        if "error" in detail:
-            return {"interface": interface, "error": detail["error"]}
+        scans = await asyncio.gather(
+            *(self.get_wifi_scan_detail(i, use_cache=True) for i in names),
+            return_exceptions=True,
+        )
 
+        # An interface whose cache was empty gets one real scan. Done as a
+        # second pass so the common all-warm case costs nothing.
+        for idx, (name, scan) in enumerate(zip(names, scans)):
+            if isinstance(scan, Exception) or (not scan.get("networks") and "error" not in scan):
+                try:
+                    scans[idx] = await self.get_wifi_scan_detail(name, use_cache=False)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    scans[idx] = {"interface": name, "error": str(e)}
+
+        merged, errors = {}, {}
+        for name, scan in zip(names, scans):
+            if isinstance(scan, Exception):
+                errors[name] = str(scan)
+                continue
+            if "error" in scan:
+                errors[name] = scan["error"]
+                continue
+            for net in scan.get("networks", []):
+                self._merge_hotspot(merged, name, net)
+
+        networks = sorted(
+            merged.values(),
+            key=lambda n: (n["signal_dbm"] is None, -(n["signal_dbm"] or 0), n["ssid"] or ""),
+        )
         return {
-            "interface": interface,
-            "networks": [self._flatten_scan_entry(n) for n in detail.get("networks", [])],
+            "interfaces": names,
+            "networks": networks,
+            "errors": errors or None,
         }
+
+    async def _resolve_scan_interfaces(self, interfaces):
+        """Normalise the `interfaces` argument to a list of scannable radio
+        names, or return an error result explaining why none qualify."""
+        if isinstance(interfaces, str):
+            interfaces = [interfaces]
+        try:
+            details = await self.get_interface_details()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            return {"error": f"could not list interfaces: {e}"}
+
+        by_name = {d["name"]: d for d in details}
+        if interfaces:
+            unknown = [i for i in interfaces if i not in by_name]
+            if unknown:
+                return {"error": f"no such interface(s): {', '.join(unknown)}"}
+            candidates = [by_name[i] for i in interfaces]
+        else:
+            candidates = [d for d in details if d["name"].startswith("wl")]
+
+        names = [d["name"] for d in candidates if self.is_scannable(d)]
+        if not names:
+            skipped = ", ".join(d["name"] for d in candidates) or "none found"
+            return {
+                "error": f"no scannable wifi interface ({skipped}) - "
+                         f"a down or monitor-mode radio cannot scan",
+            }
+        return names
+
+    def _merge_hotspot(self, merged, interface, net):
+        """Fold one interface's view of an AP into the merged set.
+
+        Keyed by BSSID rather than SSID: a multi-AP network broadcasts one
+        SSID from several BSSIDs, and connecting to "the hotspot" means
+        connecting to a specific one - collapsing them would throw away the
+        distinction the fleet's steering tests are about.
+        """
+        entry = self._flatten_scan_entry(net)
+        bssid = entry["bssid"]
+        if not bssid:
+            return
+        existing = merged.get(bssid)
+        if existing is None:
+            entry["seen_by"] = [interface]
+            entry["best_interface"] = interface
+            merged[bssid] = entry
+            return
+
+        existing["seen_by"].append(interface)
+        # Compared on raw dBm, not signal_percent: the percentage is
+        # clamped at 100 (_dbm_to_quality_percent saturates above -50 dBm),
+        # so two radios hearing the same AP at -30 and -45 both read 100%
+        # and the stronger one would lose the comparison.
+        new_signal = entry["signal_dbm"]
+        old_signal = existing["signal_dbm"]
+        if new_signal is not None and (old_signal is None or new_signal > old_signal):
+            seen_by = existing["seen_by"]
+            entry["seen_by"] = seen_by
+            entry["best_interface"] = interface
+            merged[bssid] = entry
 
     def _flatten_scan_entry(self, net):
         """One _parse_scan_bss_block entry reduced to the fields the
-        "Nearby networks" list renders.
+        hotspot list renders.
 
-        Field names are the frontend's contract (wifi-scan.js,
-        command-builder.js read these keys directly), so they keep the
-        names nmcli's output was mapped onto rather than the detail scan's.
-        `rate` keeps its "<n> Mbit/s" string form for the same reason: it's
-        rendered as-is, not formatted at the far end.
+        `rate` keeps its "<n> Mbit/s" string form because it is rendered
+        as-is rather than formatted at the far end.
         """
         freq_mhz = net.get("frequency_mhz")
         max_speed = net.get("max_speed_mbps")
@@ -75,6 +163,10 @@ class WifiScanMixin:
             "band": self._band_label(freq_mhz) if freq_mhz else None,
             "rate": f"{max_speed:g} Mbit/s" if max_speed else None,
             "signal_percent": net.get("signal_quality_percent"),
+            # Raw dBm alongside the percentage: the percentage saturates at
+            # 100 above -50 dBm, so it cannot rank two strong signals - which
+            # _merge_hotspot needs to do when several radios see one AP.
+            "signal_dbm": net.get("rssi_dbm"),
             "security": net.get("security"),
         }
 
@@ -377,6 +469,56 @@ class WifiScanMixin:
         networks = [n for n in (self._parse_scan_bss_block(b, connected_bssid) for b in blocks) if n]
         return {"interface": interface, "networks": networks, "from_cache": use_cache}
 
+    def _log_scan_trigger_failure(self, interface, message):
+        """Log a trigger failure once, not once per cycle.
+
+        A persistent fault (a radio that errors every time) repeats at the
+        scan interval forever otherwise - the journal excerpt that prompted
+        this had the same two lines hundreds of times inside one second.
+        Only a *change* in the message is worth a line; the same fault
+        recurring is not news.
+        """
+        seen = getattr(self, "_scan_trigger_last_error", None)
+        if seen is None:
+            seen = self._scan_trigger_last_error = {}
+        if seen.get(interface) == message:
+            return
+        seen[interface] = message
+        print(f"[pi_agent] {interface}: scan trigger: {message}")
+
+    def _clear_scan_trigger_failure(self, interface):
+        seen = getattr(self, "_scan_trigger_last_error", None)
+        if seen:
+            seen.pop(interface, None)
+
+    @staticmethod
+    def is_scannable(details):
+        """Can a station scan actually run on this interface right now?
+
+        Two states make `iw scan trigger` fail every time, and scanning them
+        on a 6s loop is what filled the journal with
+
+            wlan1: scan trigger: command failed: Network is down (-100)
+            wlan2: scan trigger: iw killed after exceeding 10s
+
+        and burned real CPU on the fleet:
+
+        - Down interfaces. cfg80211 refuses a scan on an interface that is
+          not UP - that is the -100 above, and it will never succeed until
+          something brings the link up.
+        - Monitor-mode interfaces. A monitor interface has no station state
+          to scan with; the request either errors or hangs until the
+          timeout kills it, which is where the 10s ones came from.
+
+        Checked per cycle rather than cached, since a mode switch or an
+        `ip link set down` can change the answer at any time.
+        """
+        if details.get("type") == "monitor":
+            return False
+        state = (details.get("state") or "").upper()
+        flags = [f.upper() for f in details.get("flags") or []]
+        return state != "DOWN" and "UP" in flags
+
     async def _scan_trigger(self, interface):
         """Start a scan and return without waiting for it (`iw scan trigger`).
 
@@ -454,11 +596,16 @@ class WifiScanMixin:
                 # driver-dependent classification that can disagree with the
                 # frontend's own name-based isWifiInterface() check, which
                 # decides whether the "Nearby Hotspot" button even exists.
-                wifi_interfaces = [d["name"] for d in await self.get_interface_details() if d["name"].startswith("wl")]
+                wifi_interfaces = [
+                    d["name"] for d in await self.get_interface_details()
+                    if d["name"].startswith("wl") and self.is_scannable(d)
+                ]
             except asyncio.CancelledError:
                 raise
             except Exception as e:
                 print(f"[pi_agent] background wifi scan: failed to list interfaces: {e}")
+                continue
+            if not wifi_interfaces:
                 continue
             # One task per interface, run concurrently and awaited together:
             # four radios' cycles overlap in the time one used to take, and
@@ -506,6 +653,8 @@ class WifiScanMixin:
                 # buffer the freshest possible results instead of freezing at
                 # whatever was last scanned before the interface connected.
                 trigger = await self._scan_trigger(interface)
+                if trigger.returncode == 0:
+                    self._clear_scan_trigger_failure(interface)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -518,7 +667,7 @@ class WifiScanMixin:
             # completed scan (this loop's or NetworkManager's) left behind.
             busy = "busy" in (trigger.stderr or trigger.stdout).lower()
             if not busy:
-                print(f"[pi_agent] {interface}: scan trigger: {(trigger.stderr or trigger.stdout).strip()}")
+                self._log_scan_trigger_failure(interface, (trigger.stderr or trigger.stdout).strip())
 
         # Outside the lock: this reads the cache, so it neither needs the
         # radio nor blocks a command that wants it. The results are from

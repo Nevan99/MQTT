@@ -1,4 +1,4 @@
-// --- Fleet: merged scan_wifi result across several (Pi, interface) targets
+// --- Fleet: merged nearby_hotspots result across several (Pi, interface) targets
 
 // Same de-dup key an AP is identified by everywhere else: its BSSID, or
 // its SSID if the BSSID wasn't reported (hidden/odd driver output).
@@ -128,7 +128,7 @@ function renderMergedWifiScan(container, targets, networks) {
   });
 }
 
-// One combined feed entry for a scan_wifi fan-out across several targets -
+// One combined feed entry for a nearby_hotspots fan-out across several targets -
 // replaces what would otherwise be one pending/complete entry per (Pi,
 // interface), which for a scan is just the same nearby APs reported N times.
 // Added immediately (pending, with the scanning spinner) so there's
@@ -160,16 +160,36 @@ function fillMergedScanEntry(entry, targets, networksByTarget) {
   renderMergedWifiScan(entry.querySelector('.result'), targets, merged);
 }
 
+// One command per Pi, carrying that Pi's whole interface list: the agent
+// scans its radios concurrently and merges them by BSSID itself, so this
+// no longer issues (and correlates) one command per (Pi, interface) pair.
+// Across Pis is still merged here, since no single agent can do that.
 async function sendScanWifiFanOut(targets, params, container) {
   const entry = createMergedScanEntry(targets, container);
-  const results = await Promise.allSettled(targets.map(({ piId, interface: iface }) =>
-    sendCommandAwaitResult(piId, 'scan_wifi', { ...params, interface: iface })
+  const byPi = new Map();
+  targets.forEach(({ piId, interface: iface }) => {
+    if (!byPi.has(piId)) byPi.set(piId, []);
+    if (iface) byPi.get(piId).push(iface);
+  });
+  const perPi = [...byPi.entries()];
+  const results = await Promise.allSettled(perPi.map(([piId, ifaces]) =>
+    sendCommandAwaitResult(piId, 'nearby_hotspots', { ...params, interfaces: ifaces })
   ));
   const networksByTarget = [];
   const failed = [];
   results.forEach((r, i) => {
-    if (r.status === 'fulfilled') networksByTarget.push((r.value && r.value.networks) || []);
-    else failed.push(`${targets[i].piId}/${targets[i].interface}: ${r.reason.message}`);
+    const [piId, ifaces] = perPi[i];
+    if (r.status === 'fulfilled') {
+      networksByTarget.push((r.value && r.value.networks) || []);
+      // A Pi can succeed overall while one of its radios failed - the
+      // agent reports those per interface rather than failing the command.
+      const perIface = r.value && r.value.errors;
+      if (perIface) {
+        Object.entries(perIface).forEach(([iface, msg]) => failed.push(`${piId}/${iface}: ${msg}`));
+      }
+    } else {
+      failed.push(`${piId}/${ifaces.join(',')}: ${r.reason.message}`);
+    }
   });
   if (failed.length) {
     alert(`${failed.length} of ${targets.length} scan(s) failed:\n${failed.join('\n')}`);
@@ -273,7 +293,7 @@ async function sendCommandAwaitResult(piId, action, params) {
   });
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
   const data = await res.json();
-  // scan_wifi (the only action sent through here) is cache-first on the
+  // nearby_hotspots (the only action sent through here) is cache-first on the
   // agent (get_wifi_scan in agent/wifi_scan.py), but falls back to a real,
   // uncached `iw scan` - with its own busy-retry backoff on top - whenever
   // the cache is empty (a freshly booted Pi, or an interface the
@@ -329,7 +349,7 @@ sendCmdBtn.addEventListener('click', async () => {
       }
       if (rejections.length) alert(rejections.join('\n'));
 
-      if (action === 'scan_wifi' && targets.length > 1) {
+      if (action === 'nearby_hotspots' && targets.length > 1) {
         // Scanning the same air from several interfaces just reports the
         // same nearby APs several times - merge into one de-duplicated
         // result instead of one feed entry per interface.
@@ -342,8 +362,8 @@ sendCmdBtn.addEventListener('click', async () => {
     } else if (needsInterface && Array.isArray(params.interface)) {
       // Single Pi target, but multiple interfaces checked - one command per
       // checked interface, same fan-out principle as multicast.
-      if (action === 'scan_wifi' && params.interface.length > 1) {
-        await sendScanWifiFanOut(params.interface.map(iface => ({ piId: target, interface: iface })), params);
+      if (action === 'nearby_hotspots' && (params.interfaces || []).length > 1) {
+        await sendScanWifiFanOut((params.interfaces || []).map(iface => ({ piId: target, interface: iface })), params);
       } else {
         await sendFanOut(params.interface.map(iface =>
           sendOneCommand(`${API}/pis/${encodeURIComponent(target)}/cmd`, action, { ...params, interface: iface })

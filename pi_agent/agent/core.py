@@ -182,8 +182,27 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
                     action, payload.get("command_id"), interface, self.disconnect_wifi, interface,
                 )
                 return
-            elif action == "scan_wifi":
-                result = await self.get_wifi_scan(payload.get("interface"))
+            elif action == "nearby_hotspots":
+                # Replaced scan_wifi. Takes `interfaces` (a list, or one
+                # name, or omitted for every scannable radio) and merges
+                # what they each saw by BSSID - see get_nearby_hotspots.
+                result = await self.get_nearby_hotspots(
+                    payload.get("interfaces") or payload.get("interface"),
+                )
+            elif action == "connect_hotspot":
+                # Fan-out connect: several of this Pi's radios onto one AP,
+                # concurrently. Dispatched off the message loop like the
+                # other connect paths, since it takes as long as the
+                # slowest radio's association plus DHCP. interface=None so
+                # dispatch takes no single lock - connect_hotspot takes one
+                # per radio itself.
+                self._dispatch_wifi_command(
+                    action, payload.get("command_id"), None, self.connect_hotspot,
+                    payload.get("ssid"), payload.get("password"),
+                    payload.get("bssid"), payload.get("channel"),
+                    payload.get("interfaces") or payload.get("interface"),
+                )
+                return
             elif action == "wifi_detail_scan":
                 # Served from cfg80211's scan cache, kept warm by
                 # _wifi_background_scan_one. This used to drive a fresh

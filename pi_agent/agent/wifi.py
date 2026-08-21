@@ -635,6 +635,60 @@ class WifiMixin:
         except Exception as e:
             return {"error": str(e)}
 
+    async def connect_hotspot(self, ssid=None, password=None, bssid=None,
+                              channel=None, interfaces=None):
+        """Join one hotspot on several of this Pi's radios at once.
+
+        The fleet use case this exists for is "put these four radios on that
+        AP and watch what it does with them" - previously four separate
+        connect_wifi commands, which had to be issued and correlated one at
+        a time. Here they run concurrently: each radio takes only its own
+        interface lock, so they neither serialise behind one another nor
+        race on shared state.
+
+        Note what is deliberately *not* shared: each radio associates
+        independently, so a partial outcome is normal and is reported as
+        such rather than collapsed into one pass/fail. `connected` is true
+        only when every requested radio made it.
+        """
+        if isinstance(interfaces, str):
+            interfaces = [interfaces]
+        if not interfaces:
+            return {"error": "interfaces is required"}
+        if not ssid and not bssid:
+            return {"error": "ssid or bssid is required"}
+
+        # Deduplicated, order preserved: the same interface twice would
+        # otherwise deadlock on its own lock.
+        ordered = list(dict.fromkeys(interfaces))
+
+        async def one(interface):
+            async with self._wifi_pending_command(interface):
+                async with self._wifi_lock_for(interface):
+                    return await self.connect_wifi(ssid, password, interface, bssid, channel)
+
+        outcomes = await asyncio.gather(*(one(i) for i in ordered), return_exceptions=True)
+
+        results = []
+        for interface, outcome in zip(ordered, outcomes):
+            if isinstance(outcome, asyncio.CancelledError):
+                raise outcome
+            if isinstance(outcome, Exception):
+                results.append({"interface": interface, "connected": False, "error": str(outcome)})
+            else:
+                results.append(outcome)
+
+        connected = [r["interface"] for r in results if r.get("connected")]
+        return {
+            "ssid": ssid,
+            "bssid": bssid,
+            "channel": channel,
+            "interfaces": ordered,
+            "connected_interfaces": connected,
+            "connected": len(connected) == len(ordered),
+            "results": results,
+        }
+
     def _dispatch_wifi_command(self, action, command_id, interface, fn, *args):
         """Runs connect_wifi/disconnect_wifi as its own task and publishes
         the result itself once done, instead of handle_command awaiting it

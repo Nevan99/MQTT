@@ -71,7 +71,7 @@ function detailAddCommandEntry(container, commandId, piId, action) {
     entry.querySelector('.toggle').innerHTML = entry.classList.contains('collapsed') ? '&#9654;' : '&#9660;';
   });
   container.prepend(entry);
-  if (action === 'scan_wifi') renderWifiScanLoading(entry.querySelector('.result'));
+  if (action === 'nearby_hotspots') renderWifiScanLoading(entry.querySelector('.result'));
   pollCommand(commandId, entry, piId, action);
 }
 
@@ -81,18 +81,27 @@ async function sendDetailCommand(actionSelectEl, paramsContainer, resultsContain
   const needsInterface = (ACTION_PARAMS[action] || []).some(f => f.type === 'interface');
   try {
     if (needsInterface && Array.isArray(params.interface)) {
-      if (!params.interface.length) {
+      const pickedInterfaces = params.interfaces || params.interface || [];
+      if (!pickedInterfaces.length) {
         alert('Select at least one interface.');
         return;
       }
-      if (action === 'scan_wifi' && params.interface.length > 1) {
-        // Same reasoning as the fleet command builder's fan-out - scanning
-        // the same air from several interfaces on this Pi just reports the
-        // same nearby APs several times, so merge into one de-duplicated
-        // result instead of one feed entry per interface.
+      if (action === 'nearby_hotspots') {
+        // One command for every selected radio: the agent scans them
+        // concurrently and merges by BSSID, so several radios looking at
+        // the same air report one de-duplicated list rather than the same
+        // APs once per interface.
         await sendScanWifiFanOut(
-          params.interface.map(iface => ({ piId, interface: iface })), params, resultsContainer,
+          (params.interfaces || []).map(iface => ({ piId, interface: iface })),
+          params, resultsContainer,
         );
+        return;
+      }
+      if (action === 'connect_hotspot') {
+        // Also one command - connect_hotspot joins every selected radio to
+        // the same AP concurrently and reports per-radio outcomes.
+        const res = await postCmd(piId, action, params);
+        if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
         return;
       }
       const tasks = params.interface.map(async iface => {
@@ -500,7 +509,7 @@ function applyWifiPasswordMemory(body, net, password) {
 }
 
 // One scanned AP, rendered as the same collapsed-card widget used
-// elsewhere (interface list, plain scan_wifi results), but with a
+// elsewhere (interface list, plain nearby_hotspots results), but with a
 // "connected" mark against the interface's current link_info and an
 // inline Connect/Disconnect control using the same fields as the
 // connect_wifi action (ssid/bssid/password/interface).
@@ -646,7 +655,7 @@ async function scanWifiNetworks(piId, iface, listEl, scanBtn) {
   scanBtn.disabled = true;
   renderWifiScanLoading(listEl, `Scanning ${iface} for networks…`);
   try {
-    const res = await postCmd(piId, 'scan_wifi', { interface: iface });
+    const res = await postCmd(piId, 'nearby_hotspots', { interfaces: [iface] });
     if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
     const data = await res.json();
     const result = await awaitCommandResult(data.command_id, 30);

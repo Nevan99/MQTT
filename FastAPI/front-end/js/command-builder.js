@@ -33,7 +33,22 @@ const ACTION_PARAMS = {
   ],
   disconnect_wifi: [{ name: 'interface', label: 'Interface', type: 'interface', required: true }],
   list_interfaces: [],
-  scan_wifi: [{ name: 'interface', label: 'Interface', type: 'interface', required: true }],
+  // Nearby hotspots across one or more radios. The interface picker is
+  // multi-select and the whole list goes in one command: the agent scans
+  // the radios concurrently and merges what they saw by BSSID, so an AP
+  // only one radio can hear still shows up, and one several can hear
+  // appears once with the best signal any of them measured.
+  nearby_hotspots: [{ name: 'interfaces', label: 'Interfaces', type: 'interface', required: true }],
+  // Join one hotspot on several radios at once. Pair it with a
+  // nearby_hotspots result: BSSID pins the exact AP, which is what the
+  // steering tests care about, while SSID alone lets each radio pick.
+  connect_hotspot: [
+    { name: 'ssid', label: 'SSID (ignored if BSSID is set)', type: 'text' },
+    { name: 'bssid', label: 'BSSID (optional - overrides SSID)', type: 'text' },
+    { name: 'password', label: 'Password (optional)', type: 'password' },
+    { name: 'channel', label: 'Channel (optional - ignored with BSSID)', type: 'number' },
+    { name: 'interfaces', label: 'Interfaces', type: 'interface', required: true },
+  ],
   // Monitor-mode's own channel setter (via iw, not nmcli - see
   // pi_agent.set_monitor_channel) - no band field, since iw's "set channel"
   // infers band from the channel number, same as connect_wifi's own default.
@@ -193,7 +208,7 @@ function addCommandEntry(commandId, piId, action) {
     entry.remove();
   });
   cmdResults.prepend(entry);
-  if (action === 'scan_wifi') renderWifiScanLoading(entry.querySelector('.result'));
+  if (action === 'nearby_hotspots') renderWifiScanLoading(entry.querySelector('.result'));
   pollCommand(commandId, entry, piId, action);
 }
 
@@ -297,8 +312,8 @@ function renderResultTable(container, obj) {
   container.appendChild(table);
 }
 
-// Spinner + text shown in place of a scan_wifi result while the scan is
-// still in flight - used by every scan_wifi entry point (plain action,
+// Spinner + text shown in place of a nearby_hotspots result while the scan
+// is still in flight - used by every entry point (plain action,
 // fleet merged multi-interface scan, per-interface "Nearby networks").
 function renderWifiScanLoading(container, text) {
   container.innerHTML = `
@@ -322,7 +337,7 @@ function sortNetworksBySsid(networks) {
   });
 }
 
-// scan_wifi's result is a list of nearby APs - shown as one collapsed card
+// nearby_hotspots' result is a list of nearby APs - shown as one collapsed card
 // per SSID (reusing the same card look as the interface list) instead of
 // the generic key-value table, so the scan reads as a scan rather than a
 // wall of JSON. Each card expands to BSSID/signal/mode/channel/rate/security.
@@ -384,7 +399,7 @@ function renderWifiScanResults(container, networks) {
   });
 }
 
-// A single-target scan_wifi result (one Pi, one interface - the common
+// A single-target nearby_hotspots result (one Pi - the common
 // case from the Fleet/detail Actions panel) reuses the exact same
 // connect-capable card as the per-interface "Nearby networks" widget
 // (renderWifiNetworkCard), instead of the connect-less plain result view -
@@ -417,10 +432,10 @@ function renderScanResultsWithConnect(container, piId, iface, networks) {
 }
 
 // Single dispatch point so every place a command's result gets rendered
-// (live poll, and restored history on page reload) picks scan_wifi's
+// (live poll, and restored history on page reload) picks nearby_hotspots'
 // per-AP cards over the generic key-value table without duplicating logic.
 function renderCommandResult(container, action, result, piId) {
-  if (action === 'scan_wifi' && result && Array.isArray(result.networks)) {
+  if (action === 'nearby_hotspots' && result && Array.isArray(result.networks)) {
     if (piId && result.interface) {
       renderScanResultsWithConnect(container, piId, result.interface, result.networks);
     } else {
