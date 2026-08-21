@@ -1,0 +1,6 @@
+# Test-only dependencies. The agent itself needs no third-party packages
+# beyond paho-mqtt and python-dotenv (installed on the Pi by install.sh) -
+# the test suite fakes both, so these are all that's needed to run it on a
+# dev machine.
+pytest>=8.0
+pytest-asyncio>=0.24

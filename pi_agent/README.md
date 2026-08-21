@@ -9,12 +9,47 @@ hostapd channel changes, ping).
 ```bash
 ./install-deps.sh                          # system tools: iperf3, tcpdump, iw, etc.
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt  # python deps: paho-mqtt, python-dotenv
+.venv/bin/pip install -r requirements.txt  # python deps: aiomqtt, python-dotenv
 ```
 
 `install-deps.sh` installs the command-line tools Pi_agent.py shells out to
 (apt-based, e.g. Raspberry Pi OS): `iperf3`, `tcpdump`, `iw`,
 `network-manager` (`nmcli`), `hostapd`, `iputils-ping`, `iproute2`.
+
+## Architecture
+
+The agent runs on a single asyncio event loop. It is almost entirely an
+orchestrator of CLI tools (`iw`, `nmcli`, `wpa_cli`, `dhcpcd`, `tcpdump`),
+so what used to be a thread per command and per background loop is now a
+task per command and per loop, with the waiting done by
+`asyncio.create_subprocess_exec` (see `agent/proc.py`) instead of by a
+blocked thread. On the 4-radios-per-Pi rigs that means a slow `iw scan` on
+one interface no longer occupies anything while the other three are worked
+on.
+
+Two pieces are worth knowing about:
+
+- `agent/proc.py` is the single seam every mixin's CLI calls go through.
+  `run_hard` additionally kills the whole process group on timeout, which
+  matters for `dhcpcd`/`nmcli` - they fork helpers that inherit the pipes,
+  and killing only the direct child leaves the read hanging.
+- `agent/wpa_events.py` listens on wpa_supplicant's control socket instead
+  of polling `wpa_cli status` once a second. Besides the latency, this is
+  the only way to see *why* an association failed: the async events carry
+  reason/status codes (`CTRL-EVENT-ASSOC-REJECT status_code=17`) that a
+  state poll never shows. Falls back to polling when the socket isn't
+  attachable.
+
+## Tests
+
+```bash
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest          # from this directory
+```
+
+The suite fakes both the CLI layer (`agent.proc`) and the MQTT client, so
+it needs no hardware, no broker, and no root. A handful of
+`agent/wpa_events.py` tests need `AF_UNIX` and skip on Windows.
 
 ## Configuration
 

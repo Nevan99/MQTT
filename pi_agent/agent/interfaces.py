@@ -1,11 +1,11 @@
+import asyncio
 import json
 import re
 import socket
-import subprocess
-import threading
-import time
 import uuid
 from datetime import datetime, timezone
+
+from . import proc
 
 
 class InterfacesMixin:
@@ -14,27 +14,25 @@ class InterfacesMixin:
     backend's InterfaceStatus buffer fresh. Relies on WifiMixin's
     get_link_info and _wifi_lock_for for the wifi-specific fields."""
 
-    def get_signal_stats(self):
+    async def get_signal_stats(self):
         """Pull RSSI / link stats for connected stations (Pi acting as AP)."""
-        out = subprocess.run(
+        out = (await proc.run(
             ["iw", "dev", "wlan0", "station", "dump"],
-            capture_output=True, text=True,
-        ).stdout
+        )).stdout
         return out.strip()
 
-    def ping_internet(self, interface=None, target=None, count=5):
+    async def ping_internet(self, interface=None, target=None, count=5):
         target = target or "8.8.8.8"
         count = int(count) if count else 5
 
         if interface:
-            subprocess.run(["ip", "neigh", "flush", "dev", interface],
-                            capture_output=True, text=True, timeout=10)
+            await proc.run(["ip", "neigh", "flush", "dev", interface], timeout=10)
 
         cmd = ["ping", target]
         if interface:
             cmd += ["-I", interface]
         cmd += ["-c", str(count)]
-        ret = subprocess.run(cmd, capture_output=True, text=True, timeout=count * 2 + 5)
+        ret = await proc.run(cmd, timeout=count * 2 + 5)
 
         stats_match = re.search(
             r'(\d+) packets transmitted, (\d+) (?:packets )?received, '
@@ -64,12 +62,11 @@ class InterfacesMixin:
             result["raw_output"] = ret.stdout.strip() or ret.stderr.strip()
         return result
 
-    def get_network_interfaces(self):
+    async def get_network_interfaces(self):
         """List local network interface names (excluding loopback)."""
-        out = subprocess.run(
+        out = (await proc.run(
             ["ip", "-o", "link", "show"],
-            capture_output=True, text=True,
-        ).stdout
+        )).stdout
         interfaces = []
         for line in out.splitlines():
             m = re.match(r'^\d+:\s+([^:@]+)', line)
@@ -77,14 +74,13 @@ class InterfacesMixin:
                 interfaces.append(m.group(1))
         return interfaces
 
-    def get_interface_details(self):
+    async def get_interface_details(self):
         """Per-interface details (excluding loopback): MAC, link state, MTU,
         and type (wifi/ethernet/other) - richer than get_network_interfaces's
         plain name list, for the list_interfaces UI table."""
-        out = subprocess.run(
+        out = (await proc.run(
             ["ip", "-o", "link", "show"],
-            capture_output=True, text=True,
-        ).stdout
+        )).stdout
         details = []
         for line in out.splitlines():
             head = re.match(r'^\d+:\s+([^:@]+)(?:@\S+)?:\s+<(\S*)>', line)
@@ -115,22 +111,22 @@ class InterfacesMixin:
                 "type": "monitor" if link_type and "radiotap" in link_type else
                         ("wifi" if name.startswith(("wl", "wlan")) else
                          ("ethernet" if link_type == "ether" else link_type)),
-                "ip_address": self.get_interface_ip(name),
-                "ipv6_address": self.get_interface_ipv6(name),
+                "ip_address": await self.get_interface_ip(name),
+                "ipv6_address": await self.get_interface_ipv6(name),
             })
         return details
 
-    def _wired_source_ip(self):
+    async def _wired_source_ip(self):
         """IP address of a connected wired interface, if any - used to bind
         the MQTT connection's local socket to it (see run()), so the
         agent's control-plane traffic prefers wired over wifi whenever both
         are up, without touching system-wide routing."""
-        for iface in self.get_interface_details():
+        for iface in await self.get_interface_details():
             if iface["type"] == "ethernet" and iface["state"] == "UP" and iface["ip_address"]:
                 return iface["ip_address"]
         return None
 
-    def get_interface_ip(self, interface, family="4"):
+    async def get_interface_ip(self, interface, family="4"):
         """Best-effort address currently assigned to a given interface.
         family="4" (default) returns the IPv4 address, unchanged from
         before. family="6" returns an IPv6 address, preferring a global
@@ -140,10 +136,9 @@ class InterfacesMixin:
         once real IPv6 connectivity/autoconf has happened."""
         if not interface:
             return None
-        out = subprocess.run(
+        out = (await proc.run(
             ["ip", f"-{family}", "-o", "addr", "show", interface],
-            capture_output=True, text=True,
-        ).stdout
+        )).stdout
         if family == "6":
             addrs = re.findall(r'inet6 ([0-9a-fA-F:]+)/\d+', out)
             global_addrs = [a for a in addrs if not a.startswith("fe80:")]
@@ -151,14 +146,14 @@ class InterfacesMixin:
         m = re.search(r'inet (\d+\.\d+\.\d+\.\d+)', out)
         return m.group(1) if m else None
 
-    def get_interface_ipv6(self, interface):
-        return self.get_interface_ip(interface, family="6")
+    async def get_interface_ipv6(self, interface):
+        return await self.get_interface_ip(interface, family="6")
 
-    def get_interface_ips(self):
+    async def get_interface_ips(self):
         """Map of interface name -> IPv4 address for every non-loopback interface."""
         return {
-            interface: self.get_interface_ip(interface)
-            for interface in self.get_network_interfaces()
+            interface: await self.get_interface_ip(interface)
+            for interface in await self.get_network_interfaces()
         }
 
     def get_ip_address(self):
@@ -182,18 +177,27 @@ class InterfacesMixin:
     # only feeds the passive/periodic display.
     INTERFACE_STATUS_INTERVAL_SECONDS = 5
 
-    def _interface_status_loop(self):
+    async def _interface_status_loop(self):
         while True:
-            time.sleep(self.INTERFACE_STATUS_INTERVAL_SECONDS)
+            await asyncio.sleep(self.INTERFACE_STATUS_INTERVAL_SECONDS)
             try:
-                details_list = self.get_interface_details()
+                details_list = await self.get_interface_details()
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 print(f"[pi_agent] interface status: failed to list interfaces: {e}")
                 continue
-            for details in details_list:
-                threading.Thread(target=self._publish_interface_status, args=(details,), daemon=True).start()
+            outcomes = await asyncio.gather(
+                *(self._publish_interface_status(d) for d in details_list),
+                return_exceptions=True,
+            )
+            for details, outcome in zip(details_list, outcomes):
+                if isinstance(outcome, asyncio.CancelledError):
+                    raise outcome
+                if isinstance(outcome, Exception):
+                    print(f"[pi_agent] interface status failed for {details.get('name')}: {outcome}")
 
-    def _publish_interface_status(self, details):
+    async def _publish_interface_status(self, details):
         interface = details["name"]
         link = None
         # Name-based, not details["type"] == "wifi" - matches the frontend's
@@ -208,15 +212,18 @@ class InterfacesMixin:
             # Non-blocking, same reasoning as _wifi_background_scan_one - an
             # interface a user-triggered wifi command currently holds the
             # lock for is skipped this cycle rather than waited on.
-            lock = self._wifi_lock_for(interface)
-            if not lock.acquire(blocking=False):
+            if self._wifi_command_pending(interface):
                 return
-            try:
-                link = self.get_link_info(interface)
-            except Exception as e:
-                link = {"error": str(e)}
-            finally:
-                lock.release()
+            lock = self._wifi_lock_for(interface)
+            if lock.locked():
+                return
+            async with lock:
+                try:
+                    link = await self.get_link_info(interface)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    link = {"error": str(e)}
 
         result = {
             "interface": interface,
@@ -243,6 +250,8 @@ class InterfacesMixin:
         result["pi_id"] = self.pi_id
         result["timestamp"] = datetime.now(timezone.utc).isoformat()
         try:
-            self.client.publish(self.result_topic, json.dumps(result), qos=1)
+            await self.publish(self.result_topic, json.dumps(result), qos=1)
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             print(f"[pi_agent] failed to publish interface status for {interface}: {e}")

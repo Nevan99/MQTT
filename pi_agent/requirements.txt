@@ -1,0 +1,8 @@
+# Runtime dependencies for the agent on each Pi.
+#
+# aiomqtt replaced paho-mqtt when the agent moved to asyncio: it wraps paho
+# (still installed, as its dependency) in an async client, so the message
+# loop is `async for message in client.messages` rather than a callback on
+# paho's own network thread.
+aiomqtt>=2.0
+python-dotenv>=1.0

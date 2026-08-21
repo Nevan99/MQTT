@@ -3,7 +3,12 @@
 # agent/wifi.py, wifi_scan.py, interfaces.py, streaming.py, webui_proxy.py).
 # Kept as pi_agent.py, not renamed, since pi-agent.service's ExecStart
 # points at this exact filename.
+import asyncio
+
 from agent import PiAgent
 
 if __name__ == "__main__":
-    PiAgent().run()
+    try:
+        asyncio.run(PiAgent().start())
+    except KeyboardInterrupt:
+        pass
