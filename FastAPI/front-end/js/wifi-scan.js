@@ -273,7 +273,15 @@ async function sendCommandAwaitResult(piId, action, params) {
   });
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
   const data = await res.json();
-  return awaitCommandResult(data.command_id, 30);
+  // scan_wifi (the only action sent through here) is cache-first on the
+  // agent (get_wifi_scan in agent/wifi_scan.py), but falls back to a real,
+  // uncached `iw scan` - with its own busy-retry backoff on top - whenever
+  // the cache is empty (a freshly booted Pi, or an interface the
+  // background scan loop hasn't reached yet). That legitimate cold-cache
+  // path can comfortably run past 30s, especially on a dual-band radio -
+  // the old 30s ceiling here turned a still-in-progress scan into a
+  // spurious "timed out waiting for the Pi" instead of just waiting for it.
+  return awaitCommandResult(data.command_id, 120);
 }
 
 sendCmdBtn.addEventListener('click', async () => {
