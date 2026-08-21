@@ -38,9 +38,9 @@ const WIRESHARK_TABLE_HTML = `
 `;
 
 function formatPacketTime(iso) {
-  const d = new Date(iso);
+  const d = parseApiDate(iso);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleTimeString('en-GB', { hour12: false }) + '.' + String(d.getMilliseconds()).padStart(3, '0');
+  return d.toLocaleTimeString('en-GB', { hour12: false, timeZone: VN_TIME_ZONE }) + '.' + String(d.getMilliseconds()).padStart(3, '0');
 }
 
 const PACKET_TABLE_PROTO_CLASSES = new Set(['tcp', 'udp', 'arp', 'icmp']);

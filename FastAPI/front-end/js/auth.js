@@ -1,5 +1,42 @@
 const API = '';
 
+// --- Date/time display -------------------------------------------------
+// Every timestamp from the backend is stored/sent as UTC (ISO 8601) -
+// `new Date(...).toLocaleString()` used to render it in whatever timezone
+// the browser/OS itself is set to, which drifted from Vietnam time on any
+// machine not explicitly configured for it. These pin every timestamp
+// display in the app to Asia/Ho_Chi_Minh (ICT, UTC+7) regardless of the
+// viewing machine's own timezone setting.
+const VN_TIME_ZONE = 'Asia/Ho_Chi_Minh';
+
+// SQLite drops timezone info on write, so every datetime the backend sends
+// back over the API - despite being generated as UTC-aware (utcnow() in
+// database/models.py) - round-trips as a bare, marker-less ISO string like
+// "2026-08-21T09:15:00" instead of "...+00:00"/"...Z". `new Date(...)`
+// treats a string with no timezone marker as *local browser time*, not
+// UTC - so without this, every timestamp got silently reinterpreted
+// through whatever timezone the viewing machine happens to be set to
+// before VN formatting was even applied. Every such timestamp in this app
+// is UTC by convention, so a missing marker is appended before parsing.
+function parseApiDate(value) {
+  const s = String(value);
+  const hasTz = /Z$|[+-]\d\d:?\d\d$/.test(s);
+  return new Date(hasTz ? s : s + 'Z');
+}
+
+function formatVnDateTime(value) {
+  if (!value) return '';
+  const d = value instanceof Date ? value : parseApiDate(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-GB', { timeZone: VN_TIME_ZONE });
+}
+
+function formatVnTime(value) {
+  const d = value instanceof Date ? value : (value ? parseApiDate(value) : new Date());
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString('en-GB', { timeZone: VN_TIME_ZONE });
+}
+
 // --- Auth ------------------------------------------------------------------
 
 const AUTH_TOKEN_KEY = 'pi_fleet_token';

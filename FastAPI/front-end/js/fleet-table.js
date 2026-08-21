@@ -1189,7 +1189,7 @@ function renderOnePiRow(p, seen) {
   entry.summaryRow.querySelector('.c-ip').textContent = p.ip_address || '';
   entry.summaryRow.querySelector('.c-role').textContent = p.role || '';
   entry.summaryRow.querySelector('.c-status').innerHTML = statusBadge(p.status);
-  entry.summaryRow.querySelector('.c-seen').textContent = p.last_seen ? new Date(p.last_seen).toLocaleString() : '';
+  entry.summaryRow.querySelector('.c-seen').textContent = p.last_seen ? formatVnDateTime(p.last_seen) : '';
   entry.summaryRow.querySelector('.pi-select-checkbox').checked = checkedPiIds.has(p.pi_id);
 
   const interfaces = (p.metadata && Array.isArray(p.metadata.interfaces)) ? p.metadata.interfaces : [];

@@ -377,19 +377,6 @@ class WifiMixin:
         }
 
     def disconnect_wifi(self, interface=None):
-        """Disconnect this interface, regardless of which mechanism
-        currently owns its association.
-
-        connect_wifi always connects via wpa_supplicant now, but an
-        interface can still be nmcli-owned - e.g. it was connected before
-        this agent was updated to the wpa_supplicant flow, and never went
-        through connect_wifi (and therefore _ensure_wpa_supplicant_running)
-        since. Only handling the wpa_supplicant case here (the original
-        version of this method) left an nmcli-owned connection's profile
-        untouched: nmcli would just re-associate and re-acquire an IP right
-        after, silently undoing the disconnect. So this now always tries
-        both teardown paths - each is a harmless no-op/error if that
-        mechanism isn't actually the one holding the interface."""
         if not interface:
             return {"error": "interface is required"}
 
@@ -398,18 +385,14 @@ class WifiMixin:
             term_ret = self._wpa_cli(interface, "terminate")
             outputs.append((term_ret.stdout or term_ret.stderr).strip())
 
-        dhcp_ret = self._run_hard_timeout(["dhcpcd", "-k", interface], timeout=15)
-        outputs.append((dhcp_ret.stdout or dhcp_ret.stderr).strip())
+            dhcp_ret = self._run_hard_timeout(["dhcpcd", "-k", interface], timeout=15)
+            outputs.append((dhcp_ret.stdout or dhcp_ret.stderr).strip())
 
-        # Hand back to NetworkManager *before* asking it to disconnect - if
-        # the interface was left "managed no" from a previous wpa_supplicant
-        # session, nmcli can't act on it (and thus can't disconnect it)
-        # until this runs.
-        nm_managed_ret = self._run_hard_timeout(["nmcli", "device", "set", interface, "managed", "yes"], timeout=30)
-        outputs.append((nm_managed_ret.stdout or nm_managed_ret.stderr).strip())
-
-        nm_disconnect_ret = self._run_hard_timeout(["nmcli", "device", "disconnect", interface], timeout=30)
-        outputs.append((nm_disconnect_ret.stdout or nm_disconnect_ret.stderr).strip())
+            nm_managed_ret = self._run_hard_timeout(["nmcli", "device", "set", interface, "managed", "yes"], timeout=15)
+            outputs.append((nm_managed_ret.stdout or nm_managed_ret.stderr).strip())
+        else:
+            nm_disconnect_ret = self._run_hard_timeout(["nmcli", "device", "disconnect", interface], timeout=30)
+            outputs.append((nm_disconnect_ret.stdout or nm_disconnect_ret.stderr).strip())
 
         subprocess.run(["ip", "addr", "flush", "dev", interface], capture_output=True, text=True, timeout=15)
 

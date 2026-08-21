@@ -305,6 +305,18 @@ class WifiScanMixin:
             "mac_group": None,
         }
 
+    # Right after boot (or a pi-agent restart), NetworkManager is often still
+    # mid-reconnect on this interface (scanning/associating/DHCP against a
+    # saved profile) and holds the radio busy for anywhere up to a couple
+    # minutes - a concurrent `iw scan` fails with EBUSY ("Device or resource
+    # busy") for the whole time. A single failed attempt used to just get
+    # silently dropped for the cycle (next attempt 3s later, same story) -
+    # retrying a few times with backoff inside one call gives NM's own
+    # in-progress scan a real chance to finish and free the radio before
+    # this gives up, instead of always waiting for the next external
+    # WIFI_BACKGROUND_SCAN_INTERVAL_SECONDS tick to try again.
+    SCAN_BUSY_RETRY_DELAYS_SECONDS = (1, 2, 4)
+
     def get_wifi_scan_detail(self, interface):
         """Detailed per-AP scan for the "Wifi Info" popup - see
         _parse_scan_bss_block for what's decoded from `iw`'s output. History
@@ -315,10 +327,7 @@ class WifiScanMixin:
         if not interface:
             return {"error": "interface is required"}
 
-        ret = subprocess.run(
-            ["iw", "dev", interface, "scan"],
-            capture_output=True, text=True, timeout=30,
-        )
+        ret = self._run_scan_with_busy_retry(interface)
         if ret.returncode != 0:
             return {"interface": interface, "error": (ret.stderr or ret.stdout).strip()}
 
@@ -329,6 +338,25 @@ class WifiScanMixin:
         blocks = re.split(r'^BSS ', ret.stdout, flags=re.MULTILINE)[1:]
         networks = [n for n in (self._parse_scan_bss_block(b, connected_bssid) for b in blocks) if n]
         return {"interface": interface, "networks": networks}
+
+    def _run_scan_with_busy_retry(self, interface):
+        delays = (0,) + self.SCAN_BUSY_RETRY_DELAYS_SECONDS
+        ret = None
+        for i, delay in enumerate(delays):
+            if delay:
+                time.sleep(delay)
+            ret = subprocess.run(
+                ["iw", "dev", interface, "scan"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if ret.returncode == 0:
+                return ret
+            busy = "busy" in (ret.stderr or ret.stdout).lower()
+            if not busy or i == len(delays) - 1:
+                if busy:
+                    print(f"[pi_agent] {interface}: scan still busy after {sum(delays)}s of retries, giving up this cycle")
+                return ret
+        return ret
 
     # Keeps the backend's WifiScanHistory buffer (see
     # mqtt_service._update_wifi_scan_history) continuously fresh, so the

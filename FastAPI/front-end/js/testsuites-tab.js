@@ -107,7 +107,7 @@ function renderTsTable() {
     const details = [
       s.tags && s.tags.length ? `tags: ${s.tags.join(', ')}` : null,
       s.author ? `author: ${s.author}` : null,
-      `updated: ${new Date(s.updated_at).toLocaleString()}`,
+      `updated: ${formatVnDateTime(s.updated_at)}`,
     ].filter(Boolean).join(' · ');
     return `
     <tr>
@@ -436,8 +436,8 @@ async function loadTsRunHistory() {
           <tr>
             <td>${r.testsuite_name}</td>
             <td><span class="cmd-status ${tcStatusClass(r.status)}">${r.status}</span></td>
-            <td>${new Date(r.started_at).toLocaleString()}</td>
-            <td>${r.completed_at ? new Date(r.completed_at).toLocaleString() : ''}</td>
+            <td>${formatVnDateTime(r.started_at)}</td>
+            <td>${r.completed_at ? formatVnDateTime(r.completed_at) : ''}</td>
             <td><button class="icon-btn ts-run-history-view-btn" data-id="${r.id}" title="View">&#9654;</button></td>
           </tr>
         `).join('')

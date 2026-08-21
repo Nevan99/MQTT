@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -159,13 +159,18 @@ def clear_pi_logs(pi_id: str, category: str, session: Session = Depends(get_sess
 
 # A WifiScanHistory row is upserted forever once a BSSID is first seen (see
 # mqtt_service._update_wifi_scan_history) - first_seen/detection_count only
-# make sense as a running history, not something that gets deleted. But an
-# AP that's since been turned off would otherwise sit in this endpoint's
-# result indefinitely with a last_seen that stops moving - at the current
-# ~3s scan cadence (see PiAgent.WIFI_BACKGROUND_SCAN_INTERVAL_SECONDS), a
-# row that hasn't been refreshed in this long is a reliable signal the AP
-# is actually gone, not just a slow poll cycle.
-WIFI_HISTORY_STALE_SECONDS = 60
+# make sense as a running history, not something that gets deleted, so it
+# can't be used on its own to tell "AP is gone" apart from "Pi just hasn't
+# produced a fresh successful scan in a while" (e.g. NetworkManager holding
+# the radio busy for a couple minutes right after a Pi reboot - see
+# PiAgent.SCAN_BUSY_RETRY_DELAYS_SECONDS). Membership in the
+# WifiScanSnapshot cache (below) is what now decides whether an AP is still
+# "in range" - that cache is self-pruning (only the WIFI_SCAN_SNAPSHOT_CAP
+# most recent *successful* scans are kept, see mqtt_service.py), so it
+# naturally keeps showing the last known-good result through any gap in
+# scanning instead of going blank the moment a wall-clock cutoff elapses,
+# and only actually drops an AP once enough real scans have happened
+# without seeing it again.
 
 
 @router.get("/{pi_id}/wifi-history", response_model=list[dict])
@@ -179,11 +184,13 @@ def get_wifi_scan_history(pi_id: str, interface: str, session: Session = Depends
     snapshots. Each entry is that snapshot's raw per-AP fields (phy type,
     security, cipher, etc.) plus the WifiScanHistory rollup columns
     (first/last seen, detection count, min/max/avg signal quality) a single
-    snapshot can't provide. Rows for APs no longer in range are dropped via
-    the same WIFI_HISTORY_STALE_SECONDS staleness check as before. Ordered
-    most-recently-seen first, so an AP still being actively rescanned every
-    cycle stays pinned near the top."""
-    cutoff = datetime.now(timezone.utc) - timedelta(seconds=WIFI_HISTORY_STALE_SECONDS)
+    snapshot can't provide. An AP is included as long as it's present in
+    that snapshot cache - no separate wall-clock staleness cutoff, so a
+    stretch of failed/skipped scans (e.g. right after a Pi reboot) keeps
+    showing the last cached result instead of blanking the popup, while an
+    AP that's genuinely gone still ages out once enough fresh scans have
+    passed without seeing it. Ordered most-recently-seen first, so an AP
+    still being actively rescanned every cycle stays pinned near the top."""
     snapshots = session.exec(
         select(WifiScanSnapshot).where(
             WifiScanSnapshot.pi_id == pi_id, WifiScanSnapshot.interface == interface,
@@ -203,9 +210,9 @@ def get_wifi_scan_history(pi_id: str, interface: str, session: Session = Depends
     history_rows = session.exec(
         select(WifiScanHistory).where(
             WifiScanHistory.pi_id == pi_id, WifiScanHistory.interface == interface,
-            WifiScanHistory.last_seen >= cutoff,
+            WifiScanHistory.bssid.in_(list(by_bssid.keys())),
         )
-    ).all()
+    ).all() if by_bssid else []
 
     out = []
     for r in history_rows:

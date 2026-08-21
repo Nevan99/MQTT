@@ -18,4 +18,17 @@ sed -e "s#__PI_AGENT_DIR__#$SCRIPT_DIR#g" -e "s#__VENV_DIR__#$VENV_DIR#g" \
 sudo systemctl daemon-reload
 sudo systemctl enable "$UNIT_NAME"
 sudo systemctl restart "$UNIT_NAME"
+
+# Every wifi interface here is driven end-to-end by pi_agent itself (see
+# 99-pi-agent-unmanaged-wifi.conf) - NetworkManager fighting the agent for
+# the same interface during its own boot-time reconnect was the source of
+# the "Device or resource busy" scan failures and slow connects/disconnects.
+# Safe to re-run: NetworkManager just reloads the same config each time.
+if [[ -d /etc/NetworkManager/conf.d ]]; then
+    sudo cp "$SCRIPT_DIR/99-pi-agent-unmanaged-wifi.conf" /etc/NetworkManager/conf.d/
+    sudo systemctl restart NetworkManager
+else
+    echo "Note: /etc/NetworkManager/conf.d not found - skipping the unmanaged-wifi config (NetworkManager not installed?)" >&2
+fi
+
 systemctl status "$UNIT_NAME" --no-pager

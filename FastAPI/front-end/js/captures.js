@@ -13,7 +13,7 @@ async function loadCaptures() {
         <td>${c.category}</td>
         <td>${c.name}</td>
         <td>${c.category === 'pcap' ? '—' : c.line_count}</td>
-        <td>${new Date(c.created_at).toLocaleString()}</td>
+        <td>${formatVnDateTime(c.created_at)}</td>
         <td class="capture-actions">
           <a href="${withToken(`${API}/captures/${c.id}/download`)}" class="icon-btn" title="Download">&#8681;</a>
           <button class="icon-btn capture-delete" data-capture-id="${c.id}" title="Delete">&#128465;</button>

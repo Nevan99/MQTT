@@ -135,7 +135,7 @@ function renderDetailInfo(piId) {
     <div class="pd-info-row"><span class="k">IP</span><span class="v">${pi ? (pi.ip_address || '') : ''}</span></div>
     <div class="pd-info-row"><span class="k">Role</span><span class="v">${pi ? (pi.role || '') : ''}</span></div>
     <div class="pd-info-row"><span class="k">Status</span><span class="v">${pi ? statusBadge(pi.status) : ''}</span></div>
-    <div class="pd-info-row"><span class="k">Last seen</span><span class="v">${pi && pi.last_seen ? new Date(pi.last_seen).toLocaleString() : ''}</span></div>
+    <div class="pd-info-row"><span class="k">Last seen</span><span class="v">${pi && pi.last_seen ? formatVnDateTime(pi.last_seen) : ''}</span></div>
   `;
 }
 

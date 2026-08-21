@@ -31,10 +31,10 @@ const WIFI_INFO_COLUMNS = [
   ['Channels Range', net => net.channels_range],
   ['BSS Type', net => net.bss_type],
   ['WPS Support', net => net.wps_support == null ? null : (net.wps_support ? 'Yes' : 'No')],
-  ['First Detection', net => net.first_seen ? new Date(net.first_seen).toLocaleString() : null],
-  ['Last Detection', net => net.last_seen ? new Date(net.last_seen).toLocaleString() : null],
+  ['First Detection', net => net.first_seen ? formatVnDateTime(net.first_seen) : null],
+  ['Last Detection', net => net.last_seen ? formatVnDateTime(net.last_seen) : null],
   ['Detection Count', net => net.detection_count],
-  ['Start Time', net => net.first_seen ? new Date(net.first_seen).toLocaleString() : null],
+  ['Start Time', net => net.first_seen ? formatVnDateTime(net.first_seen) : null],
   ['Minimum Signal Quality', net => net.min_signal_percent != null ? `${net.min_signal_percent}%` : null],
   ['Maximum Signal Quality', net => net.max_signal_percent != null ? `${net.max_signal_percent}%` : null],
   ['802.11 Standards', net => net.phy_type],
@@ -315,8 +315,8 @@ async function refreshWifiInfoModal(bodyEl, statusEl, piId, iface) {
     // 5s poll shouldn't blank out the last-good table the user is looking at.
     const usedFreshData = renderWifiInfoTable(bodyEl, networks);
     statusEl.textContent = usedFreshData
-      ? `Buffered as of ${new Date().toLocaleTimeString()}`
-      : `Buffered as of ${new Date().toLocaleTimeString()} (no networks this cycle - showing last known)`;
+      ? `Buffered as of ${formatVnTime()}`
+      : `Buffered as of ${formatVnTime()} (no networks this cycle - showing last known)`;
   } catch (err) {
     if (!bodyEl.querySelector('.wifi-info-table')) {
       bodyEl.innerHTML = `<div class="pi-log-empty">failed to load: ${err.message}</div>`;

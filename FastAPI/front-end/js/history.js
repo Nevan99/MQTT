@@ -43,7 +43,7 @@ async function loadHistory() {
         <td>${c.pi_id}</td>
         <td>${actionLabel(c.action)}</td>
         <td><span class="cmd-status ${displayStatus}">${displayStatus}</span></td>
-        <td>${new Date(c.created_at).toLocaleString()}</td>
+        <td>${formatVnDateTime(c.created_at)}</td>
         <td class="capture-actions">
           <button class="icon-btn history-toggle" title="Show result">&#9654;</button>
           <button class="icon-btn history-delete" data-command-id="${c.command_id}" title="Delete">&#128465;</button>

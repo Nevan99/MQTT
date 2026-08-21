@@ -115,7 +115,7 @@ function renderTcTable() {
       <td>${t.status}</td>
       <td>${t.steps.length}</td>
       <td>${t.author || ''}</td>
-      <td>${new Date(t.updated_at).toLocaleString()}</td>
+      <td>${formatVnDateTime(t.updated_at)}</td>
       <td class="capture-actions">
         <button class="icon-btn tc-run-btn" data-id="${t.id}" title="Run">&#9654;</button>
         <button class="icon-btn tc-edit-btn" data-id="${t.id}" title="Edit">&#9998;</button>
@@ -531,8 +531,8 @@ async function loadTcRunHistory() {
           <tr>
             <td>${r.testcase_name}</td>
             <td><span class="cmd-status ${tcStatusClass(r.status)}">${r.status}</span></td>
-            <td>${new Date(r.started_at).toLocaleString()}</td>
-            <td>${r.completed_at ? new Date(r.completed_at).toLocaleString() : ''}</td>
+            <td>${formatVnDateTime(r.started_at)}</td>
+            <td>${r.completed_at ? formatVnDateTime(r.completed_at) : ''}</td>
             <td><button class="icon-btn tc-run-history-view-btn" data-id="${r.id}" title="View">&#9654;</button></td>
           </tr>
         `).join('')
