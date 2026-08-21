@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
 from database.database import get_session
-from database.models import Pi, LogEntry, WifiScanHistory, InterfaceStatus
+from database.models import Pi, LogEntry, WifiScanHistory, WifiScanSnapshot, InterfaceStatus
 from schemas.schemas import PiOut, LogEntryOut, PrimaryInterfaceRequest, InterfaceDefaultRequest
 from service.auth import get_current_user
 
@@ -170,33 +170,46 @@ WIFI_HISTORY_STALE_SECONDS = 60
 
 @router.get("/{pi_id}/wifi-history", response_model=list[dict])
 def get_wifi_scan_history(pi_id: str, interface: str, session: Session = Depends(get_session)):
-    """The "Wifi Info" popup's sole data source: one row per AP currently
-    visible on this (Pi, interface) - i.e. refreshed within the last
-    WIFI_HISTORY_STALE_SECONDS - continuously kept fresh in the background
-    by pi_agent (PiAgent._wifi_background_scan_loop) rather than a scan
-    triggered by opening the popup - so this always has a ready result
-    (up to WIFI_BACKGROUND_SCAN_INTERVAL_SECONDS stale) instead of the
-    caller waiting on a live `iw scan` round-trip. Each row is the latest
-    full per-AP snapshot (last_result_json - phy type, security, cipher,
-    etc.) plus the rollup columns (first/last seen, detection count,
-    min/max/avg signal quality) a single snapshot can't provide. Rows for
-    APs no longer in range stay in the database (detection history is never
-    deleted) - they're just filtered out of what this endpoint returns.
-    Ordered most-recently-seen first, so an AP still being actively
-    rescanned every cycle stays pinned near the top."""
+    """The "Wifi Info" popup's data source. Unions the last
+    WIFI_SCAN_SNAPSHOT_CAP (mqtt_service.py) full wifi_detail_scan results
+    cached for this (Pi, interface) into one per-AP list, deduped by bssid
+    (most recent snapshot containing that bssid wins) - so a single thin or
+    empty scan cycle (an off-channel dwell, a busy radio) doesn't blank the
+    popup as long as the AP showed up in any of the other still-cached
+    snapshots. Each entry is that snapshot's raw per-AP fields (phy type,
+    security, cipher, etc.) plus the WifiScanHistory rollup columns
+    (first/last seen, detection count, min/max/avg signal quality) a single
+    snapshot can't provide. Rows for APs no longer in range are dropped via
+    the same WIFI_HISTORY_STALE_SECONDS staleness check as before. Ordered
+    most-recently-seen first, so an AP still being actively rescanned every
+    cycle stays pinned near the top."""
     cutoff = datetime.now(timezone.utc) - timedelta(seconds=WIFI_HISTORY_STALE_SECONDS)
-    rows = session.exec(
+    snapshots = session.exec(
+        select(WifiScanSnapshot).where(
+            WifiScanSnapshot.pi_id == pi_id, WifiScanSnapshot.interface == interface,
+        ).order_by(WifiScanSnapshot.scanned_at.desc())
+    ).all()
+    by_bssid: dict[str, dict] = {}
+    for snap in snapshots:
+        try:
+            networks = json.loads(snap.networks_json)
+        except (TypeError, ValueError):
+            continue
+        for net in networks:
+            bssid = net.get("bssid")
+            if bssid and bssid not in by_bssid:
+                by_bssid[bssid] = net
+
+    history_rows = session.exec(
         select(WifiScanHistory).where(
             WifiScanHistory.pi_id == pi_id, WifiScanHistory.interface == interface,
             WifiScanHistory.last_seen >= cutoff,
-        ).order_by(WifiScanHistory.last_seen.desc())
+        )
     ).all()
+
     out = []
-    for r in rows:
-        try:
-            net = json.loads(r.last_result_json)
-        except (TypeError, ValueError):
-            net = {}
+    for r in history_rows:
+        net = dict(by_bssid.get(r.bssid, {}))
         net.update({
             "bssid": r.bssid,
             "ssid": r.ssid or net.get("ssid"),
@@ -208,6 +221,7 @@ def get_wifi_scan_history(pi_id: str, interface: str, session: Session = Depends
             "avg_signal_percent": round(r.signal_sum / r.detection_count, 1) if r.detection_count else None,
         })
         out.append(net)
+    out.sort(key=lambda n: n["last_seen"], reverse=True)
     return out
 
 

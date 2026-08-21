@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import signal
 import subprocess
 import threading
 import time
@@ -208,6 +209,42 @@ class WifiMixin:
     def _wpa_cli(self, interface, *args, timeout=15):
         return subprocess.run(["wpa_cli", "-i", interface, *args], capture_output=True, text=True, timeout=timeout)
 
+    @staticmethod
+    def _run_hard_timeout(cmd, timeout):
+        """Like subprocess.run(cmd, capture_output=True, text=True,
+        timeout=timeout), but actually guarantees returning within
+        `timeout` seconds. Plain subprocess.run's timeout only kills the
+        *direct* child process - if that child (dhcpcd, nmcli) forks a
+        background helper that inherits its stdout/stderr pipe, communicate()
+        can keep blocking forever waiting for that grandchild to close the
+        pipe, even though the direct process was already killed. This runs
+        the command in its own process group (start_new_session=True) so a
+        timeout can SIGKILL the whole group, not just the one process.
+
+        This matters more than it looks: _dispatch_wifi_command holds this
+        interface's wifi lock until the function it's running actually
+        returns - a call that hangs past its nominal timeout doesn't just
+        leave one command "pending" forever, it deadlocks every future
+        connect/disconnect on this interface until the agent is restarted."""
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            start_new_session=True,
+        )
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+            return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                stdout, stderr = proc.communicate(timeout=5)
+            except Exception:
+                stdout, stderr = "", ""
+            stderr = (stderr or "") + f"\n[pi_agent] {cmd[0]} killed after exceeding {timeout}s (process group)"
+            return subprocess.CompletedProcess(cmd, -9, stdout, stderr)
+
     def _ensure_wpa_supplicant_running(self, interface):
         """Starts a wpa_supplicant instance for this interface if one isn't
         already running (reusing an existing one - e.g. from a previous
@@ -216,8 +253,7 @@ class WifiMixin:
         if self._wpa_ctrl_socket_exists(interface):
             return True, ""
 
-        subprocess.run(["nmcli", "device", "set", interface, "managed", "no"],
-                        capture_output=True, text=True, timeout=30)
+        self._run_hard_timeout(["nmcli", "device", "set", interface, "managed", "no"], timeout=30)
         subprocess.run(["ip", "link", "set", interface, "up"], capture_output=True, text=True, timeout=15)
 
         conf_path = f"/tmp/wpa_supplicant-{interface}.conf"
@@ -325,7 +361,7 @@ class WifiMixin:
         ip_address = None
         dhcp_output = ""
         if associated:
-            dhcp_ret = subprocess.run(["dhcpcd", "-n", "-t", "30", interface], capture_output=True, text=True, timeout=35)
+            dhcp_ret = self._run_hard_timeout(["dhcpcd", "-n", "-t", "30", interface], timeout=35)
             dhcp_output = (dhcp_ret.stdout or dhcp_ret.stderr).strip()
             ip_address = self.get_interface_ip(interface)
 
@@ -362,19 +398,17 @@ class WifiMixin:
             term_ret = self._wpa_cli(interface, "terminate")
             outputs.append((term_ret.stdout or term_ret.stderr).strip())
 
-        dhcp_ret = subprocess.run(["dhcpcd", "-k", interface], capture_output=True, text=True, timeout=15)
+        dhcp_ret = self._run_hard_timeout(["dhcpcd", "-k", interface], timeout=15)
         outputs.append((dhcp_ret.stdout or dhcp_ret.stderr).strip())
 
         # Hand back to NetworkManager *before* asking it to disconnect - if
         # the interface was left "managed no" from a previous wpa_supplicant
         # session, nmcli can't act on it (and thus can't disconnect it)
         # until this runs.
-        nm_managed_ret = subprocess.run(["nmcli", "device", "set", interface, "managed", "yes"],
-                                         capture_output=True, text=True, timeout=30)
+        nm_managed_ret = self._run_hard_timeout(["nmcli", "device", "set", interface, "managed", "yes"], timeout=30)
         outputs.append((nm_managed_ret.stdout or nm_managed_ret.stderr).strip())
 
-        nm_disconnect_ret = subprocess.run(["nmcli", "device", "disconnect", interface],
-                                            capture_output=True, text=True, timeout=30)
+        nm_disconnect_ret = self._run_hard_timeout(["nmcli", "device", "disconnect", interface], timeout=30)
         outputs.append((nm_disconnect_ret.stdout or nm_disconnect_ret.stderr).strip())
 
         subprocess.run(["ip", "addr", "flush", "dev", interface], capture_output=True, text=True, timeout=15)

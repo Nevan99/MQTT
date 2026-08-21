@@ -58,6 +58,11 @@ class Capture(SQLModel, table=True):
 
 
 class WifiScanHistory(SQLModel, table=True):
+    # Rollup only (first/last seen, detection count, min/max/avg signal) -
+    # the live per-AP fields (phy type, security, etc.) come from
+    # WifiScanSnapshot below, not from a "last result" column here anymore;
+    # a single stale/latest snapshot per BSSID was exactly what made one
+    # empty/partial scan cycle blank the "Nearby Hotspot" popup.
     id: Optional[int] = Field(default=None, primary_key=True)
     pi_id: str
     interface: str
@@ -69,7 +74,25 @@ class WifiScanHistory(SQLModel, table=True):
     min_signal_percent: Optional[int] = None
     max_signal_percent: Optional[int] = None
     signal_sum: int = 0   # avg_signal_percent = signal_sum / detection_count
-    last_result_json: str = "{}"
+
+
+class WifiScanSnapshot(SQLModel, table=True):
+    """Rolling cache of the WIFI_SCAN_SNAPSHOT_CAP most recent full
+    wifi_detail_scan results per (Pi, interface) - see
+    mqtt_service._update_wifi_scan_history, which inserts one of these per
+    scan and prunes anything beyond the newest cap. GET /pis/{id}/wifi-history
+    (routers/Pis.py) unions all of them (deduped by bssid, most recent
+    occurrence wins) to build the "Nearby Hotspot" popup's network list -
+    a single scan cycle coming back empty or missing an AP doesn't blank
+    it as long as that AP showed up in any of the other still-cached
+    snapshots. This is a short-lived display cache, not history - unlike
+    WifiScanHistory above, nothing here is ever meant to be looked at once
+    it's aged out of the window."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    pi_id: str
+    interface: str
+    networks_json: str = "[]"
+    scanned_at: datetime = Field(default_factory=utcnow)
 
 
 class InterfaceStatus(SQLModel, table=True):

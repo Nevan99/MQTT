@@ -1,13 +1,14 @@
 // --- Nearby Hotspot popup: detailed per-AP scan table for one Pi interface -
 // Triggered from the "Nearby Hotspot" button on a wifi-capable interface card
-// (see renderDetailInterfaceList). Reads GET /pis/{id}/wifi-history every
-// 3s while open - a buffer pi_agent keeps continuously fresh in the
-// background (PiAgent._wifi_background_scan_loop, same 3s cadence - see
-// WIFI_BACKGROUND_SCAN_INTERVAL_SECONDS), not a scan triggered by this
-// popup - so data is always ready immediately, at the cost of being up to
-// that loop's interval stale rather than strictly real-time.
-
-const WIFI_INFO_POLL_MS = 3000;
+// (see renderDetailInterfaceList). Live-updated over the same /ws/live/{piId}
+// firehose fleet-table.js's log panels use (see connectPiLog there) - every
+// wifi_detail_scan result the backend relays for this interface (pi_agent's
+// PiAgent._wifi_background_scan_loop publishes one roughly every
+// WIFI_BACKGROUND_SCAN_INTERVAL_SECONDS) triggers an immediate re-fetch of
+// GET /pis/{id}/wifi-history, so the table updates as soon as a scan lands
+// instead of on a fixed poll cadence. A slow fallback poll stays as a
+// safety net in case the socket drops or never connects.
+const WIFI_INFO_FALLBACK_POLL_MS = 20000;
 
 const WIFI_INFO_COLUMNS = [
   ['SSID', net => net.ssid || '(hidden)'],
@@ -57,7 +58,8 @@ function closeWifiHotspotDetailModal() {
 function closeWifiInfoModal() {
   closeWifiHotspotDetailModal();
   if (!wifiInfoModalState) return;
-  clearInterval(wifiInfoModalState.timer);
+  clearInterval(wifiInfoModalState.fallbackTimer);
+  if (wifiInfoModalState.ws) wifiInfoModalState.ws.close();
   wifiInfoModalState.overlay.remove();
   wifiInfoModalState = null;
   document.removeEventListener('keydown', onWifiInfoModalKeydown);
@@ -354,7 +356,32 @@ function openWifiInfoModal(piId, iface) {
   const bodyEl = overlay.querySelector('.wifi-info-modal-body');
   const statusEl = overlay.querySelector('.wifi-info-modal-status');
 
-  const timer = setInterval(() => refreshWifiInfoModal(bodyEl, statusEl, piId, iface), WIFI_INFO_POLL_MS);
-  wifiInfoModalState = { piId, iface, timer, overlay };
+  const fallbackTimer = setInterval(() => refreshWifiInfoModal(bodyEl, statusEl, piId, iface), WIFI_INFO_FALLBACK_POLL_MS);
+  wifiInfoModalState = { piId, iface, fallbackTimer, overlay, ws: connectWifiInfoLiveScan(piId, iface, bodyEl, statusEl) };
   refreshWifiInfoModal(bodyEl, statusEl, piId, iface);
+}
+
+// Opens the same per-device WS firehose fleet-table.js's log panels use
+// (see connectPiLog there) and re-fetches the wifi-history buffer the
+// moment a wifi_detail_scan result for this exact (piId, iface) comes
+// through - live updates without polling at a fixed interval. No
+// reconnect-on-close logic here (matching connectPiLog's own behavior) -
+// the fallback poll (WIFI_INFO_FALLBACK_POLL_MS) covers the gap if the
+// socket drops for the rest of this popup's lifetime.
+function connectWifiInfoLiveScan(piId, iface, bodyEl, statusEl) {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(withToken(`${proto}://${location.host}/ws/live/${encodeURIComponent(piId)}`));
+  ws.onmessage = (event) => {
+    let msg;
+    try {
+      msg = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    if (msg.category !== 'result') return;
+    const payload = msg.payload || {};
+    if (payload.action !== 'wifi_detail_scan' || payload.interface !== iface) return;
+    refreshWifiInfoModal(bodyEl, statusEl, piId, iface);
+  };
+  return ws;
 }

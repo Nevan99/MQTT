@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from sqlmodel import select
 
 from database.database import get_session_direct
-from database.models import Pi, Command, WifiScanHistory, InterfaceStatus
+from database.models import Pi, Command, WifiScanHistory, WifiScanSnapshot, InterfaceStatus
 from src.connection_manager import manager
 
 load_dotenv()
@@ -29,6 +29,12 @@ TRANSIENT_ACTIONS = {"link_info", "wifi_detail_scan", "interface_status"}
 # being pruned - comfortably longer than the ~1s poll interval the frontend
 # uses while awaiting a result.
 TRANSIENT_TTL_SECONDS = 30
+
+# How many of the most recent wifi_detail_scan results to keep cached per
+# (pi_id, interface) - GET /pis/{id}/wifi-history unions all of them
+# (deduped by bssid) so one thin/empty scan cycle doesn't blank the
+# "Nearby Hotspot" popup as long as an AP showed up in any of the others.
+WIFI_SCAN_SNAPSHOT_CAP = 5
 
 
 class MQTTService:
@@ -181,8 +187,19 @@ class MQTTService:
                 row.min_signal_percent = quality if row.min_signal_percent is None else min(row.min_signal_percent, quality)
                 row.max_signal_percent = quality if row.max_signal_percent is None else max(row.max_signal_percent, quality)
                 row.signal_sum += quality
-            row.last_result_json = json.dumps(net)
             session.add(row)
+
+        session.add(WifiScanSnapshot(pi_id=pi_id, interface=interface, networks_json=json.dumps(networks), scanned_at=now))
+        session.flush()
+        old_ids = session.exec(
+            select(WifiScanSnapshot.id)
+            .where(WifiScanSnapshot.pi_id == pi_id, WifiScanSnapshot.interface == interface)
+            .order_by(WifiScanSnapshot.scanned_at.desc())
+            .offset(WIFI_SCAN_SNAPSHOT_CAP)
+        ).all()
+        if old_ids:
+            for snap in session.exec(select(WifiScanSnapshot).where(WifiScanSnapshot.id.in_(old_ids))).all():
+                session.delete(snap)
 
     def _update_interface_status(self, session, pi_id: str, payload: dict):
         """Upserts one InterfaceStatus row per (pi_id, interface) - see that
