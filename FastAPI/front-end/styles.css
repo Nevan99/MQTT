@@ -195,6 +195,22 @@
   .wifi-scan-loading { display: flex; align-items: center; gap: 0.55rem; color: #888; font-size: 0.82rem; padding: 0.5rem 0.1rem; }
   .wifi-scan-spinner { flex: 0 0 auto; width: 14px; height: 14px; border: 2px solid #333; border-top-color: #6cf; border-radius: 50%; animation: wifi-scan-spin 0.7s linear infinite; }
   @keyframes wifi-scan-spin { to { transform: rotate(360deg); } }
+
+  /* Nearby Hotspot popup header - a persistent radar-pulse, not a one-shot
+     loading spinner (.wifi-scan-spinner above): pi_agent's background scan
+     loop runs continuously the whole time this popup is open (see
+     PiAgent._wifi_background_scan_loop), not just once while data loads,
+     so the indicator stays animating for as long as the popup is open. */
+  .wifi-scanning-indicator { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.75rem; color: #6cf; flex: 0 0 auto; }
+  .wifi-scanning-dot { position: relative; width: 7px; height: 7px; border-radius: 50%; background: #6cf; flex: 0 0 auto; }
+  .wifi-scanning-dot::after {
+    content: ''; position: absolute; inset: -5px; border-radius: 50%; border: 1.5px solid #6cf;
+    animation: wifi-scanning-pulse 1.6s ease-out infinite;
+  }
+  @keyframes wifi-scanning-pulse {
+    0% { transform: scale(0.5); opacity: 0.9; }
+    100% { transform: scale(2.2); opacity: 0; }
+  }
   .badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 10px; font-size: 0.75rem; }
   .badge-online { background: #163; }
   .badge-offline { background: #522; }

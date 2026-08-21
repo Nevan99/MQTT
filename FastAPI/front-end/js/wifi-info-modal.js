@@ -288,8 +288,20 @@ function renderWifiInfoTable(bodyEl, networks) {
     // not just after the next click.
     wifiInfoUpdateSortHeaders(bodyEl);
   }
+
+  // A poll landing empty (a background-scan hiccup, or a brief gap between
+  // WIFI_BACKGROUND_SCAN_INTERVAL_SECONDS cycles) shouldn't blank out a
+  // table that already has real rows in it - keep showing the last
+  // known-good networks instead of flashing to "no networks found" every
+  // time one cycle comes back empty. Only actually render empty if this
+  // popup has never had real data to show at all yet.
+  if (!networks.length && wifiInfoLastNetworks.length) {
+    return false;
+  }
+
   wifiInfoLastNetworks = networks;
   renderWifiInfoTbody(bodyEl, networks);
+  return true;
 }
 
 async function refreshWifiInfoModal(bodyEl, statusEl, piId, iface) {
@@ -299,8 +311,10 @@ async function refreshWifiInfoModal(bodyEl, statusEl, piId, iface) {
     const networks = await res.json();
     // Only bail out on the very first load - a transient failure on a later
     // 5s poll shouldn't blank out the last-good table the user is looking at.
-    renderWifiInfoTable(bodyEl, networks);
-    statusEl.textContent = `Buffered as of ${new Date().toLocaleTimeString()}`;
+    const usedFreshData = renderWifiInfoTable(bodyEl, networks);
+    statusEl.textContent = usedFreshData
+      ? `Buffered as of ${new Date().toLocaleTimeString()}`
+      : `Buffered as of ${new Date().toLocaleTimeString()} (no networks this cycle - showing last known)`;
   } catch (err) {
     if (!bodyEl.querySelector('.wifi-info-table')) {
       bodyEl.innerHTML = `<div class="pi-log-empty">failed to load: ${err.message}</div>`;
@@ -318,6 +332,9 @@ function openWifiInfoModal(piId, iface) {
     <div class="wifi-info-modal">
       <div class="wifi-info-modal-header">
         <span>Nearby Hotspot &mdash; ${iface}</span>
+        <span class="wifi-scanning-indicator" title="pi_agent is continuously scanning this interface in the background">
+          <span class="wifi-scanning-dot"></span>Scanning
+        </span>
         <span class="wifi-info-modal-status hint"></span>
         <button type="button" class="icon-btn wifi-info-modal-close" title="Close">&times;</button>
       </div>
