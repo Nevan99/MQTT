@@ -188,6 +188,27 @@ let detailLinkInfoCache = {};         // interface name -> link_info result
 // Queries link_info for one wifi-capable interface and colors its icon:
 // green (connected, with SSID in the tooltip) or dim gray (not connected).
 // Fired once per wifi interface whenever the interface list is (re)built.
+// Shared by refreshWifiIcon and disconnectDetailWifi - the latter applies
+// a known {connected: false} result immediately (see disconnectDetailWifi
+// for why) instead of only waiting on refreshWifiIcon's own link_info
+// round-trip.
+function applyDetailWifiIconStatus(iface, status) {
+  const el = document.querySelector(`#pdInterfaceList .wifi-icon[data-iface="${CSS.escape(iface)}"]`);
+  if (!el) return;
+  const connected = !!(status && status.connected);
+  el.classList.remove('wifi-unknown');
+  el.classList.add(connected ? 'wifi-connected' : 'wifi-disconnected');
+  el.title = connected ? `Wi-Fi connected${status.ssid ? ' — ' + status.ssid : ''}` : 'Wi-Fi not connected';
+  const card = el.closest('.pd-iface-card');
+  const mark = card && card.querySelector('.pd-iface-connected-mark');
+  if (mark) {
+    mark.classList.toggle('hidden', !connected);
+    if (connected) mark.textContent = status.ssid ? `connected — ${status.ssid}` : 'connected';
+  }
+  const body = card && card.querySelector('.pd-iface-body');
+  if (body && !body.classList.contains('hidden')) renderDetailIfaceBody(body, iface);
+}
+
 async function refreshWifiIcon(piId, iface) {
   const iconEl = document.querySelector(`#pdInterfaceList .wifi-icon[data-iface="${CSS.escape(iface)}"]`);
   if (!iconEl) return;
@@ -377,11 +398,12 @@ async function disconnectDetailWifi(iface, btn) {
   const piId = detailPiId;
   btn.disabled = true;
   btn.textContent = 'Disconnecting…';
+  let result = null;
   try {
     const res = await postCmd(piId, 'disconnect_wifi', { interface: iface });
     if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
     const data = await res.json();
-    await awaitCommandResult(data.command_id, 320);
+    result = await awaitCommandResult(data.command_id, 320);
   } catch (err) {
     alert(`Failed to disconnect: ${err.message}`);
   } finally {
@@ -391,6 +413,13 @@ async function disconnectDetailWifi(iface, btn) {
   delete detailLinkInfoCache[iface];
   detailIfaceDetailsCache = null;
   detailIfaceDetailsPromise = null;
+  // Apply straight from disconnect_wifi's own result first - see the
+  // matching comment in fleet-table.js's disconnectFleetWifi for why this
+  // doesn't just rely on refreshWifiIcon's separate link_info round-trip.
+  if (result && result.disconnected) {
+    detailLinkInfoCache[iface] = { connected: false };
+    applyDetailWifiIconStatus(iface, { connected: false });
+  }
   refreshWifiIcon(piId, iface);
 }
 

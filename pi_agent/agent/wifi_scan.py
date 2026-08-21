@@ -371,10 +371,10 @@ class WifiScanMixin:
     # this number.
     #
     # Kept comfortably above a typical scan duration on purpose. At the
-    # previous 3s a 2-5s `iw scan` meant the interface lock was held
+    # original 3s a 2-5s `iw scan` meant the interface lock was held
     # essentially continuously, so a user-triggered connect/disconnect
     # almost always had to wait out a scan before it could even start.
-    WIFI_BACKGROUND_SCAN_INTERVAL_SECONDS = 12
+    WIFI_BACKGROUND_SCAN_INTERVAL_SECONDS = 10
 
     def _wifi_background_scan_loop(self):
         while True:

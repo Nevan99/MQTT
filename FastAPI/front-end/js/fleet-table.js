@@ -832,11 +832,12 @@ async function disconnectFleetWifi(cardState, btn) {
   const piId = cardState.piId;
   btn.disabled = true;
   btn.textContent = 'Disconnecting…';
+  let result = null;
   try {
     const res = await postCmd(piId, 'disconnect_wifi', { interface: cardState.iface });
     if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
     const data = await res.json();
-    await awaitCommandResult(data.command_id, 320);
+    result = await awaitCommandResult(data.command_id, 320);
   } catch (err) {
     alert(`Failed to disconnect: ${err.message}`);
   } finally {
@@ -849,6 +850,21 @@ async function disconnectFleetWifi(cardState, btn) {
     // connect - force a fresh read instead of showing the stale one.
     entry.ifaceDetailsCache = null;
     entry.ifaceDetailsPromise = null;
+    // Apply straight from disconnect_wifi's own result first - waiting on
+    // a separate link_info round-trip (refreshFleetWifiIcon) to learn this
+    // was previously the only way the icon/SSID updated, and that
+    // secondary command silently failing/timing out (e.g. right after
+    // teardown, before the interface has fully settled) left the icon
+    // stuck green with the old SSID even though the disconnect itself had
+    // already succeeded. refreshFleetWifiIcon still runs after for
+    // eventual consistency (e.g. to pick up a fresh IP-less link_info).
+    if (result && result.disconnected) {
+      entry.linkInfoCache[cardState.iface] = { connected: false };
+      applyWifiIconStatus(cardState, { connected: false });
+      if (!cardState.card.querySelector('.pd-iface-body').classList.contains('hidden')) {
+        renderFleetIfaceBody(entry, cardState);
+      }
+    }
     refreshFleetWifiIcon(piId, entry, cardState);
   }
 }
