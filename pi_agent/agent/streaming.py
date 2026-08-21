@@ -1,18 +1,30 @@
+import asyncio
 import json
-import socket
-import subprocess
-import threading
-import time
 from datetime import datetime, timezone
+
+from . import proc as proc_mod
 
 
 class StreamingMixin:
     """Live view streaming (syslog/tcpdump over a socket to the backend),
     pcap capture recording, and the throughput/syslog-dump one-shot actions.
     See PiAgent (core.py) for the locks/state this relies on
-    (self._pcap_*, self._streaming_*, self._tcpdump_*)."""
+    (self._pcap_*, self._streaming_*, self._tcpdump_*).
 
-    def run_iperf_server_test(self, duration=10, interface=None):
+    Every relay here used to be a daemon thread blocked on a pipe read and a
+    blocking socket send. They are asyncio tasks now, reading the child's
+    StreamReader and writing to an asyncio StreamWriter - so a stalled
+    backend socket parks a task instead of pinning a thread, and a capture
+    that never gets stopped can be cancelled rather than leaked.
+    """
+
+    # tcpdump fails fast on a bad interface or missing capture permissions
+    # (needs root or cap_net_raw+cap_net_admin). Both start paths wait this
+    # long and then check the process is still alive, so a start doesn't
+    # report success for a tcpdump that already died.
+    TCPDUMP_STARTUP_GRACE_SECONDS = 0.3
+
+    async def run_iperf_server_test(self, duration=10, interface=None):
         """Runs the throughput test against the broker host. Without an
         interface, iperf3 goes out over whatever the OS routing table picks
         for that destination - same as before. With one, `-B <local-ip>`
@@ -22,11 +34,11 @@ class StreamingMixin:
         wired eth0 and several wifi radios all able to reach the broker)."""
         cmd = ["iperf3", "-c", self.broker_host, "-t", str(duration), "-J"]
         if interface:
-            bind_ip = self.get_interface_ip(interface)
+            bind_ip = await self.get_interface_ip(interface)
             if not bind_ip:
                 return {"error": f"{interface} has no IPv4 address to bind to"}
             cmd += ["-B", bind_ip]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=duration + 15)
+        result = await proc_mod.run(cmd, timeout=duration + 15)
         data = json.loads(result.stdout)
         return {
             "interface": interface,
@@ -34,15 +46,68 @@ class StreamingMixin:
             "retransmits": data["end"]["sum_sent"].get("retransmits"),
         }
 
-    def get_syslog(self, lines=100):
+    async def get_syslog(self, lines=100):
         """Pull recent journal lines."""
-        out = subprocess.run(
-            ["journalctl", "-n", str(lines), "--no-pager"],
-            capture_output=True, text=True,
-        ).stdout
+        out = (await proc_mod.run(["journalctl", "-n", str(lines), "--no-pager"])).stdout
         return out.splitlines()
 
-    def start_pcap_capture(self, interface, name=None):
+    # --- shared helpers ---------------------------------------------------
+
+    async def _open_capture_socket(self, header):
+        """Connect to the backend's capture socket server and send the
+        newline-terminated header that tells it what this stream is."""
+        reader, writer = await asyncio.open_connection(
+            self.capture_socket_host, self.capture_socket_port,
+        )
+        writer.write((json.dumps(header) + "\n").encode())
+        await writer.drain()
+        return reader, writer
+
+    async def _spawn_tcpdump(self, interface):
+        """Start tcpdump writing raw pcap to stdout, and confirm it survived
+        startup before the caller commits to it."""
+        process = await asyncio.create_subprocess_exec(
+            "tcpdump", "-i", interface, "-w", "-", "-U",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        await asyncio.sleep(self.TCPDUMP_STARTUP_GRACE_SECONDS)
+        if process.returncode is not None:
+            err = b""
+            if process.stderr is not None:
+                try:
+                    err = await asyncio.wait_for(process.stderr.read(), 2)
+                except asyncio.TimeoutError:
+                    pass
+            output = err.decode(errors="replace").strip()
+            raise RuntimeError(output or f"tcpdump exited immediately (code {process.returncode})")
+        return process
+
+    @staticmethod
+    async def _terminate(process, timeout=10):
+        if process is None or process.returncode is not None:
+            return
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            return
+        try:
+            await asyncio.wait_for(process.wait(), timeout)
+        except asyncio.TimeoutError:
+            try:
+                process.kill()
+                await asyncio.wait_for(process.wait(), 5)
+            except (ProcessLookupError, asyncio.TimeoutError):
+                pass
+
+    @staticmethod
+    def _track(task_set, task):
+        task_set.add(task)
+        task.add_done_callback(task_set.discard)
+        return task
+
+    # --- pcap capture (recorded) -----------------------------------------
+
+    async def start_pcap_capture(self, interface, name=None):
         """Start a pcap capture for one interface, piped live to the backend's
         capture socket server as tcpdump produces it - independent of the
         parsed-line tcpdump stream (both can run on the same interface at
@@ -50,56 +115,59 @@ class StreamingMixin:
         means stop only has to close a socket, not upload a whole finished
         file - that upload-at-the-end approach was why stopping a capture
         used to take so long."""
-        with self._pcap_lock:
+        async with self._pcap_lock:
             if interface in self._pcap_procs:
                 return False
-            proc = subprocess.Popen(
-                ["tcpdump", "-i", interface, "-w", "-", "-U"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0,
-            )
-            # tcpdump fails fast on a bad interface or missing capture
-            # permissions (needs root or cap_net_raw+cap_net_admin). Without
-            # this check, start would report success even though tcpdump
-            # already died.
-            time.sleep(0.3)
-            if proc.poll() is not None:
-                output = proc.stderr.read().decode(errors="replace").strip() if proc.stderr else ""
-                raise RuntimeError(output or f"tcpdump exited immediately (code {proc.returncode})")
+            process = await self._spawn_tcpdump(interface)
 
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.connect((self.capture_socket_host, self.capture_socket_port))
             capture_name = name or f"{self.pi_id}-pcap-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}"
-            sock.sendall((json.dumps({
-                "kind": "record", "pi_id": self.pi_id, "name": capture_name, "interface": interface,
-            }) + "\n").encode())
+            try:
+                reader, writer = await self._open_capture_socket({
+                    "kind": "record", "pi_id": self.pi_id,
+                    "name": capture_name, "interface": interface,
+                })
+            except Exception:
+                await self._terminate(process)
+                raise
 
-            state = {"error": None, "capture_id": None, "byte_count": 0, "done": threading.Event()}
-            thread = threading.Thread(target=self._relay_pcap, args=(proc, sock, state), daemon=True)
-            thread.start()
+            state = {
+                "error": None, "capture_id": None, "byte_count": 0,
+                "done": asyncio.Event(),
+            }
+            task = asyncio.create_task(
+                self._relay_pcap(process, reader, writer, state), name=f"pcap-relay-{interface}",
+            )
+            self._track(self._background_tasks, task)
 
-            self._pcap_procs[interface] = proc
+            self._pcap_procs[interface] = process
             self._pcap_state[interface] = state
         return True
 
-    def _relay_pcap(self, proc, sock, state):
+    async def _relay_pcap(self, process, reader, writer, state):
         """Pump tcpdump's stdout into the capture socket until tcpdump exits
         (stdout hits EOF), then half-close the socket and read the backend's
         ack off the same connection."""
         try:
             while True:
-                chunk = proc.stdout.read(65536)
+                chunk = await process.stdout.read(65536)
                 if not chunk:
                     break
-                sock.sendall(chunk)
+                writer.write(chunk)
+                await writer.drain()
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             state["error"] = str(e)
         finally:
             try:
-                sock.shutdown(socket.SHUT_WR)
+                # Half-close so the backend sees EOF and answers with its
+                # ack on the same connection.
+                if writer.can_write_eof():
+                    writer.write_eof()
             except OSError:
                 pass
             try:
-                ack_line = sock.makefile("r").readline()
+                ack_line = await asyncio.wait_for(reader.readline(), 15)
                 ack = json.loads(ack_line) if ack_line else {}
                 state["capture_id"] = ack.get("capture_id")
                 state["byte_count"] = ack.get("byte_count", 0)
@@ -108,26 +176,27 @@ class StreamingMixin:
             except Exception as e:
                 state["error"] = state["error"] or str(e)
             finally:
-                sock.close()
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except Exception:
+                    pass
                 state["done"].set()
 
-    def stop_pcap_capture(self, interface):
+    async def stop_pcap_capture(self, interface):
         """Stop the pcap capture for an interface and return the saved
-        capture's metadata once the relay thread's socket stream finishes."""
-        with self._pcap_lock:
-            proc = self._pcap_procs.pop(interface, None)
+        capture's metadata once the relay task's socket stream finishes."""
+        async with self._pcap_lock:
+            process = self._pcap_procs.pop(interface, None)
             state = self._pcap_state.pop(interface, None)
-        if proc is None:
+        if process is None:
             return {"error": f"no pcap capture running on {interface}"}
 
-        proc.terminate()
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=5)
+        await self._terminate(process)
 
-        if not state["done"].wait(timeout=15):
+        try:
+            await asyncio.wait_for(state["done"].wait(), 15)
+        except asyncio.TimeoutError:
             return {"error": "timed out waiting for the capture upload to finish", "interface": interface}
 
         if state["error"]:
@@ -140,131 +209,144 @@ class StreamingMixin:
             "saved": True,
         }
 
-    def _stream_tcpdump_socket(self, interface, proc, state):
+    # --- tcpdump live view -------------------------------------------------
+
+    async def _stream_tcpdump_socket(self, interface, process, state):
         """Pump this view-only tcpdump process's stdout to the backend over
         a socket connection tagged kind=stream_tcpdump - decoded to text and
         relayed live by the backend, never written to a capture file (that's
         start_pcap_capture's job, a wholly separate tcpdump process)."""
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        writer = None
         try:
-            sock.connect((self.capture_socket_host, self.capture_socket_port))
-            sock.sendall((json.dumps({
+            _, writer = await self._open_capture_socket({
                 "kind": "stream_tcpdump", "pi_id": self.pi_id, "interface": interface,
-            }) + "\n").encode())
+            })
             while True:
                 # Small read size (vs. 65536) so packets on a quiet
                 # interface get forwarded as soon as tcpdump -U flushes
                 # them, instead of sitting in the pipe until a large chunk
                 # fills up.
-                chunk = proc.stdout.read(4096)
+                chunk = await process.stdout.read(4096)
                 if not chunk:
                     break
-                sock.sendall(chunk)
+                writer.write(chunk)
+                await writer.drain()
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             state["error"] = str(e)
         finally:
-            try:
-                sock.close()
-            except OSError:
-                pass
-            with self._tcpdump_lock:
+            if writer is not None:
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+            async with self._tcpdump_lock:
                 self._tcpdump_running.discard(interface)
                 self._tcpdump_procs.pop(interface, None)
 
-    def start_tcpdump_stream(self, interface):
+    async def start_tcpdump_stream(self, interface):
         """Start a live decoded-tcpdump view for one interface, no-op if
         already running. Independent of start_pcap_capture - both can run
         on the same interface at once, one for viewing, one for saving."""
-        with self._tcpdump_lock:
+        async with self._tcpdump_lock:
             if interface in self._tcpdump_running:
                 return False
-            proc = subprocess.Popen(
-                ["tcpdump", "-i", interface, "-w", "-", "-U"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0,
-            )
-            time.sleep(0.3)
-            if proc.poll() is not None:
-                output = proc.stderr.read().decode(errors="replace").strip() if proc.stderr else ""
-                raise RuntimeError(output or f"tcpdump exited immediately (code {proc.returncode})")
+            process = await self._spawn_tcpdump(interface)
             state = {"error": None}
             self._tcpdump_running.add(interface)
-            self._tcpdump_procs[interface] = proc
-        threading.Thread(target=self._stream_tcpdump_socket, args=(interface, proc, state), daemon=True).start()
+            self._tcpdump_procs[interface] = process
+        task = asyncio.create_task(
+            self._stream_tcpdump_socket(interface, process, state),
+            name=f"tcpdump-stream-{interface}",
+        )
+        self._track(self._background_tasks, task)
         return True
 
-    def stop_tcpdump_stream(self, interface):
+    async def stop_tcpdump_stream(self, interface):
         """Stop the tcpdump view for one interface, if running."""
-        with self._tcpdump_lock:
+        async with self._tcpdump_lock:
             if interface not in self._tcpdump_running:
                 return False
             self._tcpdump_running.discard(interface)
-            proc = self._tcpdump_procs.pop(interface, None)
-        if proc:
-            proc.terminate()
+            process = self._tcpdump_procs.pop(interface, None)
+        await self._terminate(process)
         return True
 
-    def _stream_syslog_socket(self, interface, proc):
+    # --- syslog live view --------------------------------------------------
+
+    async def _stream_syslog_socket(self, interface, process):
         """Pump journalctl -f's output to the backend over a socket
         connection tagged kind=stream_syslog - relayed live as text lines,
         never persisted (same "view only" contract as stream_tcpdump)."""
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        writer = None
         try:
-            sock.connect((self.capture_socket_host, self.capture_socket_port))
-            sock.sendall((json.dumps({
+            _, writer = await self._open_capture_socket({
                 "kind": "stream_syslog", "pi_id": self.pi_id, "interface": interface,
-            }) + "\n").encode())
-            for line in proc.stdout:
-                sock.sendall((line.rstrip("\n") + "\n").encode())
+            })
+            while True:
+                line = await process.stdout.readline()
+                if not line:
+                    break
+                writer.write(line.rstrip(b"\n") + b"\n")
+                await writer.drain()
+        except asyncio.CancelledError:
+            raise
         except Exception:
             pass
         finally:
-            try:
-                sock.close()
-            except OSError:
-                pass
-            with self._streaming_lock:
-                if self._syslog_proc is proc:
+            if writer is not None:
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+            async with self._streaming_lock:
+                if self._syslog_proc is process:
                     self._streaming_started = False
                     self._syslog_proc = None
                     self._syslog_interface = None
 
-    def start_syslog_stream(self, interface=None):
-        """Start the syslog streaming thread for the given interface filter.
-        """
+    async def start_syslog_stream(self, interface=None):
+        """Start the syslog streaming task for the given interface filter."""
         cmd = ["journalctl", "-u", "NetworkManager", "-n", "50", "-f"]
         if interface:
             cmd += ["-g", interface]
 
         old_proc = None
-        with self._streaming_lock:
+        async with self._streaming_lock:
             if self._streaming_started and self._syslog_interface == interface:
                 return False
             if self._streaming_started:
                 old_proc = self._syslog_proc
             self._streaming_started = True
             self._syslog_interface = interface
-        if old_proc:
-            old_proc.terminate()
+        await self._terminate(old_proc)
 
-        # bufsize=1 (line-buffered) so `for line in proc.stdout` yields each
-        # journal line as soon as journalctl writes it, instead of Python's
-        # default block-buffering on a non-tty pipe holding lines back until
-        # a full buffer's worth accumulates.
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True, bufsize=1)
-        with self._streaming_lock:
-            self._syslog_proc = proc
-        threading.Thread(target=self._stream_syslog_socket, args=(interface, proc), daemon=True).start()
+        # StreamReader.readline yields each journal line as soon as
+        # journalctl writes it - the asyncio equivalent of the bufsize=1
+        # line buffering this used under Popen, which existed so lines
+        # weren't held back until a full block accumulated on the pipe.
+        process = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE,
+        )
+        async with self._streaming_lock:
+            self._syslog_proc = process
+        task = asyncio.create_task(
+            self._stream_syslog_socket(interface, process), name="syslog-stream",
+        )
+        self._track(self._background_tasks, task)
         return True
 
-    def stop_syslog_stream(self):
-        """Stop the syslog streaming thread, if running."""
-        with self._streaming_lock:
+    async def stop_syslog_stream(self):
+        """Stop the syslog streaming task, if running."""
+        async with self._streaming_lock:
             if not self._streaming_started:
                 return False
             self._streaming_started = False
             self._syslog_interface = None
-            proc = self._syslog_proc
+            process = self._syslog_proc
             self._syslog_proc = None
-        if proc:
-            proc.terminate()
+        await self._terminate(process)
         return True

@@ -1,12 +1,10 @@
+import asyncio
 import json
 import re
-import subprocess
-import threading
-import time
 import uuid
 from datetime import datetime, timezone
 
-
+from . import proc
 class WifiScanMixin:
     """Nearby-network scanning: the fast nmcli table (get_wifi_scan) the
     "Nearby networks" list uses, the slower `iw scan`-based detailed scan
@@ -16,7 +14,7 @@ class WifiScanMixin:
     WifiMixin's _band_label/_wifi_lock_for and InterfacesMixin's
     get_interface_details."""
 
-    def get_wifi_scan(self, interface):
+    async def get_wifi_scan(self, interface):
         """Scan for nearby wifi APs via nmcli (Pi acting as a station).
 
         Uses nmcli's terse (-t) mode, which escapes literal colons inside a
@@ -27,9 +25,8 @@ class WifiScanMixin:
             return {"error": "interface is required"}
 
         fields = "SSID,BSSID,MODE,CHAN,FREQ,RATE,SIGNAL,SECURITY"
-        ret = subprocess.run(
-            ["nmcli", "-t", "-f", fields, "dev", "wifi", "list", "ifname", interface, "--rescan", "yes"],
-            capture_output=True, text=True, timeout=30,
+        ret = await proc.run(
+            ["nmcli", "-t", "-f", fields, "dev", "wifi", "list", "ifname", interface, "--rescan", "yes"], timeout=30,
         )
         if ret.returncode != 0:
             return {"interface": interface, "error": (ret.stderr or ret.stdout).strip()}
@@ -317,7 +314,7 @@ class WifiScanMixin:
     # WIFI_BACKGROUND_SCAN_INTERVAL_SECONDS tick to try again.
     SCAN_BUSY_RETRY_DELAYS_SECONDS = (1, 2, 4)
 
-    def get_wifi_scan_detail(self, interface, use_cache=False):
+    async def get_wifi_scan_detail(self, interface, use_cache=False):
         """Detailed per-AP scan for the "Wifi Info" popup - see
         _parse_scan_bss_block for what's decoded from `iw`'s output. History
         fields (first/last detection, detection count, min/max/avg signal)
@@ -343,13 +340,13 @@ class WifiScanMixin:
         if not interface:
             return {"error": "interface is required"}
 
-        ret = self._scan_dump(interface) if use_cache else self._run_scan_with_busy_retry(interface)
+        ret = await self._scan_dump(interface) if use_cache else await self._run_scan_with_busy_retry(interface)
         if ret.returncode != 0:
             return {"interface": interface, "error": (ret.stderr or ret.stdout).strip()}
 
-        link_out = subprocess.run(
-            ["iw", "dev", interface, "link"], capture_output=True, text=True, timeout=10,
-        ).stdout
+        link_out = (await proc.run(
+            ["iw", "dev", interface, "link"], timeout=10,
+        )).stdout
         link_m = re.match(r'Connected to ([0-9a-fA-F:]+)', link_out)
         connected_bssid = link_m.group(1).lower() if link_m else None
 
@@ -357,7 +354,7 @@ class WifiScanMixin:
         networks = [n for n in (self._parse_scan_bss_block(b, connected_bssid) for b in blocks) if n]
         return {"interface": interface, "networks": networks, "from_cache": use_cache}
 
-    def _scan_trigger(self, interface):
+    async def _scan_trigger(self, interface):
         """Start a scan and return without waiting for it (`iw scan trigger`).
 
         This is the half of a scan that actually needs the radio, and it
@@ -373,29 +370,26 @@ class WifiScanMixin:
         trigger the next cycle is along shortly anyway, and NM's in-progress
         scan populates the same cache this reads from, so nothing is lost by
         just skipping."""
-        return subprocess.run(
-            ["iw", "dev", interface, "scan", "trigger"],
-            capture_output=True, text=True, timeout=10,
+        return await proc.run(
+            ["iw", "dev", interface, "scan", "trigger"], timeout=10,
         )
 
-    def _scan_dump(self, interface):
+    async def _scan_dump(self, interface):
         """Read cfg80211's cached BSS list (`iw scan dump`) - a pure read of
         kernel state that never touches the radio, so it needs no wifi lock
         and cannot delay, or be delayed by, a connect/disconnect."""
-        return subprocess.run(
-            ["iw", "dev", interface, "scan", "dump"],
-            capture_output=True, text=True, timeout=15,
+        return await proc.run(
+            ["iw", "dev", interface, "scan", "dump"], timeout=15,
         )
 
-    def _run_scan_with_busy_retry(self, interface):
+    async def _run_scan_with_busy_retry(self, interface):
         delays = (0,) + self.SCAN_BUSY_RETRY_DELAYS_SECONDS
         ret = None
         for i, delay in enumerate(delays):
             if delay:
-                time.sleep(delay)
-            ret = subprocess.run(
-                ["iw", "dev", interface, "scan"],
-                capture_output=True, text=True, timeout=30,
+                await asyncio.sleep(delay)
+            ret = await proc.run(
+                ["iw", "dev", interface, "scan"], timeout=30,
             )
             if ret.returncode == 0:
                 return ret
@@ -428,23 +422,36 @@ class WifiScanMixin:
     # the freshness the "Wifi Info" popup wants, not pushed to the floor.
     WIFI_BACKGROUND_SCAN_INTERVAL_SECONDS = 6
 
-    def _wifi_background_scan_loop(self):
+    async def _wifi_background_scan_loop(self):
         while True:
-            time.sleep(self.WIFI_BACKGROUND_SCAN_INTERVAL_SECONDS)
+            await asyncio.sleep(self.WIFI_BACKGROUND_SCAN_INTERVAL_SECONDS)
             try:
                 # Name-based, not d["type"] == "wifi" - see the matching
                 # comment in _publish_interface_status for why: type is a
                 # driver-dependent classification that can disagree with the
                 # frontend's own name-based isWifiInterface() check, which
                 # decides whether the "Nearby Hotspot" button even exists.
-                wifi_interfaces = [d["name"] for d in self.get_interface_details() if d["name"].startswith("wl")]
+                wifi_interfaces = [d["name"] for d in await self.get_interface_details() if d["name"].startswith("wl")]
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 print(f"[pi_agent] background wifi scan: failed to list interfaces: {e}")
                 continue
-            for interface in wifi_interfaces:
-                threading.Thread(target=self._wifi_background_scan_one, args=(interface,), daemon=True).start()
+            # One task per interface, run concurrently and awaited together:
+            # four radios' cycles overlap in the time one used to take, and
+            # unlike the old detached threads a failure here is visible
+            # rather than dying silently in a thread nobody joins.
+            results = await asyncio.gather(
+                *(self._wifi_background_scan_one(i) for i in wifi_interfaces),
+                return_exceptions=True,
+            )
+            for interface, outcome in zip(wifi_interfaces, results):
+                if isinstance(outcome, asyncio.CancelledError):
+                    raise outcome
+                if isinstance(outcome, Exception):
+                    print(f"[pi_agent] background wifi scan failed for {interface}: {outcome}")
 
-    def _wifi_background_scan_one(self, interface):
+    async def _wifi_background_scan_one(self, interface):
         # Split into a locked trigger and a lock-free read, so this loop
         # occupies the interface's wifi lock for milliseconds per cycle
         # rather than the 2-5s a full blocking `iw scan` used to hold it
@@ -459,22 +466,28 @@ class WifiScanMixin:
         if self._wifi_command_pending(interface):
             return
         lock = self._wifi_lock_for(interface)
-        if not lock.acquire(blocking=False):
+        # Never wait for the lock: a command holds it, and this cycle's scan
+        # matters less than that command finishing. Lock.locked() is the
+        # asyncio equivalent of the old acquire(blocking=False) - and since
+        # nothing awaits between the check and the acquire, no other task
+        # can slip in and take it in between.
+        if lock.locked():
             return
-        try:
-            # Triggered unconditionally, connected or not - a scan on an
-            # already-associated interface is an off-channel scan (cfg80211
-            # tracks the current BSS independently of which channel the
-            # radio is briefly sitting on for a probe), so it doesn't drop
-            # the association. Keeping this always-on gives the WifiScanHistory
-            # buffer the freshest possible results instead of freezing at
-            # whatever was last scanned before the interface connected.
-            trigger = self._scan_trigger(interface)
-        except Exception as e:
-            print(f"[pi_agent] {interface}: scan trigger failed: {e}")
-            trigger = None
-        finally:
-            lock.release()
+        async with lock:
+            try:
+                # Triggered unconditionally, connected or not - a scan on an
+                # already-associated interface is an off-channel scan (cfg80211
+                # tracks the current BSS independently of which channel the
+                # radio is briefly sitting on for a probe), so it doesn't drop
+                # the association. Keeping this always-on gives the WifiScanHistory
+                # buffer the freshest possible results instead of freezing at
+                # whatever was last scanned before the interface connected.
+                trigger = await self._scan_trigger(interface)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                print(f"[pi_agent] {interface}: scan trigger failed: {e}")
+                trigger = None
 
         if trigger is not None and trigger.returncode != 0:
             # Not fatal, and deliberately not retried under the lock - see
@@ -489,7 +502,9 @@ class WifiScanMixin:
         # the previous cycle's trigger (a scan takes a few seconds to
         # complete), which is what makes the cadence below affordable.
         try:
-            result = self.get_wifi_scan_detail(interface, use_cache=True)
+            result = await self.get_wifi_scan_detail(interface, use_cache=True)
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             result = {"interface": interface, "error": str(e)}
         result["command_id"] = str(uuid.uuid4())
@@ -497,6 +512,8 @@ class WifiScanMixin:
         result["pi_id"] = self.pi_id
         result["timestamp"] = datetime.now(timezone.utc).isoformat()
         try:
-            self.client.publish(self.result_topic, json.dumps(result), qos=1)
+            await self.publish(self.result_topic, json.dumps(result), qos=1)
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             print(f"[pi_agent] failed to publish background wifi scan for {interface}: {e}")

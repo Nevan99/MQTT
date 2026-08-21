@@ -7,12 +7,12 @@ and records what ran, in what order, and how long each call held the
 caller - which is what lets the locking/concurrency tests assert on real
 elapsed time rather than on implementation details.
 """
+import asyncio
 import os
 import subprocess
 import sys
 import threading
 import time
-import types
 
 import pytest
 
@@ -25,63 +25,6 @@ os.environ.setdefault("CAPTURE_SOCKET_HOST", "localhost")
 os.environ.setdefault("CAPTURE_SOCKET_PORT", "9999")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-
-def _install_fake_paho():
-    """paho-mqtt isn't a test dependency - the agent only ever needs its
-    Client to exist and record publishes."""
-    if "paho.mqtt.client" in sys.modules:
-        return
-    paho = types.ModuleType("paho")
-    mqtt_mod = types.ModuleType("paho.mqtt")
-    client_mod = types.ModuleType("paho.mqtt.client")
-
-    class _Client:
-        def __init__(self, *a, **kw):
-            self.published = []
-            self.subscriptions = []
-            self.on_connect = None
-            self.on_message = None
-
-        def publish(self, topic, payload=None, qos=0, retain=False):
-            self.published.append({"topic": topic, "payload": payload, "qos": qos, "retain": retain})
-
-        def subscribe(self, topic, qos=0):
-            self.subscriptions.append(topic)
-
-        def will_set(self, *a, **kw):
-            pass
-
-        def connect(self, *a, **kw):
-            pass
-
-        def loop_forever(self, *a, **kw):
-            pass
-
-        def loop_start(self):
-            pass
-
-        def loop_stop(self):
-            pass
-
-        def disconnect(self):
-            pass
-
-    client_mod.Client = _Client
-    client_mod.MQTTv311 = 4
-
-    class _CallbackAPIVersion:
-        VERSION2 = 2
-
-    client_mod.CallbackAPIVersion = _CallbackAPIVersion
-    mqtt_mod.client = client_mod
-    paho.mqtt = mqtt_mod
-    sys.modules["paho"] = paho
-    sys.modules["paho.mqtt"] = mqtt_mod
-    sys.modules["paho.mqtt.client"] = client_mod
-
-
-_install_fake_paho()
 
 
 # Realistic timings, in seconds, for the commands whose duration actually
@@ -150,11 +93,11 @@ class FakeCommands:
                 return rule
         return {"returncode": 0, "stdout": "", "stderr": "", "duration": 0.0}
 
-    def run(self, cmd, **kwargs):
+    async def run(self, cmd, timeout=None, **kwargs):
         rule = self._match(cmd)
         started = time.time() - self.t0
         if rule["duration"]:
-            time.sleep(rule["duration"])
+            await asyncio.sleep(rule["duration"])
         with self._lock:
             self.calls.append({
                 "argv": [str(c) for c in cmd],
@@ -185,32 +128,45 @@ class FakeCommands:
 
 @pytest.fixture
 def fake_cmds(monkeypatch):
-    """Patches subprocess.run in every agent module that calls it."""
+    """Replaces the CLI layer for every mixin at once.
+
+    agent.proc is the single seam all of them go through, so patching its
+    two entry points is enough - no per-module patching, unlike the sync
+    version which had to reach into each module's `subprocess`.
+    """
     fake = FakeCommands()
-    import agent.wifi as wifi_mod
-    import agent.wifi_scan as scan_mod
-    import agent.interfaces as if_mod
+    import agent.proc as proc_mod
 
-    for mod in (wifi_mod, scan_mod, if_mod):
-        monkeypatch.setattr(mod.subprocess, "run", fake.run, raising=False)
-
-    # _run_hard_timeout goes through Popen rather than run; route it to the
-    # same script so tests can reason about one recording.
-    def fake_hard_timeout(cmd, timeout):
-        return fake.run(cmd)
-
-    monkeypatch.setattr(wifi_mod.WifiMixin, "_run_hard_timeout", staticmethod(fake_hard_timeout))
+    monkeypatch.setattr(proc_mod, "run", fake.run)
+    monkeypatch.setattr(proc_mod, "run_hard", lambda cmd, timeout=None: fake.run(cmd))
     return fake
 
 
+class FakeMqttClient:
+    """Stands in for the aiomqtt client the agent holds while connected."""
+
+    def __init__(self):
+        self.published = []
+        self.subscriptions = []
+
+    async def publish(self, topic, payload=None, qos=0, retain=False):
+        self.published.append({"topic": topic, "payload": payload, "qos": qos, "retain": retain})
+
+    async def subscribe(self, topic, qos=0):
+        self.subscriptions.append(topic)
+
+
 @pytest.fixture
-def agent(fake_cmds, monkeypatch):
-    """A PiAgent with its CLI layer and MQTT client faked out."""
+def agent(fake_cmds):
+    """A PiAgent with its CLI layer and MQTT client faked out.
+
+    Built inside the running loop because __init__ now creates asyncio.Lock
+    objects, which bind to whichever loop is current.
+    """
     from agent.core import PiAgent
 
-    # Skip the iptables cleanup the real constructor attempts.
-    monkeypatch.setattr(PiAgent, "_cleanup_stale_webui_proxy_rules", lambda self: None)
     a = PiAgent()
+    a.client = FakeMqttClient()
     a.cmds = fake_cmds
     return a
 
@@ -228,11 +184,28 @@ def published_results(agent):
     return out
 
 
-def wait_for(predicate, timeout=5.0, interval=0.01):
-    """Polls until predicate() is truthy. Returns True if it became so."""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+async def wait_for(predicate, timeout=5.0, interval=0.01):
+    """Polls until predicate() is truthy. Returns True if it became so.
+
+    Used for the fire-and-forget dispatched commands, which publish from
+    their own task rather than by the time the caller returns.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
         if predicate():
             return True
-        time.sleep(interval)
+        await asyncio.sleep(interval)
     return False
+
+
+def returns(value):
+    """An async stand-in for a coroutine method, for monkeypatching.
+
+    Every agent method the tests replace is a coroutine now, so a plain
+    `lambda self, i: "192.168.1.50"` no longer substitutes for one - the
+    caller awaits what it gets back.
+    """
+    async def _stub(*args, **kwargs):
+        return value
+    return _stub
