@@ -5,62 +5,85 @@ import uuid
 from datetime import datetime, timezone
 
 from . import proc
+
+
 class WifiScanMixin:
-    """Nearby-network scanning: the fast nmcli table (get_wifi_scan) the
-    "Nearby networks" list uses, the slower `iw scan`-based detailed scan
-    (get_wifi_scan_detail) the "Nearby Hotspot" popup uses, and the
-    background loop that keeps the backend's WifiScanHistory buffer fresh
-    without the popup having to trigger a scan itself. Relies on
-    WifiMixin's _band_label/_wifi_lock_for and InterfacesMixin's
-    get_interface_details."""
+    """Nearby-network scanning: the flat table (get_wifi_scan) the "Nearby
+    networks" list uses, the fuller `iw scan` decode (get_wifi_scan_detail)
+    behind the "Nearby Hotspot" popup, and the background loop that keeps
+    the backend's WifiScanHistory buffer fresh without the popup having to
+    trigger a scan itself. Relies on WifiMixin's _band_label/_wifi_lock_for
+    and InterfacesMixin's get_interface_details.
+
+    Both scan paths go through `iw` and cfg80211's scan cache. Nothing here
+    uses NetworkManager: install.sh marks every wl* interface unmanaged, so
+    NM will not scan them or report their BSSes."""
 
     async def get_wifi_scan(self, interface):
-        """Scan for nearby wifi APs via nmcli (Pi acting as a station).
+        """Nearby APs for the "Nearby networks" list, via `iw`.
 
-        Uses nmcli's terse (-t) mode, which escapes literal colons inside a
-        field (e.g. the BSSID) as "\\:" - split on unescaped colons only,
-        then unescape, to avoid splitting a BSSID's own colons apart.
+        This used to run `nmcli dev wifi list ... --rescan yes`, which
+        returned an empty list on every Pi in the fleet. install.sh ships
+        99-pi-agent-unmanaged-wifi.conf setting
+        `unmanaged-devices=interface-name:wl*`, and NetworkManager neither
+        scans nor reports BSSes for a device it does not manage - so the
+        command succeeded, printed nothing, and the action reported "no
+        networks" rather than an error. `iw` talks to cfg80211 directly and
+        is indifferent to NM's management state, which is why
+        get_wifi_scan_detail never had the problem.
+
+        Same source as that detail scan, then, just flattened to the
+        smaller shape this list renders. Cache-first for the same reason
+        wifi_detail_scan is: this runs inline on the MQTT message loop, so
+        it must not sit on a multi-second radio scan there. Falls back to a
+        real scan when the cache has nothing - a freshly booted Pi, or an
+        interface the background loop hasn't reached yet, would otherwise
+        show the same empty list this change exists to fix.
         """
         if not interface:
             return {"error": "interface is required"}
 
-        fields = "SSID,BSSID,MODE,CHAN,FREQ,RATE,SIGNAL,SECURITY"
-        ret = await proc.run(
-            ["nmcli", "-t", "-f", fields, "dev", "wifi", "list", "ifname", interface, "--rescan", "yes"], timeout=30,
-        )
-        if ret.returncode != 0:
-            return {"interface": interface, "error": (ret.stderr or ret.stdout).strip()}
+        detail = await self.get_wifi_scan_detail(interface, use_cache=True)
+        if not detail.get("networks"):
+            detail = await self.get_wifi_scan_detail(interface, use_cache=False)
+        if "error" in detail:
+            return {"interface": interface, "error": detail["error"]}
 
-        networks = []
-        for line in ret.stdout.splitlines():
-            if not line.strip():
-                continue
-            parts = [p.replace("\\:", ":") for p in re.split(r'(?<!\\):', line)]
-            if len(parts) < 8:
-                continue
-            ssid, bssid, mode, chan, freq, rate, signal, security = parts[:8]
-            freq_m = re.match(r'(\d+)', freq)
-            freq_mhz = int(freq_m.group(1)) if freq_m else None
-            networks.append({
-                "ssid": ssid or None,
-                "bssid": bssid or None,
-                "mode": mode or None,
-                "channel": int(chan) if chan.isdigit() else None,
-                "frequency_mhz": freq_mhz,
-                "band": self._band_label(freq_mhz) if freq_mhz else None,
-                "rate": rate or None,
-                "signal_percent": int(signal) if signal.isdigit() else None,
-                "security": security or None,
-            })
-        return {"interface": interface, "networks": networks}
+        return {
+            "interface": interface,
+            "networks": [self._flatten_scan_entry(n) for n in detail.get("networks", [])],
+        }
+
+    def _flatten_scan_entry(self, net):
+        """One _parse_scan_bss_block entry reduced to the fields the
+        "Nearby networks" list renders.
+
+        Field names are the frontend's contract (wifi-scan.js,
+        command-builder.js read these keys directly), so they keep the
+        names nmcli's output was mapped onto rather than the detail scan's.
+        `rate` keeps its "<n> Mbit/s" string form for the same reason: it's
+        rendered as-is, not formatted at the far end.
+        """
+        freq_mhz = net.get("frequency_mhz")
+        max_speed = net.get("max_speed_mbps")
+        return {
+            "ssid": net.get("ssid"),
+            "bssid": net.get("bssid"),
+            "mode": net.get("bss_type"),
+            "channel": net.get("channel"),
+            "frequency_mhz": freq_mhz,
+            "band": self._band_label(freq_mhz) if freq_mhz else None,
+            "rate": f"{max_speed:g} Mbit/s" if max_speed else None,
+            "signal_percent": net.get("signal_quality_percent"),
+            "security": net.get("security"),
+        }
 
     # --- detailed wifi scan (Wifi Info popup) -------------------------------
-    # get_wifi_scan (above) is the fast nmcli table the "Nearby networks"
-    # list uses. This is a separate, much slower `iw scan` that decodes
-    # information elements (RSN/WPA, HT/VHT operation, WPS, BSS Load,
-    # Country) for the detail popup - fields an AP doesn't broadcast, or
-    # that this build of `iw` doesn't decode, are left None rather than
-    # guessed.
+    # The full decode: information elements (RSN/WPA, HT/VHT operation, WPS,
+    # BSS Load, Country) for the detail popup - fields an AP doesn't
+    # broadcast, or that this build of `iw` doesn't decode, are left None
+    # rather than guessed. get_wifi_scan (above) is the same scan flattened
+    # to the handful of fields the "Nearby networks" list shows.
 
     @staticmethod
     def _dbm_to_quality_percent(dbm):
