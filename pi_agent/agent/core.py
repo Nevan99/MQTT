@@ -407,6 +407,14 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
                         print(f"[pi_agent] could not resolve {self.wired_interface}'s IP, connecting unbound: {e}")
                     if not bind_address:
                         print(f"[pi_agent] {self.wired_interface} has no IPv4 address yet, connecting unbound")
+                    else:
+                        # Otherwise a successful bind is silent, which made
+                        # it indistinguishable from an agent build that
+                        # predates this feature entirely (both produce no
+                        # matching log line) - print it explicitly so
+                        # `journalctl -u pi-agent | grep bound` gives a
+                        # definite yes/no per connect.
+                        print(f"[pi_agent] MQTT connection bound to {self.wired_interface} ({bind_address})")
 
                 # clean_session=True: the broker (mosquitto 1.6.9) only
                 # speaks MQTT 3.1.1, and a fresh session on every connect is
