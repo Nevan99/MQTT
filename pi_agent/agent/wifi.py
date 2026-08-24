@@ -724,6 +724,14 @@ class WifiMixin:
         except Exception as e:
             return {"error": str(e)}
 
+    # Staggers each radio's association attempt within one connect_hotspot
+    # call - see the docstring below for why. Kept small: the point is to
+    # spread out the burst of auth/assoc/EAPOL frames each radio's attempt
+    # opens with, not to seriously slow the whole batch down (8 radios at
+    # this stagger adds under 3s of spread against connects that each
+    # individually take several seconds anyway).
+    CONNECT_HOTSPOT_STAGGER_SECONDS = 0.4
+
     async def connect_hotspot(self, ssid=None, password=None, bssid=None,
                               channel=None, interfaces=None, auto_reconnect=False):
         """Join one hotspot on several of this Pi's radios at once.
@@ -731,9 +739,18 @@ class WifiMixin:
         The fleet use case this exists for is "put these four radios on that
         AP and watch what it does with them" - previously four separate
         connect_wifi commands, which had to be issued and correlated one at
-        a time. Here they run concurrently: each radio takes only its own
-        interface lock, so they neither serialise behind one another nor
-        race on shared state.
+        a time. Each radio takes only its own interface lock, so they never
+        serialise behind one another or race on shared state - but their
+        association attempts are staggered by CONNECT_HOTSPOT_STAGGER_SECONDS
+        rather than launched in the same instant. A real fleet test hitting
+        one AP with 8+ radios at once (several Pis' connect_hotspot/fan-out
+        connects landing together) reliably failed some of them - a burst of
+        that many simultaneous auth/assoc/4-way-handshake attempts can trip
+        an AP's client cap, overload its handshake handling, or just cause
+        genuine airtime contention - none of which shows up when connecting
+        one radio at a time by hand, since nothing else is competing for the
+        AP's attention at that instant. Spreading the starts out removes the
+        burst without meaningfully slowing the batch down.
 
         Note what is deliberately *not* shared: each radio associates
         independently, so a partial outcome is normal and is reported as
@@ -751,12 +768,17 @@ class WifiMixin:
         # otherwise deadlock on its own lock.
         ordered = list(dict.fromkeys(interfaces))
 
-        async def one(interface):
+        async def one(interface, delay):
+            if delay:
+                await asyncio.sleep(delay)
             async with self._wifi_pending_command(interface):
                 async with self._wifi_lock_for(interface):
                     return await self.connect_wifi(ssid, password, interface, bssid, channel, auto_reconnect)
 
-        outcomes = await asyncio.gather(*(one(i) for i in ordered), return_exceptions=True)
+        outcomes = await asyncio.gather(
+            *(one(i, idx * self.CONNECT_HOTSPOT_STAGGER_SECONDS) for idx, i in enumerate(ordered)),
+            return_exceptions=True,
+        )
 
         results = []
         for interface, outcome in zip(ordered, outcomes):

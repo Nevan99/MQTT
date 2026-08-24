@@ -478,7 +478,7 @@ function renderHotspotConnectCard(piId, net) {
         ? `Connected on all ${okCount} interface(s).`
         : `Connected on ${okCount}/${targets.length}. ` +
           (result && Array.isArray(result.results)
-            ? result.results.filter(r => !r.connected).map(r => `${r.interface}: ${r.error || r.output || 'failed'}`).join('; ')
+            ? result.results.filter(r => !r.connected).map(r => `${r.interface}: ${r.error || wifiFailureDetail(r) || 'failed'}`).join('; ')
             : '');
       if (okCount > 0) {
         applyWifiPasswordMemory(body, net, password);

@@ -87,7 +87,15 @@ function renderMergedWifiNetworkCard(targets, net) {
     statusEl.textContent = `Connecting on ${targets.length} interface(s)…`;
     const password = passwordInput && passwordInput.value ? passwordInput.value : undefined;
     const autoReconnect = !!(autoReconnectCheckbox && autoReconnectCheckbox.checked);
-    const results = await Promise.allSettled(targets.map(async ({ piId, interface: iface }) => {
+    // Staggered start, same reasoning as PiAgent.CONNECT_HOTSPOT_STAGGER_SECONDS -
+    // several radios (often across several Pis here) all starting their
+    // association at the same instant is what actually trips up a single
+    // AP (client cap, handshake overload, or plain airtime contention),
+    // not connecting each individually - staggering removes the burst
+    // without meaningfully slowing the batch down.
+    const CONNECT_STAGGER_MS = 400;
+    const results = await Promise.allSettled(targets.map(async ({ piId, interface: iface }, i) => {
+      if (i > 0) await new Promise(r => setTimeout(r, i * CONNECT_STAGGER_MS));
       const result = await connectWifiWithRetry(piId, {
         ssid: net.ssid || undefined,
         bssid: net.bssid || undefined,
@@ -96,7 +104,7 @@ function renderMergedWifiNetworkCard(targets, net) {
         auto_reconnect: autoReconnect,
       });
       if (!(result && result.connected)) {
-        throw new Error(`${piId}/${iface}: failed${result && result.output ? ' - ' + result.output : ''}`);
+        throw new Error(`${piId}/${iface}: failed${wifiFailureDetail(result) ? ' - ' + wifiFailureDetail(result) : ''}`);
       }
       // Nothing here previously refreshed the fleet's own interface cards -
       // connect succeeded but their wifi icon/connected-mark/IP stayed

@@ -134,7 +134,7 @@ function wireWifiInfoConnectSection(container, piId, iface, net) {
         interface: iface,
         auto_reconnect: !!(autoReconnectInput && autoReconnectInput.checked),
       });
-      statusEl.textContent = result && result.connected ? 'Connected.' : `Failed to connect${result && result.output ? ': ' + result.output : ''}`;
+      statusEl.textContent = result && result.connected ? 'Connected.' : `Failed to connect${wifiFailureDetail(result) ? ': ' + wifiFailureDetail(result) : ''}`;
       if (result && result.connected) {
         applyWifiPasswordMemory(container, net, password);
         wifiInfoRefreshWifiIcons(piId, iface);

@@ -634,7 +634,7 @@ function renderWifiNetworkCard(piId, iface, net, connectedBssid) {
           interface: iface,
           auto_reconnect: !!(autoReconnectInput && autoReconnectInput.checked),
         });
-        statusEl.textContent = result && result.connected ? 'Connected.' : `Failed to connect${result && result.output ? ': ' + result.output : ''}`;
+        statusEl.textContent = result && result.connected ? 'Connected.' : `Failed to connect${wifiFailureDetail(result) ? ': ' + wifiFailureDetail(result) : ''}`;
         if (result && result.connected) applyWifiPasswordMemory(body, net, password);
         // Only touch the Pi detail page's own cache/icon if this card is
         // actually being shown there for this same Pi - this card is also
