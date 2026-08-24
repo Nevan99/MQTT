@@ -890,7 +890,7 @@ async function fetchInterfaceStatusBuffer(piId) {
 function applyWifiIconStatus(cardState, status) {
   if (!isWifiInterface(cardState.iface) || !cardState.wifiIconEl) return;
   const connected = !!(status && status.connected);
-  cardState.wifiIconEl.classList.remove('wifi-unknown');
+  cardState.wifiIconEl.classList.remove('wifi-unknown', 'wifi-connected', 'wifi-disconnected');
   cardState.wifiIconEl.classList.add(connected ? 'wifi-connected' : 'wifi-disconnected');
   cardState.wifiIconEl.title = connected ? `Wi-Fi connected${status.ssid ? ' — ' + status.ssid : ''}` : 'Wi-Fi not connected';
   cardState.connectedMarkEl.classList.toggle('hidden', !connected);
@@ -926,7 +926,7 @@ async function refreshFleetWifiIcon(piId, entry, cardState) {
     const result = await awaitCommandResult(data.command_id, 10);
     entry.linkInfoCache[cardState.iface] = result;
     const connected = !!(result && result.connected);
-    cardState.wifiIconEl.classList.remove('wifi-unknown');
+    cardState.wifiIconEl.classList.remove('wifi-unknown', 'wifi-connected', 'wifi-disconnected');
     cardState.wifiIconEl.classList.add(connected ? 'wifi-connected' : 'wifi-disconnected');
     cardState.wifiIconEl.title = connected ? `Wi-Fi connected${result.ssid ? ' — ' + result.ssid : ''}` : 'Wi-Fi not connected';
     cardState.connectedMarkEl.classList.toggle('hidden', !connected);

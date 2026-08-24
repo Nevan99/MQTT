@@ -174,6 +174,7 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
                     action, payload.get("command_id"), interface, self.connect_wifi,
                     payload.get("ssid"), payload.get("password"), interface,
                     payload.get("bssid"), payload.get("channel"),
+                    payload.get("auto_reconnect", False),
                 )
                 return
             elif action == "disconnect_wifi":
@@ -201,6 +202,7 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
                     payload.get("ssid"), payload.get("password"),
                     payload.get("bssid"), payload.get("channel"),
                     payload.get("interfaces") or payload.get("interface"),
+                    payload.get("auto_reconnect", False),
                 )
                 return
             elif action == "wifi_detail_scan":
@@ -330,6 +332,12 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
             self._spawn(self._wifi_background_scan_loop(), "wifi-scan-loop")
         if not any(t.get_name() == "interface-status-loop" for t in self._background_tasks):
             self._spawn(self._interface_status_loop(), "interface-status-loop")
+        # Once per process start, not every reconnect - a saved profile is
+        # replayed here rather than in start() because it needs the wifi
+        # lock/pending-command machinery (asyncio primitives, same event
+        # loop) rather than running before the loop is definitely up.
+        if not any(t.get_name() == "wifi-reconnect" for t in self._background_tasks):
+            self._spawn(self._replay_saved_wifi_profiles(), "wifi-reconnect")
 
     async def on_message(self, message):
         try:

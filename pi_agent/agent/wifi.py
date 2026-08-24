@@ -2,11 +2,12 @@ import asyncio
 import json
 import os
 import re
+import uuid
 import zlib
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from . import proc, wpa_events
+from . import proc, wifi_profiles, wpa_events
 
 
 class WifiMixin:
@@ -327,7 +328,8 @@ class WifiMixin:
             None,
         )
 
-    async def connect_wifi(self, ssid, password=None, interface=None, bssid=None, channel=None):
+    async def connect_wifi(self, ssid, password=None, interface=None, bssid=None, channel=None,
+                            auto_reconnect=False):
         """Connect to a wifi hotspot via wpa_supplicant + dhcpcd (see the
         module-level comment above for why this needs three pieces instead
         of nmcli's one call).
@@ -340,6 +342,16 @@ class WifiMixin:
         that channel's frequency (scan_freq) - useful when the same SSID is
         broadcast on multiple bands/channels and a specific one needs to be
         tested.
+
+        auto_reconnect opts this connection into agent/wifi_profiles.py: on
+        success, this SSID/password/BSSID is remembered for `interface`, and
+        both the startup replay (_replay_saved_wifi_profiles) and the
+        continuous per-cycle check (_maybe_auto_reconnect, run from the
+        background scan loop) will reconnect it automatically whenever it's
+        in range and the interface isn't already connected to something
+        else. False (the default) clears any previously saved profile for
+        this interface instead - connecting without the flag turns auto
+        reconnect off for whatever was saved before.
         """
         if not interface:
             return {"error": "interface is required"}
@@ -403,12 +415,32 @@ class WifiMixin:
             dhcp_output = (dhcp_ret.stdout or dhcp_ret.stderr).strip()
             ip_address = await self.get_interface_ip(interface)
 
+        connected = associated and bool(ip_address)
+        if connected:
+            if auto_reconnect:
+                # Remembered so PiAgent._replay_saved_wifi_profiles and
+                # _maybe_auto_reconnect can rejoin this network on their own,
+                # without a fresh command from the backend - see
+                # wifi_profiles for why nothing else does this any more now
+                # that NetworkManager is unmanaged. Covers connect_hotspot
+                # too, since it calls this per interface.
+                wifi_profiles.save(interface, {
+                    "ssid": ssid, "password": password, "bssid": bssid, "channel": channel,
+                    "auto_reconnect": True,
+                })
+            else:
+                # Connecting without the flag also turns auto reconnect off
+                # for whatever was saved here before - the toggle reflects
+                # the most recent connect, not just its own True case.
+                wifi_profiles.clear(interface)
+
         return {
             "ssid": ssid,
             "bssid": bssid,
             "interface": interface,
             "channel": channel,
-            "connected": associated and bool(ip_address),
+            "connected": connected,
+            "auto_reconnect": auto_reconnect,
             "ip_address": ip_address,
             # Populated from the control socket when association was
             # rejected - the reason/status code a status poll never showed.
@@ -420,6 +452,11 @@ class WifiMixin:
     async def disconnect_wifi(self, interface=None):
         if not interface:
             return {"error": "interface is required"}
+
+        # An explicit user disconnect means "stay off this network" - clear
+        # any saved profile so a reboot's startup replay
+        # (_replay_saved_wifi_profiles) doesn't silently undo it.
+        wifi_profiles.clear(interface)
 
         # These run strictly one after another, so every timeout here is
         # additive on the caller's round-trip. They are hang budgets, not
@@ -636,7 +673,7 @@ class WifiMixin:
             return {"error": str(e)}
 
     async def connect_hotspot(self, ssid=None, password=None, bssid=None,
-                              channel=None, interfaces=None):
+                              channel=None, interfaces=None, auto_reconnect=False):
         """Join one hotspot on several of this Pi's radios at once.
 
         The fleet use case this exists for is "put these four radios on that
@@ -665,7 +702,7 @@ class WifiMixin:
         async def one(interface):
             async with self._wifi_pending_command(interface):
                 async with self._wifi_lock_for(interface):
-                    return await self.connect_wifi(ssid, password, interface, bssid, channel)
+                    return await self.connect_wifi(ssid, password, interface, bssid, channel, auto_reconnect)
 
         outcomes = await asyncio.gather(*(one(i) for i in ordered), return_exceptions=True)
 
@@ -688,6 +725,98 @@ class WifiMixin:
             "connected": len(connected) == len(ordered),
             "results": results,
         }
+
+    async def _replay_saved_wifi_profiles(self):
+        """Reconnects every interface pi_agent remembers successfully
+        connecting to, once per process start - see agent/wifi_profiles.py
+        for why this exists (NetworkManager no longer owns these
+        interfaces, so nothing else auto-reconnects them after a reboot or
+        an agent restart). Spawned once from PiAgent.start_background_loops.
+
+        Runs each interface through the normal lock/pending-command path so
+        it can't race a real user command arriving for the same interface
+        at the same time; different interfaces reconnect concurrently."""
+        profiles = wifi_profiles.load()
+        if not profiles:
+            return
+
+        async def one(interface, profile):
+            async with self._wifi_pending_command(interface):
+                async with self._wifi_lock_for(interface):
+                    try:
+                        return await self.connect_wifi(
+                            profile.get("ssid"), profile.get("password"), interface,
+                            profile.get("bssid"), profile.get("channel"), True,
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        return {"error": str(e)}
+
+        outcomes = await asyncio.gather(
+            *(one(interface, profile) for interface, profile in profiles.items()),
+            return_exceptions=True,
+        )
+        for (interface, profile), outcome in zip(profiles.items(), outcomes):
+            if isinstance(outcome, asyncio.CancelledError):
+                raise outcome
+            failed = isinstance(outcome, Exception) or not outcome.get("connected")
+            if failed:
+                detail = str(outcome) if isinstance(outcome, Exception) else (outcome.get("output") or outcome.get("error"))
+                target = profile.get("ssid") or profile.get("bssid")
+                print(f"[pi_agent] {interface}: startup reconnect to {target} failed: {detail}")
+
+    @staticmethod
+    def _profile_in_range(profile, networks):
+        bssid = profile.get("bssid")
+        ssid = profile.get("ssid")
+        for net in networks:
+            if bssid and net.get("bssid") == bssid.lower():
+                return True
+            if not bssid and ssid and net.get("ssid") == ssid:
+                return True
+        return False
+
+    async def _is_wifi_connected(self, interface):
+        """True if this interface currently has a live wpa_supplicant
+        association - the only way any wl* interface gets connected at
+        all now that NetworkManager is unmanaged (99-pi-agent-unmanaged-
+        wifi.conf), so this is a reliable "is this radio in use" check for
+        _maybe_auto_reconnect."""
+        if not self._wpa_ctrl_socket_exists(interface):
+            return False
+        return await self._current_wpa_state(interface) == "COMPLETED"
+
+    async def _maybe_auto_reconnect(self, interface, networks):
+        """Reconnects `interface` to its saved profile the moment it's back
+        in range, as long as auto_reconnect was enabled for it and it isn't
+        already connected to something. Called once per background scan
+        cycle (_wifi_background_scan_one) with that cycle's own scan
+        results, so it costs nothing extra - no separate scan of its own.
+
+        _wifi_command_pending doubles as the debounce here: once a
+        reconnect attempt is dispatched it holds the interface's lock for
+        the whole connect_wifi call (which can take tens of seconds), and
+        the pending marker is set before that lock is even requested - so
+        later cycles skip straight past this interface instead of queuing
+        up duplicate reconnect attempts behind the first one."""
+        profile = wifi_profiles.load().get(interface)
+        if not profile or not profile.get("auto_reconnect"):
+            return
+        if self._wifi_command_pending(interface):
+            return
+        if await self._is_wifi_connected(interface):
+            return
+        if not self._profile_in_range(profile, networks):
+            return
+
+        target = profile.get("ssid") or profile.get("bssid")
+        print(f"[pi_agent] {interface}: {target} back in range and not connected - auto-reconnecting")
+        self._dispatch_wifi_command(
+            "connect_wifi", str(uuid.uuid4()), interface, self.connect_wifi,
+            profile.get("ssid"), profile.get("password"), interface,
+            profile.get("bssid"), profile.get("channel"), True,
+        )
 
     def _dispatch_wifi_command(self, action, command_id, interface, fn, *args):
         """Runs connect_wifi/disconnect_wifi as its own task and publishes

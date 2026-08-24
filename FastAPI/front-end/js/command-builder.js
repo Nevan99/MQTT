@@ -399,13 +399,118 @@ function renderWifiScanResults(container, networks) {
   });
 }
 
-// A single-target nearby_hotspots result (one Pi - the common
-// case from the Fleet/detail Actions panel) reuses the exact same
-// connect-capable card as the per-interface "Nearby networks" widget
-// (renderWifiNetworkCard), instead of the connect-less plain result view -
-// so scanning from the Actions panel can connect directly too, not just
-// the merged multi-interface fleet scan.
-function renderScanResultsWithConnect(container, piId, iface, networks) {
+// One nearby_hotspots network card, with a Connect button that joins this
+// AP via connect_hotspot - not connect_wifi - targeting `net.seen_by` (the
+// radios that actually heard this specific BSSID during the scan, per
+// PiAgent.get_nearby_hotspots/_merge_hotspot), not every interface the scan
+// was run against. Mirrors the fleet cross-Pi merged card's look
+// (renderMergedWifiNetworkCard in wifi-scan.js), but for one Pi it can use
+// connect_hotspot's own atomic multi-radio join instead of fanning out
+// separate connect_wifi calls client-side.
+function renderHotspotConnectCard(piId, net) {
+  const open = isOpenSecurity(net.security);
+  const targets = net.seen_by && net.seen_by.length ? net.seen_by : (net.best_interface ? [net.best_interface] : []);
+  const card = document.createElement('div');
+  card.className = 'pd-iface-card';
+  card.innerHTML = `
+    <div class="pd-iface-header">
+      <span class="pd-iface-name">${net.ssid || '(hidden)'}</span>
+      <span class="pd-iface-toggle">${chevronIconSvg('right')}</span>
+    </div>
+    <div class="pd-iface-body hidden"></div>
+  `;
+  const body = card.querySelector('.pd-iface-body');
+  const rows = [
+    ['BSSID', net.bssid],
+    ['Seen by', targets.join(', ')],
+    ['Channel', net.channel],
+    ['Frequency', net.frequency_mhz != null ? `${net.frequency_mhz} MHz` : null],
+    ['Band', net.band],
+    ['Rate', net.rate],
+    ['Signal', net.signal_percent != null ? `${net.signal_percent}%` : null],
+    ['Security', net.security],
+  ].filter(([, v]) => v !== null && v !== undefined && v !== '');
+  body.innerHTML = `
+    <table class="result-table">${rows.map(([k, v]) =>
+      `<tr><td class="result-key">${k}</td><td class="result-value">${v}</td></tr>`
+    ).join('')}</table>
+    <div class="wifi-connect-row">
+      ${open ? '' : wifiPasswordFieldHtml(net)}
+      ${wifiAutoReconnectFieldHtml()}
+      <button type="button" class="wifi-connect-btn" ${targets.length ? '' : 'disabled'}>Connect${targets.length > 1 ? ` (${targets.length} interfaces)` : ''}</button>
+    </div>
+    <div class="wifi-connect-status hint"></div>
+  `;
+
+  card.querySelector('.pd-iface-header').addEventListener('click', () => {
+    const expanding = body.classList.contains('hidden');
+    body.classList.toggle('hidden');
+    card.querySelector('.pd-iface-toggle').innerHTML = chevronIconSvg(expanding ? 'down' : 'right');
+  });
+
+  const stop = (e) => e.stopPropagation();
+  const statusEl = body.querySelector('.wifi-connect-status');
+  const passwordInput = body.querySelector('.wifi-connect-password');
+  if (passwordInput) passwordInput.addEventListener('click', stop);
+  const rememberCheckbox = body.querySelector('.wifi-remember-checkbox');
+  if (rememberCheckbox) rememberCheckbox.addEventListener('click', stop);
+  const autoReconnectCheckbox = body.querySelector('.wifi-autoreconnect-checkbox');
+  if (autoReconnectCheckbox) autoReconnectCheckbox.addEventListener('click', stop);
+
+  const connectBtn = body.querySelector('.wifi-connect-btn');
+  connectBtn.addEventListener('click', async (e) => {
+    stop(e);
+    if (!targets.length) return;
+    connectBtn.disabled = true;
+    statusEl.textContent = `Connecting on ${targets.length} interface(s)…`;
+    const password = passwordInput && passwordInput.value ? passwordInput.value : undefined;
+    try {
+      const result = await sendCommandAwaitResult(piId, 'connect_hotspot', {
+        ssid: net.ssid || undefined,
+        bssid: net.bssid || undefined,
+        password,
+        channel: net.channel || undefined,
+        interfaces: targets,
+        auto_reconnect: !!(autoReconnectCheckbox && autoReconnectCheckbox.checked),
+      });
+      const okCount = (result && result.connected_interfaces) ? result.connected_interfaces.length : 0;
+      statusEl.textContent = result && result.connected
+        ? `Connected on all ${okCount} interface(s).`
+        : `Connected on ${okCount}/${targets.length}. ` +
+          (result && Array.isArray(result.results)
+            ? result.results.filter(r => !r.connected).map(r => `${r.interface}: ${r.error || r.output || 'failed'}`).join('; ')
+            : '');
+      if (okCount > 0) {
+        applyWifiPasswordMemory(body, net, password);
+        // Refresh whichever of these interfaces are showing as fleet cards -
+        // same reasoning as renderMergedWifiNetworkCard's own Connect button.
+        (result.connected_interfaces || []).forEach(iface => {
+          const entry = piRows.get(piId);
+          const cardState = entry && entry.ifaceCards.get(iface);
+          if (entry && cardState) {
+            entry.ifaceDetailsCache = null;
+            entry.ifaceDetailsPromise = null;
+            refreshFleetWifiIcon(piId, entry, cardState);
+          }
+        });
+      }
+    } catch (err) {
+      statusEl.textContent = `Failed: ${err.message}`;
+    } finally {
+      connectBtn.disabled = false;
+    }
+  });
+
+  return card;
+}
+
+// A single-Pi nearby_hotspots result (the common case from the Fleet/detail
+// Actions panel) - one connect-capable card per AP (renderHotspotConnectCard
+// above), instead of the connect-less plain result view, so scanning from
+// the Actions panel can connect directly too, not just the merged
+// cross-Pi/multi-interface fleet scan builder (wifi-scan.js's
+// sendScanWifiFanOut/renderMergedWifiScan).
+function renderNearbyHotspotsWithConnect(container, piId, networks) {
   container.innerHTML = '';
   if (!networks.length) {
     container.innerHTML = '<div class="pi-log-empty">no networks found</div>';
@@ -422,9 +527,7 @@ function renderScanResultsWithConnect(container, piId, iface, networks) {
   listEl.className = 'pd-wifi-scan-list';
   container.appendChild(listEl);
 
-  // connectedBssid unknown here (no link_info fetched for this render) -
-  // the "connected" badge just won't show; Connect/Disconnect still work.
-  networks.forEach(net => listEl.appendChild(renderWifiNetworkCard(piId, iface, net, null)));
+  networks.forEach(net => listEl.appendChild(renderHotspotConnectCard(piId, net)));
 
   searchWrap.querySelector('.pd-wifi-search-input').addEventListener('input', (e) => {
     applyWifiSearchFilter(listEl, e.target.value);
@@ -436,8 +539,8 @@ function renderScanResultsWithConnect(container, piId, iface, networks) {
 // per-AP cards over the generic key-value table without duplicating logic.
 function renderCommandResult(container, action, result, piId) {
   if (action === 'nearby_hotspots' && result && Array.isArray(result.networks)) {
-    if (piId && result.interface) {
-      renderScanResultsWithConnect(container, piId, result.interface, result.networks);
+    if (piId) {
+      renderNearbyHotspotsWithConnect(container, piId, result.networks);
     } else {
       renderWifiScanResults(container, result.networks);
     }

@@ -205,7 +205,7 @@ function applyDetailWifiIconStatus(iface, status) {
   const el = document.querySelector(`#pdInterfaceList .wifi-icon[data-iface="${CSS.escape(iface)}"]`);
   if (!el) return;
   const connected = !!(status && status.connected);
-  el.classList.remove('wifi-unknown');
+  el.classList.remove('wifi-unknown', 'wifi-connected', 'wifi-disconnected');
   el.classList.add(connected ? 'wifi-connected' : 'wifi-disconnected');
   el.title = connected ? `Wi-Fi connected${status.ssid ? ' — ' + status.ssid : ''}` : 'Wi-Fi not connected';
   const card = el.closest('.pd-iface-card');
@@ -230,7 +230,7 @@ async function refreshWifiIcon(piId, iface) {
     const el = document.querySelector(`#pdInterfaceList .wifi-icon[data-iface="${CSS.escape(iface)}"]`);
     if (!el) return;
     const connected = !!(result && result.connected);
-    el.classList.remove('wifi-unknown');
+    el.classList.remove('wifi-unknown', 'wifi-connected', 'wifi-disconnected');
     el.classList.add(connected ? 'wifi-connected' : 'wifi-disconnected');
     el.title = connected ? `Wi-Fi connected${result.ssid ? ' — ' + result.ssid : ''}` : 'Wi-Fi not connected';
     const card = el.closest('.pd-iface-card');
@@ -276,7 +276,7 @@ async function refreshDetailInterfaceStatusBuffer(piId) {
     const el = document.querySelector(`#pdInterfaceList .wifi-icon[data-iface="${CSS.escape(iface)}"]`);
     if (!el) return;
     const connected = !!status.connected;
-    el.classList.remove('wifi-unknown');
+    el.classList.remove('wifi-unknown', 'wifi-connected', 'wifi-disconnected');
     el.classList.add(connected ? 'wifi-connected' : 'wifi-disconnected');
     el.title = connected ? `Wi-Fi connected${status.ssid ? ' — ' + status.ssid : ''}` : 'Wi-Fi not connected';
     const card = el.closest('.pd-iface-card');
@@ -496,6 +496,25 @@ function wifiPasswordFieldHtml(net) {
   `;
 }
 
+// Auto reconnect: opts a connect into pi_agent's saved-profile mechanism
+// (agent/wifi_profiles.py) - if checked, the agent remembers this
+// SSID/password/BSSID for this interface and (a) reconnects to it on its
+// own next process start, and (b) keeps watching for it in every
+// background scan cycle while running, reconnecting automatically as soon
+// as it's back in range and the interface isn't already connected to
+// something else. Left unchecked (the default), a successful connect
+// clears any previously saved profile for this interface instead - so
+// connecting without the box checked also turns auto reconnect off for
+// whatever was saved before.
+function wifiAutoReconnectFieldHtml() {
+  return `
+    <label class="wifi-remember-row">
+      <input type="checkbox" class="wifi-autoreconnect-checkbox">
+      Auto reconnect
+    </label>
+  `;
+}
+
 // After a successful connect, save or forget the password per the
 // "Remember password" checkbox's state.
 function applyWifiPasswordMemory(body, net, password) {
@@ -547,6 +566,7 @@ function renderWifiNetworkCard(piId, iface, net, connectedBssid) {
       ${isConnected
         ? `<button type="button" class="wifi-disconnect-btn">Disconnect</button>`
         : `${open ? '' : wifiPasswordFieldHtml(net)}
+          ${wifiAutoReconnectFieldHtml()}
           <button type="button" class="wifi-connect-btn">Connect</button>`
       }
     </div>
@@ -568,6 +588,7 @@ function renderWifiNetworkCard(piId, iface, net, connectedBssid) {
       stop(e);
       const passwordInput = body.querySelector('.wifi-connect-password');
       const password = passwordInput && passwordInput.value ? passwordInput.value : undefined;
+      const autoReconnectInput = body.querySelector('.wifi-autoreconnect-checkbox');
       connectBtn.disabled = true;
       statusEl.textContent = 'Connecting…';
       try {
@@ -576,6 +597,7 @@ function renderWifiNetworkCard(piId, iface, net, connectedBssid) {
           bssid: net.bssid || undefined,
           password,
           interface: iface,
+          auto_reconnect: !!(autoReconnectInput && autoReconnectInput.checked),
         });
         statusEl.textContent = result && result.connected ? 'Connected.' : `Failed to connect${result && result.output ? ': ' + result.output : ''}`;
         if (result && result.connected) applyWifiPasswordMemory(body, net, password);
@@ -600,6 +622,8 @@ function renderWifiNetworkCard(piId, iface, net, connectedBssid) {
   if (passwordInput) passwordInput.addEventListener('click', stop);
   const rememberCheckbox = body.querySelector('.wifi-remember-checkbox');
   if (rememberCheckbox) rememberCheckbox.addEventListener('click', stop);
+  const autoReconnectCheckbox = body.querySelector('.wifi-autoreconnect-checkbox');
+  if (autoReconnectCheckbox) autoReconnectCheckbox.addEventListener('click', stop);
 
   const disconnectBtn = body.querySelector('.wifi-disconnect-btn');
   if (disconnectBtn) {

@@ -45,6 +45,7 @@ function renderMergedWifiNetworkCard(targets, net) {
     ).join('')}</table>
     <div class="wifi-connect-row">
       ${open ? '' : wifiPasswordFieldHtml(net)}
+      ${wifiAutoReconnectFieldHtml()}
       <button type="button" class="wifi-connect-btn">Connect (${targets.length} interface${targets.length === 1 ? '' : 's'})</button>
     </div>
     <div class="wifi-connect-status hint"></div>
@@ -62,6 +63,8 @@ function renderMergedWifiNetworkCard(targets, net) {
   if (passwordInput) passwordInput.addEventListener('click', stop);
   const rememberCheckbox = body.querySelector('.wifi-remember-checkbox');
   if (rememberCheckbox) rememberCheckbox.addEventListener('click', stop);
+  const autoReconnectCheckbox = body.querySelector('.wifi-autoreconnect-checkbox');
+  if (autoReconnectCheckbox) autoReconnectCheckbox.addEventListener('click', stop);
 
   body.querySelector('.wifi-connect-btn').addEventListener('click', async (e) => {
     stop(e);
@@ -69,12 +72,14 @@ function renderMergedWifiNetworkCard(targets, net) {
     btn.disabled = true;
     statusEl.textContent = `Connecting on ${targets.length} interface(s)…`;
     const password = passwordInput && passwordInput.value ? passwordInput.value : undefined;
+    const autoReconnect = !!(autoReconnectCheckbox && autoReconnectCheckbox.checked);
     const results = await Promise.allSettled(targets.map(async ({ piId, interface: iface }) => {
       const result = await connectWifiWithRetry(piId, {
         ssid: net.ssid || undefined,
         bssid: net.bssid || undefined,
         password,
         interface: iface,
+        auto_reconnect: autoReconnect,
       });
       if (!(result && result.connected)) {
         throw new Error(`${piId}/${iface}: failed${result && result.output ? ' - ' + result.output : ''}`);
@@ -212,7 +217,7 @@ function pushToPiLogPanel(piId, lines) {
 // unreachable AP still returns a "complete" command with connected:false
 // in the result. Callers care about that outcome, not just whether nmcli
 // ran without crashing, so the status badge should read as failed here too.
-const WIFI_CONNECTED_ACTIONS = new Set(['connect_wifi', 'disconnect_wifi']);
+const WIFI_CONNECTED_ACTIONS = new Set(['connect_wifi', 'disconnect_wifi', 'connect_hotspot']);
 
 function effectiveCommandStatus(action, status, result) {
   if (status === 'complete' && WIFI_CONNECTED_ACTIONS.has(action) &&

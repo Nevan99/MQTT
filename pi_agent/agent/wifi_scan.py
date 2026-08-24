@@ -679,6 +679,18 @@ class WifiScanMixin:
             raise
         except Exception as e:
             result = {"interface": interface, "error": str(e)}
+
+        # Piggybacks on this cycle's own scan results rather than scanning
+        # again - see WifiMixin._maybe_auto_reconnect. Best-effort: a
+        # failure here should never take down the scan loop that's also
+        # feeding the backend's WifiScanHistory buffer.
+        try:
+            await self._maybe_auto_reconnect(interface, result.get("networks", []))
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print(f"[pi_agent] {interface}: auto-reconnect check failed: {e}")
+
         result["command_id"] = str(uuid.uuid4())
         result["action"] = "wifi_detail_scan"
         result["pi_id"] = self.pi_id
