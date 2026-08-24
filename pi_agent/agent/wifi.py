@@ -418,6 +418,24 @@ class WifiMixin:
                     "output": f"could not resolve an SSID for bssid {bssid} from a scan",
                 }
             ssid = match["ssid"]
+        elif bssid and channel:
+            # A channel passed in alongside an already-known ssid can still
+            # be stale - e.g. from nearby_hotspots' backend-cached scan
+            # result (routers/Pis.get_nearby_hotspots), which is only as
+            # fresh as this radio's last completed background scan, not
+            # this exact instant. Pinning scan_freq to a channel the AP has
+            # since moved off of doesn't fail cleanly: wpa_supplicant just
+            # scans forever looking for that exact (bssid, frequency) pair
+            # and never finds it (wpa_state stays SCANNING) instead of
+            # reporting a clean failure. A cache-first lookup (milliseconds,
+            # no fresh radio scan) is enough to catch a channel that moved
+            # since it was cached; the earlier bssid-without-ssid branch
+            # above already does the same kind of check for its own case.
+            match = await self._find_bssid_in_scan(interface, bssid, use_cache=True)
+            if match and match.get("channel") and match["channel"] != channel:
+                print(f"[pi_agent] {interface}: {bssid} is now on channel "
+                      f"{match['channel']}, not the requested {channel} - using the current one")
+                channel = match["channel"]
 
         ok, err = await self._ensure_wpa_supplicant_running(interface)
         if not ok:
