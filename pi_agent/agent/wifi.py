@@ -238,14 +238,27 @@ class WifiMixin:
             await asyncio.sleep(0.25)
         return False, "wpa_supplicant started but its control socket never appeared"
 
-    async def _current_wpa_state(self, interface):
+    async def _current_wpa_status(self, interface):
+        """Parsed `wpa_cli status` output as a dict (wpa_state, id, ssid,
+        etc.). _current_wpa_state used to parse only wpa_state directly -
+        factored out because _wait_for_wpa_state also needs `id`, to tell
+        "reached the target state" apart from "still reading a state that
+        actually belongs to the network we were on before this call"."""
         ret = await self._wpa_cli(interface, "status")
         if ret.returncode != 0:
             return None
-        m = re.search(r'^wpa_state=(\S+)', ret.stdout, re.MULTILINE)
-        return m.group(1) if m else None
+        status = {}
+        for line in ret.stdout.splitlines():
+            key, sep, value = line.partition("=")
+            if sep:
+                status[key] = value
+        return status
 
-    async def _wait_for_wpa_state(self, interface, target_state, timeout=60):
+    async def _current_wpa_state(self, interface):
+        status = await self._current_wpa_status(interface)
+        return status.get("wpa_state") if status else None
+
+    async def _wait_for_wpa_state(self, interface, target_state, timeout=60, expected_net_id=None):
         """Wait for wpa_supplicant to reach `target_state`.
 
         Listens on the control socket rather than polling `status` once a
@@ -256,50 +269,82 @@ class WifiMixin:
         sitting out the full timeout - and self.last_wpa_failure records
         *why* for the connect result to report.
 
+        expected_net_id guards against a false positive when switching
+        networks on an interface that was already connected: right after
+        select_network, a `status` query can still momentarily report the
+        *previous* network's wpa_state=COMPLETED before wpa_supplicant has
+        actually processed the switch - matching on state alone let that
+        stale read pass as "already there", so connect_wifi went on to run
+        DHCP against an interface that was, in reality, still mid-teardown
+        of the old association. That reliably failed the first attempt (no
+        working association to get an IP from) even though the switch
+        itself then completed correctly moments later - which is what a
+        following retry (or the user just trying again) succeeding looked
+        like. When given, a state match only counts once `status["id"]`
+        (the network id wpa_supplicant is currently active on) also
+        matches the one just selected - the previous association had a
+        different id, so its lingering COMPLETED can't be mistaken for
+        this one any more.
+
         Falls back to polling when the socket isn't attachable (no
         AF_UNIX, wpa_supplicant not running with a control interface, or
         permissions), so behavior degrades rather than breaks.
         """
         self.last_wpa_failure = None
+
+        async def matches():
+            status = await self._current_wpa_status(interface)
+            if not status or status.get("wpa_state") != target_state:
+                return False
+            if expected_net_id is not None and status.get("id") != str(expected_net_id):
+                return False
+            return True
+
         listener = wpa_events.WpaEventListener(interface)
         if not listener.available:
-            return await self._poll_for_wpa_state(interface, target_state, timeout)
+            return await self._poll_for_wpa_state(matches, timeout)
 
         try:
             await listener.attach()
         except (OSError, RuntimeError, asyncio.TimeoutError) as e:
             print(f"[pi_agent] {interface}: wpa control socket unavailable ({e}), polling instead")
-            return await self._poll_for_wpa_state(interface, target_state, timeout)
+            return await self._poll_for_wpa_state(matches, timeout)
 
         try:
             # Check once up front: the target state may already have been
             # reached between select_network and the ATTACH above, and no
             # further event would ever announce it.
-            if await self._current_wpa_state(interface) == target_state:
+            if await matches():
                 return True
 
             async for line in listener.events(timeout=timeout):
                 name, fields = wpa_events.parse_event(line)
                 if name == "CTRL-EVENT-CONNECTED" and target_state == "COMPLETED":
-                    return True
+                    # The event alone doesn't carry the network id - it
+                    # fires on any completed association, old or new - so
+                    # still confirm via matches() rather than trusting the
+                    # event name by itself.
+                    if await matches():
+                        return True
+                    continue
                 if name in wpa_events.FAILURE_EVENTS:
                     self.last_wpa_failure = f"{name} {' '.join(f'{k}={v}' for k, v in fields.items())}".strip()
                     return False
                 if name.startswith("CTRL-EVENT-"):
                     # Any state-ish transition: confirm against the real
                     # state rather than trying to map every event name.
-                    if await self._current_wpa_state(interface) == target_state:
+                    if await matches():
                         return True
             return False
         finally:
             await listener.detach()
 
-    async def _poll_for_wpa_state(self, interface, target_state, timeout):
+    async def _poll_for_wpa_state(self, matches, timeout):
         """Pre-control-socket fallback: ask `status` once a second."""
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
         while loop.time() < deadline:
-            if await self._current_wpa_state(interface) == target_state:
+            if await matches():
                 return True
             await asyncio.sleep(1)
         return False
@@ -407,7 +452,7 @@ class WifiMixin:
         await self._wpa_cli(interface, "select_network", net_id)
         await self._wpa_cli(interface, "save_config")
 
-        associated = await self._wait_for_wpa_state(interface, "COMPLETED", timeout=60)
+        associated = await self._wait_for_wpa_state(interface, "COMPLETED", timeout=60, expected_net_id=net_id)
         ip_address = None
         dhcp_output = ""
         if associated:
@@ -549,18 +594,27 @@ class WifiMixin:
         old boot-time script did (just as a second, permanent interface
         instead of an in-place swap of this one).
 
-        NetworkManager also needs a moment to actually let go of the device
-        after 'managed no' before the delete/add - proceeding immediately
-        can race it, which is why the caller re-verifies and retries rather
-        than trusting iw's exit code alone."""
+        NetworkManager never owns any wl* interface here any more (see
+        99-pi-agent-unmanaged-wifi.conf) - a live association, if any, is
+        owned by our own standalone wpa_supplicant (connect_wifi), not by
+        NM. The nmcli disconnect/managed-no this used to run before the
+        delete were no-ops against a device NM doesn't manage, which left
+        wpa_supplicant still attached when the switch deleted its netdev
+        out from under it - `iw dev del` then either failed outright or
+        left wpa_supplicant orphaned, which is why a switch to monitor mode
+        while connected used to fail. Tearing wpa_supplicant/dhcpcd down
+        properly first (the same steps disconnect_wifi takes) avoids that
+        instead of racing it."""
         if mode == "monitor":
-            # 30s, not the 300s this used to allow: this runs while holding
-            # the interface's wifi lock, so a stuck nmcli here blocks every
-            # later connect/disconnect on the same interface for as long as
-            # the timeout lets it run.
-            await proc.run(["nmcli", "device", "disconnect", interface], timeout=30)
-            await proc.run(["nmcli", "device", "set", interface, "managed", "no"], timeout=30)
-            await asyncio.sleep(0.5)
+            # Also stops _maybe_auto_reconnect from fighting this switch -
+            # without this, a saved auto-reconnect profile for `interface`
+            # would just get reconnected (back into managed mode) on the
+            # very next background scan cycle.
+            wifi_profiles.clear(interface)
+            if self._wpa_ctrl_socket_exists(interface):
+                await self._wpa_cli(interface, "terminate", timeout=5)
+                await proc.run_hard(["dhcpcd", "-k", interface], timeout=8)
+                await asyncio.sleep(0.5)
         await proc.run(["ip", "link", "set", interface, "down"], timeout=30)
         del_ret = await proc.run(["iw", "dev", interface, "del"], timeout=30)
         add_ret = await proc.run(
@@ -571,8 +625,6 @@ class WifiMixin:
             # add failed - recreate it managed, the safer default, instead
             # of stranding it deleted until a reboot.
             await proc.run(["iw", "phy", phy, "interface", "add", interface, "type", "managed"], timeout=30)
-        if mode == "managed" or add_ret.returncode != 0:
-            await proc.run(["nmcli", "device", "set", interface, "managed", "yes"], timeout=30)
         await proc.run(["ip", "link", "set", interface, "up"], timeout=30)
         await asyncio.sleep(0.3)
         del_out = (del_ret.stdout or del_ret.stderr).strip()
