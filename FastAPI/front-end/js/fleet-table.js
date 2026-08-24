@@ -679,6 +679,17 @@ async function loadFleetIfaceInfo(piId, entry, iface) {
   }
 }
 
+// Interfaces (piId::iface) with a set_interface_mode switch in flight -
+// checked by renderFleetIfaceBody so the mode button renders as disabled/
+// "Switching…" even across a full card rebuild (rebuildFleetIfaceCards
+// wipes and recreates every card on this Pi whenever the interface list's
+// sort key changes, which a mode switch itself can trigger by deleting and
+// recreating the netdev - see switchFleetInterfaceMode). Toggling a plain
+// DOM button's own disabled/textContent doesn't survive that rebuild since
+// the old button node is discarded entirely; tracking it here and
+// re-rendering from it does.
+const wifiModeSwitchInFlight = new Set();
+
 function renderFleetIfaceBody(entry, cardState) {
   const details = (entry.ifaceDetailsCache || []).find(d => d.name === cardState.iface);
   const link = entry.linkInfoCache[cardState.iface];
@@ -730,12 +741,15 @@ function renderFleetIfaceBody(entry, cardState) {
   // monitor mode - so this button only appears once details are loaded.
   if (details && (isWifiInterface(cardState.iface) || isMonitor)) {
     const targetMode = isMonitor ? 'managed' : 'monitor';
+    const switching = wifiModeSwitchInFlight.has(`${cardState.piId}::${cardState.iface}`);
     cardState.infoEl.insertAdjacentHTML('beforeend',
-      `<div class="wifi-disconnect-row"><button type="button" class="iface-mode-switch-btn${isMonitor ? ' recording' : ''}">Monitor mode: ${isMonitor ? 'On' : 'Off'}</button></div>`);
-    cardState.infoEl.querySelector('.iface-mode-switch-btn').addEventListener('click', (e) => {
-      e.stopPropagation();
-      switchFleetInterfaceMode(entry, cardState, e.currentTarget, targetMode);
-    });
+      `<div class="wifi-disconnect-row"><button type="button" class="iface-mode-switch-btn${isMonitor ? ' recording' : ''}" ${switching ? 'disabled' : ''}>${switching ? 'Switching…' : `Monitor mode: ${isMonitor ? 'On' : 'Off'}`}</button></div>`);
+    if (!switching) {
+      cardState.infoEl.querySelector('.iface-mode-switch-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        switchFleetInterfaceMode(entry, cardState, targetMode);
+      });
+    }
   }
 
   if (isWifiInterface(cardState.iface) || isMonitor) {
@@ -747,44 +761,68 @@ function renderFleetIfaceBody(entry, cardState) {
   }
 }
 
-async function switchFleetInterfaceMode(entry, cardState, btn, targetMode) {
+async function switchFleetInterfaceMode(entry, cardState, targetMode) {
   const piId = cardState.piId;
+  const iface = cardState.iface;
   if (targetMode === 'monitor') {
-    const link = entry.linkInfoCache[cardState.iface];
+    const link = entry.linkInfoCache[iface];
     if (link && link.connected &&
-        !confirm(`${cardState.iface} is currently connected. Switching to monitor mode will disconnect it. Continue?`)) {
+        !confirm(`${iface} is currently connected. Switching to monitor mode will disconnect it. Continue?`)) {
       return;
     }
   }
-  btn.disabled = true;
-  const originalText = btn.textContent;
-  btn.textContent = 'Switching…';
+  // Tracked separately from the clicked button itself: a mode switch
+  // deletes and recreates the netdev, which can change list_interfaces'
+  // reported order and trigger rebuildFleetIfaceCards mid-switch - that
+  // discards every card's DOM (including the button just clicked) and
+  // builds fresh ones. Re-rendering from this set (renderFleetIfaceBody)
+  // is what makes a freshly rebuilt button start out disabled/"Switching…"
+  // too, instead of flashing back to normal mid-operation.
+  const key = `${piId}::${iface}`;
+  wifiModeSwitchInFlight.add(key);
+  const currentCard = () => entry.ifaceCards.get(iface);
+  const rerender = () => {
+    const cs = currentCard();
+    if (cs && !cs.card.querySelector('.pd-iface-body').classList.contains('hidden')) {
+      renderFleetIfaceBody(entry, cs);
+    }
+  };
+  rerender();
+  let succeeded = false;
   try {
-    const res = await postCmd(piId, 'set_interface_mode', { interface: cardState.iface, mode: targetMode });
+    const res = await postCmd(piId, 'set_interface_mode', { interface: iface, mode: targetMode });
     if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
     const data = await res.json();
     // NetworkManager re-taking/re-associating the device can take a while -
     // same 3-minute allowance as connect_wifi, not the usual 30s.
     const result = await awaitCommandResult(data.command_id, 180);
     if (!result || !result.applied) {
-      alert(`Failed to switch ${cardState.iface} to ${targetMode} mode: ${(result && result.output) || 'unknown error'}`);
-      return;
+      alert(`Failed to switch ${iface} to ${targetMode} mode: ${(result && result.output) || 'unknown error'}`);
+    } else {
+      succeeded = true;
     }
   } catch (err) {
     alert(`Failed to switch mode: ${err.message}`);
-    return;
   } finally {
-    btn.disabled = false;
-    btn.textContent = originalText;
+    wifiModeSwitchInFlight.delete(key);
   }
-  // Type/link state both just changed on the Pi - force a fresh read
-  // instead of showing stale cached details, same as disconnectFleetWifi.
-  entry.ifaceDetailsCache = null;
-  entry.ifaceDetailsPromise = null;
-  delete entry.linkInfoCache[cardState.iface];
-  await loadFleetIfaceInfo(piId, entry, cardState.iface);
-  renderFleetIfaceBody(entry, cardState);
-  refreshFleetWifiIcon(piId, entry, cardState);
+  // Always re-render/refresh, success or failure - otherwise a failed
+  // switch would leave the button stuck showing "Switching…" (the flag
+  // above is cleared, but nothing repainted from it) until some unrelated
+  // refresh happened to touch this card next.
+  if (succeeded) {
+    // Type/link state both just changed on the Pi - force a fresh read
+    // instead of showing stale cached details, same as disconnectFleetWifi.
+    entry.ifaceDetailsCache = null;
+    entry.ifaceDetailsPromise = null;
+    delete entry.linkInfoCache[iface];
+    await loadFleetIfaceInfo(piId, entry, iface);
+  }
+  const finalCard = currentCard();
+  if (finalCard) {
+    renderFleetIfaceBody(entry, finalCard);
+    refreshFleetWifiIcon(piId, entry, finalCard);
+  }
 }
 
 // Shared by fleet-table.js and detail-page.js - starts (or extends the TTL

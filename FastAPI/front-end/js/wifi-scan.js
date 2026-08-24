@@ -1,3 +1,17 @@
+// Backend-only equivalent of the old nearby_hotspots MQTT command
+// (routers/Pis.get_nearby_hotspots) - merges each requested interface's
+// cached wifi_detail_scan results (WifiScanSnapshot, kept warm by
+// PiAgent._wifi_background_scan_loop) by BSSID, entirely from the
+// database. No command_id, no polling - this returns the merged
+// {interfaces, networks} shape directly, as fast as a normal GET, instead
+// of dispatching a command to the Pi and waiting for it to actually scan.
+async function fetchNearbyHotspots(piId, interfaces) {
+  const qs = (interfaces || []).map(i => `interfaces=${encodeURIComponent(i)}`).join('&');
+  const res = await apiFetch(`${API}/pis/${encodeURIComponent(piId)}/nearby-hotspots${qs ? '?' + qs : ''}`);
+  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  return res.json();
+}
+
 // --- Fleet: merged nearby_hotspots result across several (Pi, interface) targets
 
 // Same de-dup key an AP is identified by everywhere else: its BSSID, or
@@ -165,11 +179,12 @@ function fillMergedScanEntry(entry, targets, networksByTarget) {
   renderMergedWifiScan(entry.querySelector('.result'), targets, merged);
 }
 
-// One command per Pi, carrying that Pi's whole interface list: the agent
-// scans its radios concurrently and merges them by BSSID itself, so this
-// no longer issues (and correlates) one command per (Pi, interface) pair.
-// Across Pis is still merged here, since no single agent can do that.
-async function sendScanWifiFanOut(targets, params, container) {
+// One backend read per Pi (fetchNearbyHotspots), each covering that Pi's
+// whole interface list - the endpoint merges its radios by BSSID itself
+// from the DB cache, so this only has to merge again across Pis, which no
+// single Pi's own view can do. No MQTT command is sent here at all any
+// more - see fetchNearbyHotspots/routers/Pis.get_nearby_hotspots.
+async function sendScanWifiFanOut(targets, container) {
   const entry = createMergedScanEntry(targets, container);
   const byPi = new Map();
   targets.forEach(({ piId, interface: iface }) => {
@@ -178,7 +193,7 @@ async function sendScanWifiFanOut(targets, params, container) {
   });
   const perPi = [...byPi.entries()];
   const results = await Promise.allSettled(perPi.map(([piId, ifaces]) =>
-    sendCommandAwaitResult(piId, 'nearby_hotspots', { ...params, interfaces: ifaces })
+    fetchNearbyHotspots(piId, ifaces)
   ));
   const networksByTarget = [];
   const failed = [];
@@ -321,6 +336,56 @@ sendCmdBtn.addEventListener('click', async () => {
     return;
   }
 
+  // nearby_hotspots no longer sends anything to a Pi at all - it's a pure
+  // backend DB read (fetchNearbyHotspots/routers/Pis.get_nearby_hotspots),
+  // so it's resolved to its own (piId, interface) target list here and
+  // handed straight to sendScanWifiFanOut, bypassing every MQTT-dispatch
+  // branch below (those still apply to every other action).
+  if (action === 'nearby_hotspots') {
+    let targets;
+    if (target === 'multicast') {
+      // No interface picker is shown for multicast (see renderParamFields) -
+      // each checked Pi's own configured primary interface(s) are used
+      // instead, same convention as every other action's multicast fan-out
+      // below.
+      const piIds = [...checkedPiIds];
+      if (!piIds.length) {
+        alert('No Pis checked in the table for multicast.');
+        return;
+      }
+      const rejections = [];
+      targets = [];
+      piIds.forEach(piId => {
+        const pi = pis.find(p => p.pi_id === piId);
+        const ifaces = (pi && pi.primary_interfaces) || [];
+        if (!ifaces.length) {
+          rejections.push(`${piId}: no primary interface configured`);
+          return;
+        }
+        ifaces.forEach(iface => targets.push({ piId, interface: iface }));
+      });
+      if (rejections.length) alert(rejections.join('\n'));
+      if (!targets.length) return;
+    } else {
+      const ifaces = params.interfaces || [];
+      if (!ifaces.length) {
+        alert('Select at least one interface.');
+        return;
+      }
+      const piIds = target === 'all' ? pis.map(p => p.pi_id) : [target];
+      targets = piIds.flatMap(piId => ifaces.map(iface => ({ piId, interface: iface })));
+    }
+    sendCmdBtn.disabled = true;
+    try {
+      await sendScanWifiFanOut(targets);
+    } catch (err) {
+      alert(`Command failed: ${err.message}`);
+    } finally {
+      sendCmdBtn.disabled = false;
+    }
+    return;
+  }
+
   const needsInterface = (ACTION_PARAMS[action] || []).some(f => f.type === 'interface');
 
   sendCmdBtn.disabled = true;
@@ -354,26 +419,15 @@ sendCmdBtn.addEventListener('click', async () => {
       }
       if (rejections.length) alert(rejections.join('\n'));
 
-      if (action === 'nearby_hotspots' && targets.length > 1) {
-        // Scanning the same air from several interfaces just reports the
-        // same nearby APs several times - merge into one de-duplicated
-        // result instead of one feed entry per interface.
-        await sendScanWifiFanOut(targets, params);
-      } else {
-        await sendFanOut(targets.map(({ piId, interface: iface }) =>
-          sendOneCommand(`${API}/pis/${encodeURIComponent(piId)}/cmd`, action, iface ? { ...params, interface: iface } : params)
-        ));
-      }
+      await sendFanOut(targets.map(({ piId, interface: iface }) =>
+        sendOneCommand(`${API}/pis/${encodeURIComponent(piId)}/cmd`, action, iface ? { ...params, interface: iface } : params)
+      ));
     } else if (needsInterface && Array.isArray(params.interface)) {
       // Single Pi target, but multiple interfaces checked - one command per
       // checked interface, same fan-out principle as multicast.
-      if (action === 'nearby_hotspots' && (params.interfaces || []).length > 1) {
-        await sendScanWifiFanOut((params.interfaces || []).map(iface => ({ piId: target, interface: iface })), params);
-      } else {
-        await sendFanOut(params.interface.map(iface =>
-          sendOneCommand(`${API}/pis/${encodeURIComponent(target)}/cmd`, action, { ...params, interface: iface })
-        ));
-      }
+      await sendFanOut(params.interface.map(iface =>
+        sendOneCommand(`${API}/pis/${encodeURIComponent(target)}/cmd`, action, { ...params, interface: iface })
+      ));
     } else {
       await sendOneCommand(`${API}/pis/${encodeURIComponent(target)}/cmd`, action, params);
     }
