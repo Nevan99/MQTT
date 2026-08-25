@@ -97,6 +97,23 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
         # can be garbage-collected mid-command.
         self._wifi_tasks = set()
         self._background_tasks = set()
+        # Caps how many interfaces can be mid-connect/disconnect at once,
+        # system-wide on this Pi - separate from _wifi_lock_for, which only
+        # serializes commands aimed at the *same* interface and does
+        # nothing to limit different interfaces running fully in parallel.
+        # connect_wifi alone spawns roughly a dozen subprocesses per
+        # interface (wpa_supplicant, ~7 wpa_cli calls, dhcpcd, ...); a
+        # 4-interface burst - connect_hotspot, or several interfaces
+        # connected together from the UI - fired ~50 near-simultaneous
+        # subprocess spawns with nothing bounding it, and was the leading
+        # suspect when a Pi went fully offline (no error logged - consistent
+        # with the process/event loop stalling under the load rather than
+        # raising, since our error handling only prints on a caught
+        # exception) after receiving several connect_wifi commands at once.
+        # 2 is a starting point, not a measured number - tune once this is
+        # confirmed against real hardware (dmesg for OOM kills, TasksMax vs
+        # TasksCurrent on the systemd unit during a repro).
+        self._wifi_op_semaphore = asyncio.Semaphore(2)
 
         # interface -> {"port", "gateway", "timer"} for start_ap_webui_proxy's
         # DNAT/MASQUERADE rules - see that method for the full explanation.

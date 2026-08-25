@@ -11,8 +11,9 @@ from . import proc, wpa_events
 
 class WifiMixin:
     """Station-mode wifi: association status, connect/disconnect (via
-    nmcli), monitor/managed mode switching, per-interface policy routing,
-    and the connect/disconnect/mode-switch dispatch machinery
+    wpa_supplicant + dhcpcd, never NetworkManager - see the comment above
+    _ensure_wpa_supplicant_running), monitor/managed mode switching, and
+    the connect/disconnect/mode-switch dispatch machinery
     (_dispatch_wifi_command) shared with WifiScanMixin's background scan
     loop (both respect the same per-interface lock, see _wifi_lock_for)."""
 
@@ -56,14 +57,20 @@ class WifiMixin:
         }
 
     async def _default_gateway_for(self, interface):
-        """Every connect_wifi puts this interface's default route into its
-        own per-interface policy-routing table (see _apply_policy_routing/
-        _routing_table_for) - specifically so several connected wifi
-        interfaces don't fight over the one system-wide default route. That
-        means only whichever interface Linux picked as the actual
-        system default shows up in `ip route show default` (the main
-        table); every other connected interface's gateway only exists in
-        its own numbered table, and has to be looked up there instead."""
+        """This interface's gateway, checked in its own per-interface
+        routing table first (see _routing_table_for), falling back to the
+        main table's default route.
+
+        Nothing currently populates that per-interface table - the nmcli-
+        based step that used to (ipv4.route-table/ipv4.routing-rules) was
+        removed along with every other NetworkManager dependency in
+        connect/disconnect. The table lookup is left in as a harmless no-op
+        fallback rather than deleted outright: if per-interface policy
+        routing is set up some other way in the future (a static `ip rule`
+        at boot, say), this starts finding gateways there for free. Until
+        then, this only ever resolves for whichever interface the kernel
+        picked as the actual system default - every other connected wifi
+        interface's gateway comes back None."""
         table = self._routing_table_for(interface)
         for args in (["table", str(table)], ["default"]):
             out = (await proc.run(
@@ -153,50 +160,39 @@ class WifiMixin:
         table instead of leaking a new rule/table every time."""
         return 100 + (zlib.crc32(interface.encode()) % 1000)
 
-    async def _apply_policy_routing(self, con_name, interface, ip_address):
-        if not ip_address:
-            return {"applied": False, "reason": "no IP address yet"}
-
-        table = self._routing_table_for(interface)
-        modify_ret = await proc.run(
-            [
-                "nmcli", "connection", "modify", con_name,
-                "ipv4.route-table", str(table),
-                "ipv4.routing-rules", f"priority {table} from {ip_address} table {table}",
-            ], timeout=15,
-        )
-        if modify_ret.returncode != 0:
-            return {"applied": False, "reason": (modify_ret.stdout or modify_ret.stderr).strip()}
-
-        # routing-rules only takes effect on (re)activation, not just from
-        # `connection modify` - this briefly cycles the interface's link.
-        up_ret = await proc.run(
-            ["nmcli", "connection", "up", con_name], timeout=30,
-        )
-        return {
-            "applied": up_ret.returncode == 0,
-            "table": table,
-            "reason": None if up_ret.returncode == 0 else (up_ret.stdout or up_ret.stderr).strip(),
-        }
-
     # --- wpa_supplicant-based connect/disconnect ---------------------------
-    # Previously nmcli did this end-to-end (association + DHCP + device
-    # ownership) via a per-interface connection profile. wpa_supplicant only
-    # handles L2 association/auth, not DHCP or device ownership, so this
-    # split into three pieces:
-    #  - NetworkManager has to be told to let go of the interface first
-    #    (_ensure_wpa_supplicant_running), or it fights wpa_supplicant for
-    #    control - same "managed no" trick set_interface_mode already uses
-    #    for monitor mode - and gets it back on disconnect_wifi.
-    #  - wpa_supplicant itself, driven via its wpa_cli control interface
-    #    (add_network/set_network/select_network), owns the actual
-    #    association.
-    #  - dhcpcd (Raspberry Pi OS's default DHCP client) gets the interface
-    #    its IP once wpa_supplicant reports wpa_state=COMPLETED.
+    # Association is wpa_supplicant's job, driven via its wpa_cli control
+    # interface (add_network/set_network/select_network); dhcpcd
+    # (Raspberry Pi OS's default DHCP client) gets the interface its IP once
+    # wpa_supplicant reports wpa_state=COMPLETED. Neither of those steps
+    # touches NetworkManager, and nothing here does either any more -
+    # connect/disconnect/scan used to each reach for `nmcli` at some point
+    # (device wifi connect, device set managed no/yes, device disconnect),
+    # but every one of those calls was removed:
+    #  - wl* interfaces are already marked unmanaged fleet-wide
+    #    (99-pi-agent-unmanaged-wifi.conf), so there was never anything for
+    #    a runtime "managed no" to actually change.
+    #  - the "managed yes" handback on disconnect was pure bookend symmetry,
+    #    not something the disconnect itself depended on - and it was the
+    #    confirmed cause of a real incident: several interfaces disconnecting
+    #    at once each handed control back to NetworkManager simultaneously,
+    #    NM's own per-device reconnect/scan activity piled up across all of
+    #    them, and the resulting contention was enough to drop the agent's
+    #    own MQTT connection to the broker for a few seconds.
+    #  - the no-control-socket disconnect fallback used `nmcli device
+    #    disconnect`; it now sends the kernel a direct `iw ... disconnect`
+    #    instead, which does the same job without going through NM at all.
     # This hasn't been run against real hardware - the exact dhcpcd/NM
     # interaction (dhcpcd.service already managing every interface
     # system-wide vs. this ad hoc per-call invocation) should be verified
-    # on the fleet before relying on it.
+    # on the fleet before relying on it. A second, separate incident -
+    # several radios connecting concurrently and taking the whole Pi offline
+    # - pointed at the sheer subprocess/thread volume of a multi-interface
+    # connect_wifi burst (roughly a dozen subprocess spawns per interface),
+    # not at NetworkManager; _wifi_op_semaphore below caps how many
+    # interfaces can be mid-connect/disconnect at once as a mitigation for
+    # that, pending confirmation on hardware (dmesg for OOM kills, TasksMax
+    # vs TasksCurrent on the systemd unit).
 
     WPA_CTRL_DIR = "/var/run/wpa_supplicant"
 
@@ -214,11 +210,15 @@ class WifiMixin:
         """Starts a wpa_supplicant instance for this interface if one isn't
         already running (reusing an existing one - e.g. from a previous
         connect_wifi call on this interface - rather than starting a
-        second, conflicting one)."""
+        second, conflicting one).
+
+        No NetworkManager involvement: wl* interfaces are already marked
+        unmanaged fleet-wide (99-pi-agent-unmanaged-wifi.conf), so there is
+        nothing for a runtime "managed no" to change here - just bring the
+        link up directly."""
         if self._wpa_ctrl_socket_exists(interface):
             return True, ""
 
-        await proc.run_hard(["nmcli", "device", "set", interface, "managed", "no"], timeout=30)
         await proc.run(["ip", "link", "set", interface, "up"], timeout=15)
 
         conf_path = f"/tmp/wpa_supplicant-{interface}.conf"
@@ -328,18 +328,24 @@ class WifiMixin:
         )
 
     async def connect_wifi(self, ssid, password=None, interface=None, bssid=None, channel=None):
-        """Connect to a wifi hotspot via wpa_supplicant + dhcpcd (see the
-        module-level comment above for why this needs three pieces instead
-        of nmcli's one call).
+        """Connect to a wifi hotspot via wpa_supplicant + dhcpcd - see the
+        module-level comment above for why NetworkManager is never involved.
 
         If bssid is given without ssid, the SSID is resolved by looking that
         BSSID up in a scan (get_wifi_scan_detail, WifiScanMixin) -
-        wpa_supplicant's network blocks are keyed by ssid, unlike nmcli's
-        `device wifi connect <bssid>`, which resolved it from its own scan
-        cache internally. If channel is given, the connection is pinned to
-        that channel's frequency (scan_freq) - useful when the same SSID is
-        broadcast on multiple bands/channels and a specific one needs to be
-        tested.
+        wpa_supplicant's network blocks are keyed by ssid. If channel is
+        given, the connection is pinned to that channel's frequency
+        (scan_freq) - useful when the same SSID is broadcast on multiple
+        bands/channels and a specific one needs to be tested.
+
+        The actual work (from _ensure_wpa_supplicant_running onward) runs
+        under _wifi_op_semaphore, capping how many interfaces can be
+        mid-connect at once - a multi-interface connect burst (connect_hotspot,
+        or several interfaces connected together from the UI) spawns roughly
+        a dozen subprocesses per interface; uncapped, four at once was enough
+        to take a Pi offline. bssid resolution runs outside the semaphore -
+        it's a scan-cache read, not part of the subprocess burst this exists
+        to bound.
         """
         if not interface:
             return {"error": "interface is required"}
@@ -362,46 +368,47 @@ class WifiMixin:
                 }
             ssid = match["ssid"]
 
-        ok, err = await self._ensure_wpa_supplicant_running(interface)
-        if not ok:
-            return {
-                "ssid": ssid, "bssid": bssid, "interface": interface, "connected": False,
-                "output": f"failed to start wpa_supplicant: {err}",
-            }
+        async with self._wifi_op_semaphore:
+            ok, err = await self._ensure_wpa_supplicant_running(interface)
+            if not ok:
+                return {
+                    "ssid": ssid, "bssid": bssid, "interface": interface, "connected": False,
+                    "output": f"failed to start wpa_supplicant: {err}",
+                }
 
-        add_ret = await self._wpa_cli(interface, "add_network")
-        net_id = add_ret.stdout.strip().splitlines()[-1].strip() if add_ret.returncode == 0 else ""
-        if not net_id.isdigit():
-            return {
-                "ssid": ssid, "bssid": bssid, "interface": interface, "connected": False,
-                "output": (add_ret.stdout or add_ret.stderr).strip(),
-            }
+            add_ret = await self._wpa_cli(interface, "add_network")
+            net_id = add_ret.stdout.strip().splitlines()[-1].strip() if add_ret.returncode == 0 else ""
+            if not net_id.isdigit():
+                return {
+                    "ssid": ssid, "bssid": bssid, "interface": interface, "connected": False,
+                    "output": (add_ret.stdout or add_ret.stderr).strip(),
+                }
 
-        outputs = []
-        outputs.append((await self._wpa_cli(interface, "set_network", net_id, "ssid", f'"{ssid}"')).stdout.strip())
-        if bssid:
-            outputs.append((await self._wpa_cli(interface, "set_network", net_id, "bssid", bssid)).stdout.strip())
-        if password:
-            outputs.append((await self._wpa_cli(interface, "set_network", net_id, "psk", f'"{password}"')).stdout.strip())
-        else:
-            outputs.append((await self._wpa_cli(interface, "set_network", net_id, "key_mgmt", "NONE")).stdout.strip())
-        if channel:
-            outputs.append((await self._wpa_cli(
-                interface, "set_network", net_id, "scan_freq",
-                str(self._freq_for_channel(channel)),
-            )).stdout.strip())
+            outputs = []
+            outputs.append((await self._wpa_cli(interface, "set_network", net_id, "ssid", f'"{ssid}"')).stdout.strip())
+            if bssid:
+                outputs.append((await self._wpa_cli(interface, "set_network", net_id, "bssid", bssid)).stdout.strip())
+            if password:
+                outputs.append((await self._wpa_cli(interface, "set_network", net_id, "psk", f'"{password}"')).stdout.strip())
+            else:
+                outputs.append((await self._wpa_cli(interface, "set_network", net_id, "key_mgmt", "NONE")).stdout.strip())
+            if channel:
+                outputs.append((await self._wpa_cli(
+                    interface, "set_network", net_id, "scan_freq",
+                    str(self._freq_for_channel(channel)),
+                )).stdout.strip())
 
-        await self._wpa_cli(interface, "enable_network", net_id)
-        await self._wpa_cli(interface, "select_network", net_id)
-        await self._wpa_cli(interface, "save_config")
+            await self._wpa_cli(interface, "enable_network", net_id)
+            await self._wpa_cli(interface, "select_network", net_id)
+            await self._wpa_cli(interface, "save_config")
 
-        associated = await self._wait_for_wpa_state(interface, "COMPLETED", timeout=60)
-        ip_address = None
-        dhcp_output = ""
-        if associated:
-            dhcp_ret = await proc.run_hard(["dhcpcd", "-n", "-t", "30", interface], timeout=35)
-            dhcp_output = (dhcp_ret.stdout or dhcp_ret.stderr).strip()
-            ip_address = await self.get_interface_ip(interface)
+            associated = await self._wait_for_wpa_state(interface, "COMPLETED", timeout=60)
+            ip_address = None
+            dhcp_output = ""
+            if associated:
+                dhcp_ret = await proc.run_hard(["dhcpcd", "-n", "-t", "30", interface], timeout=35)
+                dhcp_output = (dhcp_ret.stdout or dhcp_ret.stderr).strip()
+                ip_address = await self.get_interface_ip(interface)
 
         return {
             "ssid": ssid,
@@ -414,33 +421,45 @@ class WifiMixin:
             # rejected - the reason/status code a status poll never showed.
             "failure_reason": getattr(self, "last_wpa_failure", None),
             "output": " | ".join(o for o in (*outputs, dhcp_output) if o),
-            "policy_routing": None,
         }
 
     async def disconnect_wifi(self, interface=None):
+        """Tear down this interface's association, without touching
+        NetworkManager anywhere in the process (see the module-level
+        comment above for why - the "hand it back to NM" step this used to
+        end with was the confirmed cause of a real MQTT-drop incident when
+        several interfaces disconnected together).
+
+        These run strictly one after another, so every timeout here is
+        additive on the caller's round-trip. They are hang budgets, not
+        expected durations - each of these is normally sub-second."""
         if not interface:
             return {"error": "interface is required"}
 
-        # These run strictly one after another, so every timeout here is
-        # additive on the caller's round-trip. They are hang budgets, not
-        # expected durations - each of these is normally sub-second, so
-        # they're kept tight; the one genuinely slow call is nmcli's
-        # synchronous device disconnect on the fallback path below.
-        outputs = []
-        if self._wpa_ctrl_socket_exists(interface):
-            term_ret = await self._wpa_cli(interface, "terminate", timeout=5)
-            outputs.append((term_ret.stdout or term_ret.stderr).strip())
+        async with self._wifi_op_semaphore:
+            outputs = []
+            if self._wpa_ctrl_socket_exists(interface):
+                term_ret = await self._wpa_cli(interface, "terminate", timeout=5)
+                outputs.append((term_ret.stdout or term_ret.stderr).strip())
+            else:
+                # No control socket - not a state this agent put the
+                # interface in (maybe it never got here, maybe wpa_supplicant
+                # died). `iw ... disconnect` tells the kernel directly to
+                # drop any association regardless of what set it up, the
+                # same job `nmcli device disconnect` used to do but without
+                # depending on NM being involved at all.
+                iw_ret = await proc.run(["iw", "dev", interface, "disconnect"], timeout=10)
+                outputs.append((iw_ret.stdout or iw_ret.stderr).strip())
 
+            # Unconditional now, unlike before: this branch used to rely on
+            # nmcli's own disconnect to also release any DHCP lease, which
+            # only worked because NM was involved. Nothing does that for us
+            # any more, so the lease has to be released explicitly here
+            # regardless of which branch tore down the association.
             dhcp_ret = await proc.run_hard(["dhcpcd", "-k", interface], timeout=8)
             outputs.append((dhcp_ret.stdout or dhcp_ret.stderr).strip())
 
-            nm_managed_ret = await proc.run_hard(["nmcli", "device", "set", interface, "managed", "yes"], timeout=8)
-            outputs.append((nm_managed_ret.stdout or nm_managed_ret.stderr).strip())
-        else:
-            nm_disconnect_ret = await proc.run_hard(["nmcli", "device", "disconnect", interface], timeout=30)
-            outputs.append((nm_disconnect_ret.stdout or nm_disconnect_ret.stderr).strip())
-
-        await proc.run_hard(["ip", "addr", "flush", "dev", interface], timeout=5)
+            await proc.run_hard(["ip", "addr", "flush", "dev", interface], timeout=5)
 
         return {
             "interface": interface,
@@ -456,11 +475,11 @@ class WifiMixin:
         return {"restarted": True, "channel": channel}
 
     async def set_monitor_channel(self, interface, channel):
-        """Sets a monitor-mode interface's capture channel via `iw` - unlike
-        connect_wifi/disconnect_wifi/scan_wifi/link_info, there's no nmcli
-        equivalent here: a monitor-mode interface has no SSID/association to
-        manage, NetworkManager doesn't touch it at all, and `iw` is the only
-        tool that can set its channel. Band isn't a separate parameter -
+        """Sets a monitor-mode interface's capture channel via `iw`. A
+        monitor-mode interface has no SSID/association to manage - NM
+        doesn't touch it, same as connect_wifi/disconnect_wifi/scan don't
+        touch NM any more either - and `iw` is the only tool that can set
+        its channel. Band isn't a separate parameter -
         `iw ... set channel` infers it from the channel number, same as
         connect_wifi's own inference."""
         if not interface:
