@@ -373,7 +373,7 @@ class WifiMixin:
             None,
         )
 
-    async def connect_wifi(self, ssid, password=None, interface=None, bssid=None, channel=None):
+    async def connect_wifi(self, ssid, password=None, interface=None, bssid=None, channel=None, auto_reconnect=False):
         """Connect to a wifi hotspot via wpa_supplicant + dhcpcd - see the
         module-level comment above for why NetworkManager is never involved.
 
@@ -514,11 +514,19 @@ class WifiMixin:
         end with was the confirmed cause of a real MQTT-drop incident when
         several interfaces disconnected together).
 
+        Also clears any saved auto-reconnect profile for this interface
+        (see wifi_profiles) - an explicit disconnect is a deliberate "stop
+        using this network" from the caller, and without this the very next
+        background scan cycle would see the AP still in range and have
+        _maybe_auto_reconnect immediately undo the disconnect.
+
         These run strictly one after another, so every timeout here is
         additive on the caller's round-trip. They are hang budgets, not
         expected durations - each of these is normally sub-second."""
         if not interface:
             return {"error": "interface is required"}
+
+        wifi_profiles.clear(interface)
 
         async with self._wifi_op_semaphore:
             outputs = []
