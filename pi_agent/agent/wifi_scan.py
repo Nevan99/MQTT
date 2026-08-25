@@ -521,21 +521,32 @@ class WifiScanMixin:
 
         and burned real CPU on the fleet:
 
-        - Down interfaces. cfg80211 refuses a scan on an interface that is
-          not UP - that is the -100 above, and it will never succeed until
-          something brings the link up.
+        - Administratively down interfaces. cfg80211 refuses a scan on an
+          interface without the IFF_UP flag set - that is the -100 above,
+          and it will never succeed until something brings the link up
+          (`ip link set <iface> up`). This is what `flags` reports.
         - Monitor-mode interfaces. A monitor interface has no station state
           to scan with; the request either errors or hangs until the
           timeout kills it, which is where the 10s ones came from.
+
+        Deliberately NOT checked here: `ip link show`'s `state`/operstate
+        field. That reflects carrier, not administrative state - a station
+        radio that's up but not currently associated to any AP normally
+        reports state DOWN (no carrier) while still having the UP flag set,
+        and is completely capable of scanning right now. An earlier version
+        of this function required state != "DOWN" too, which silently
+        excluded every not-yet-connected interface from the background scan
+        loop - exactly the ones a scan is most useful for - leaving their
+        scan cache permanently cold and forcing every nearby_hotspots/BSSID
+        lookup against them into an uncached, uncounted live scan instead.
 
         Checked per cycle rather than cached, since a mode switch or an
         `ip link set down` can change the answer at any time.
         """
         if details.get("type") == "monitor":
             return False
-        state = (details.get("state") or "").upper()
         flags = [f.upper() for f in details.get("flags") or []]
-        return state != "DOWN" and "UP" in flags
+        return "UP" in flags
 
     async def _scan_trigger(self, interface):
         """Start a scan and return without waiting for it (`iw scan trigger`).
