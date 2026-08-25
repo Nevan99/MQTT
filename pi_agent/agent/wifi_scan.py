@@ -101,6 +101,23 @@ class WifiScanMixin:
             if unknown:
                 return {"error": f"no such interface(s): {', '.join(unknown)}"}
             candidates = [by_name[i] for i in interfaces]
+            # Explicitly requested (unlike the "every wl*" auto-discovery
+            # path below, used only by the passive background loop) - bring
+            # a plain-down radio up first, the same `ip link set up` step
+            # connect_wifi's own _ensure_wpa_supplicant_running already
+            # does unconditionally. Being down was never a hard "can't
+            # scan", just never brought up for one the way it already is
+            # for a connect - failing the whole request over it was
+            # surprising for anyone who'd just connect_wifi'd this exact
+            # interface successfully. Monitor mode is left alone: that one
+            # genuinely has no station state to scan with.
+            for d in candidates:
+                if d.get("type") != "monitor" and (d.get("state") or "").upper() == "DOWN":
+                    await proc.run(["ip", "link", "set", d["name"], "up"], timeout=15)
+                    d["state"] = "UP"
+                    flags = {f.upper() for f in (d.get("flags") or [])}
+                    flags.add("UP")
+                    d["flags"] = list(flags)
         else:
             candidates = [d for d in details if d["name"].startswith("wl")]
 
@@ -109,7 +126,8 @@ class WifiScanMixin:
             skipped = ", ".join(d["name"] for d in candidates) or "none found"
             return {
                 "error": f"no scannable wifi interface ({skipped}) - "
-                         f"a down or monitor-mode radio cannot scan",
+                         f"a monitor-mode radio cannot scan, and a down "
+                         f"one could not be brought up",
             }
         return names
 
@@ -679,6 +697,18 @@ class WifiScanMixin:
             raise
         except Exception as e:
             result = {"interface": interface, "error": str(e)}
+
+        # Piggybacks on this cycle's own scan results rather than scanning
+        # again - see WifiMixin._maybe_auto_reconnect. Best-effort: a
+        # failure here should never take down the scan loop that's also
+        # feeding the backend's WifiScanHistory buffer.
+        try:
+            await self._maybe_auto_reconnect(interface, result.get("networks", []))
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print(f"[pi_agent] {interface}: auto-reconnect check failed: {e}")
+
         result["command_id"] = str(uuid.uuid4())
         result["action"] = "wifi_detail_scan"
         result["pi_id"] = self.pi_id

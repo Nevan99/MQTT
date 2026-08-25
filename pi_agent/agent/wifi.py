@@ -2,11 +2,12 @@ import asyncio
 import json
 import os
 import re
+import uuid
 import zlib
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from . import proc, wpa_events
+from . import proc, wifi_profiles, wpa_events
 
 
 class WifiMixin:
@@ -237,14 +238,27 @@ class WifiMixin:
             await asyncio.sleep(0.25)
         return False, "wpa_supplicant started but its control socket never appeared"
 
-    async def _current_wpa_state(self, interface):
+    async def _current_wpa_status(self, interface):
+        """Parsed `wpa_cli status` output as a dict (wpa_state, id, ssid,
+        etc.). _current_wpa_state used to parse only wpa_state directly -
+        factored out because _wait_for_wpa_state also needs `id`, to tell
+        "reached the target state" apart from "still reading a state that
+        actually belongs to the network we were on before this call"."""
         ret = await self._wpa_cli(interface, "status")
         if ret.returncode != 0:
             return None
-        m = re.search(r'^wpa_state=(\S+)', ret.stdout, re.MULTILINE)
-        return m.group(1) if m else None
+        status = {}
+        for line in ret.stdout.splitlines():
+            key, sep, value = line.partition("=")
+            if sep:
+                status[key] = value
+        return status
 
-    async def _wait_for_wpa_state(self, interface, target_state, timeout=60):
+    async def _current_wpa_state(self, interface):
+        status = await self._current_wpa_status(interface)
+        return status.get("wpa_state") if status else None
+
+    async def _wait_for_wpa_state(self, interface, target_state, timeout=60, expected_net_id=None):
         """Wait for wpa_supplicant to reach `target_state`.
 
         Listens on the control socket rather than polling `status` once a
@@ -255,50 +269,82 @@ class WifiMixin:
         sitting out the full timeout - and self.last_wpa_failure records
         *why* for the connect result to report.
 
+        expected_net_id guards against a false positive when switching
+        networks on an interface that was already connected: right after
+        select_network, a `status` query can still momentarily report the
+        *previous* network's wpa_state=COMPLETED before wpa_supplicant has
+        actually processed the switch - matching on state alone let that
+        stale read pass as "already there", so connect_wifi went on to run
+        DHCP against an interface that was, in reality, still mid-teardown
+        of the old association. That reliably failed the first attempt (no
+        working association to get an IP from) even though the switch
+        itself then completed correctly moments later - which is what a
+        following retry (or the user just trying again) succeeding looked
+        like. When given, a state match only counts once `status["id"]`
+        (the network id wpa_supplicant is currently active on) also
+        matches the one just selected - the previous association had a
+        different id, so its lingering COMPLETED can't be mistaken for
+        this one any more.
+
         Falls back to polling when the socket isn't attachable (no
         AF_UNIX, wpa_supplicant not running with a control interface, or
         permissions), so behavior degrades rather than breaks.
         """
         self.last_wpa_failure = None
+
+        async def matches():
+            status = await self._current_wpa_status(interface)
+            if not status or status.get("wpa_state") != target_state:
+                return False
+            if expected_net_id is not None and status.get("id") != str(expected_net_id):
+                return False
+            return True
+
         listener = wpa_events.WpaEventListener(interface)
         if not listener.available:
-            return await self._poll_for_wpa_state(interface, target_state, timeout)
+            return await self._poll_for_wpa_state(matches, timeout)
 
         try:
             await listener.attach()
         except (OSError, RuntimeError, asyncio.TimeoutError) as e:
             print(f"[pi_agent] {interface}: wpa control socket unavailable ({e}), polling instead")
-            return await self._poll_for_wpa_state(interface, target_state, timeout)
+            return await self._poll_for_wpa_state(matches, timeout)
 
         try:
             # Check once up front: the target state may already have been
             # reached between select_network and the ATTACH above, and no
             # further event would ever announce it.
-            if await self._current_wpa_state(interface) == target_state:
+            if await matches():
                 return True
 
             async for line in listener.events(timeout=timeout):
                 name, fields = wpa_events.parse_event(line)
                 if name == "CTRL-EVENT-CONNECTED" and target_state == "COMPLETED":
-                    return True
+                    # The event alone doesn't carry the network id - it
+                    # fires on any completed association, old or new - so
+                    # still confirm via matches() rather than trusting the
+                    # event name by itself.
+                    if await matches():
+                        return True
+                    continue
                 if name in wpa_events.FAILURE_EVENTS:
                     self.last_wpa_failure = f"{name} {' '.join(f'{k}={v}' for k, v in fields.items())}".strip()
                     return False
                 if name.startswith("CTRL-EVENT-"):
                     # Any state-ish transition: confirm against the real
                     # state rather than trying to map every event name.
-                    if await self._current_wpa_state(interface) == target_state:
+                    if await matches():
                         return True
             return False
         finally:
             await listener.detach()
 
-    async def _poll_for_wpa_state(self, interface, target_state, timeout):
+    async def _poll_for_wpa_state(self, matches, timeout):
         """Pre-control-socket fallback: ask `status` once a second."""
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
         while loop.time() < deadline:
-            if await self._current_wpa_state(interface) == target_state:
+            if await matches():
                 return True
             await asyncio.sleep(1)
         return False
@@ -367,6 +413,24 @@ class WifiMixin:
                     "output": f"could not resolve an SSID for bssid {bssid} from a scan",
                 }
             ssid = match["ssid"]
+        elif bssid and channel:
+            # A channel passed in alongside an already-known ssid can still
+            # be stale - e.g. from nearby_hotspots' backend-cached scan
+            # result (routers/Pis.get_nearby_hotspots), which is only as
+            # fresh as this radio's last completed background scan, not
+            # this exact instant. Pinning scan_freq to a channel the AP has
+            # since moved off of doesn't fail cleanly: wpa_supplicant just
+            # scans forever looking for that exact (bssid, frequency) pair
+            # and never finds it (wpa_state stays SCANNING) instead of
+            # reporting a clean failure. A cache-first lookup (milliseconds,
+            # no fresh radio scan) is enough to catch a channel that moved
+            # since it was cached; the earlier bssid-without-ssid branch
+            # above already does the same kind of check for its own case.
+            match = await self._find_bssid_in_scan(interface, bssid, use_cache=True)
+            if match and match.get("channel") and match["channel"] != channel:
+                print(f"[pi_agent] {interface}: {bssid} is now on channel "
+                      f"{match['channel']}, not the requested {channel} - using the current one")
+                channel = match["channel"]
 
         async with self._wifi_op_semaphore:
             ok, err = await self._ensure_wpa_supplicant_running(interface)
@@ -410,12 +474,32 @@ class WifiMixin:
                 dhcp_output = (dhcp_ret.stdout or dhcp_ret.stderr).strip()
                 ip_address = await self.get_interface_ip(interface)
 
+        connected = associated and bool(ip_address)
+        if connected:
+            if auto_reconnect:
+                # Remembered so PiAgent._replay_saved_wifi_profiles and
+                # _maybe_auto_reconnect can rejoin this network on their own,
+                # without a fresh command from the backend - see
+                # wifi_profiles for why nothing else does this any more now
+                # that NetworkManager is unmanaged. Covers connect_hotspot
+                # too, since it calls this per interface.
+                wifi_profiles.save(interface, {
+                    "ssid": ssid, "password": password, "bssid": bssid, "channel": channel,
+                    "auto_reconnect": True,
+                })
+            else:
+                # Connecting without the flag also turns auto reconnect off
+                # for whatever was saved here before - the toggle reflects
+                # the most recent connect, not just its own True case.
+                wifi_profiles.clear(interface)
+
         return {
             "ssid": ssid,
             "bssid": bssid,
             "interface": interface,
             "channel": channel,
-            "connected": associated and bool(ip_address),
+            "connected": connected,
+            "auto_reconnect": auto_reconnect,
             "ip_address": ip_address,
             # Populated from the control socket when association was
             # rejected - the reason/status code a status poll never showed.
@@ -531,18 +615,27 @@ class WifiMixin:
         old boot-time script did (just as a second, permanent interface
         instead of an in-place swap of this one).
 
-        NetworkManager also needs a moment to actually let go of the device
-        after 'managed no' before the delete/add - proceeding immediately
-        can race it, which is why the caller re-verifies and retries rather
-        than trusting iw's exit code alone."""
+        NetworkManager never owns any wl* interface here any more (see
+        99-pi-agent-unmanaged-wifi.conf) - a live association, if any, is
+        owned by our own standalone wpa_supplicant (connect_wifi), not by
+        NM. The nmcli disconnect/managed-no this used to run before the
+        delete were no-ops against a device NM doesn't manage, which left
+        wpa_supplicant still attached when the switch deleted its netdev
+        out from under it - `iw dev del` then either failed outright or
+        left wpa_supplicant orphaned, which is why a switch to monitor mode
+        while connected used to fail. Tearing wpa_supplicant/dhcpcd down
+        properly first (the same steps disconnect_wifi takes) avoids that
+        instead of racing it."""
         if mode == "monitor":
-            # 30s, not the 300s this used to allow: this runs while holding
-            # the interface's wifi lock, so a stuck nmcli here blocks every
-            # later connect/disconnect on the same interface for as long as
-            # the timeout lets it run.
-            await proc.run(["nmcli", "device", "disconnect", interface], timeout=30)
-            await proc.run(["nmcli", "device", "set", interface, "managed", "no"], timeout=30)
-            await asyncio.sleep(0.5)
+            # Also stops _maybe_auto_reconnect from fighting this switch -
+            # without this, a saved auto-reconnect profile for `interface`
+            # would just get reconnected (back into managed mode) on the
+            # very next background scan cycle.
+            wifi_profiles.clear(interface)
+            if self._wpa_ctrl_socket_exists(interface):
+                await self._wpa_cli(interface, "terminate", timeout=5)
+                await proc.run_hard(["dhcpcd", "-k", interface], timeout=8)
+                await asyncio.sleep(0.5)
         await proc.run(["ip", "link", "set", interface, "down"], timeout=30)
         del_ret = await proc.run(["iw", "dev", interface, "del"], timeout=30)
         add_ret = await proc.run(
@@ -553,8 +646,6 @@ class WifiMixin:
             # add failed - recreate it managed, the safer default, instead
             # of stranding it deleted until a reboot.
             await proc.run(["iw", "phy", phy, "interface", "add", interface, "type", "managed"], timeout=30)
-        if mode == "managed" or add_ret.returncode != 0:
-            await proc.run(["nmcli", "device", "set", interface, "managed", "yes"], timeout=30)
         await proc.run(["ip", "link", "set", interface, "up"], timeout=30)
         await asyncio.sleep(0.3)
         del_out = (del_ret.stdout or del_ret.stderr).strip()
@@ -654,16 +745,33 @@ class WifiMixin:
         except Exception as e:
             return {"error": str(e)}
 
+    # Staggers each radio's association attempt within one connect_hotspot
+    # call - see the docstring below for why. Kept small: the point is to
+    # spread out the burst of auth/assoc/EAPOL frames each radio's attempt
+    # opens with, not to seriously slow the whole batch down (8 radios at
+    # this stagger adds under 3s of spread against connects that each
+    # individually take several seconds anyway).
+    CONNECT_HOTSPOT_STAGGER_SECONDS = 0.4
+
     async def connect_hotspot(self, ssid=None, password=None, bssid=None,
-                              channel=None, interfaces=None):
+                              channel=None, interfaces=None, auto_reconnect=False):
         """Join one hotspot on several of this Pi's radios at once.
 
         The fleet use case this exists for is "put these four radios on that
         AP and watch what it does with them" - previously four separate
         connect_wifi commands, which had to be issued and correlated one at
-        a time. Here they run concurrently: each radio takes only its own
-        interface lock, so they neither serialise behind one another nor
-        race on shared state.
+        a time. Each radio takes only its own interface lock, so they never
+        serialise behind one another or race on shared state - but their
+        association attempts are staggered by CONNECT_HOTSPOT_STAGGER_SECONDS
+        rather than launched in the same instant. A real fleet test hitting
+        one AP with 8+ radios at once (several Pis' connect_hotspot/fan-out
+        connects landing together) reliably failed some of them - a burst of
+        that many simultaneous auth/assoc/4-way-handshake attempts can trip
+        an AP's client cap, overload its handshake handling, or just cause
+        genuine airtime contention - none of which shows up when connecting
+        one radio at a time by hand, since nothing else is competing for the
+        AP's attention at that instant. Spreading the starts out removes the
+        burst without meaningfully slowing the batch down.
 
         Note what is deliberately *not* shared: each radio associates
         independently, so a partial outcome is normal and is reported as
@@ -681,12 +789,17 @@ class WifiMixin:
         # otherwise deadlock on its own lock.
         ordered = list(dict.fromkeys(interfaces))
 
-        async def one(interface):
+        async def one(interface, delay):
+            if delay:
+                await asyncio.sleep(delay)
             async with self._wifi_pending_command(interface):
                 async with self._wifi_lock_for(interface):
-                    return await self.connect_wifi(ssid, password, interface, bssid, channel)
+                    return await self.connect_wifi(ssid, password, interface, bssid, channel, auto_reconnect)
 
-        outcomes = await asyncio.gather(*(one(i) for i in ordered), return_exceptions=True)
+        outcomes = await asyncio.gather(
+            *(one(i, idx * self.CONNECT_HOTSPOT_STAGGER_SECONDS) for idx, i in enumerate(ordered)),
+            return_exceptions=True,
+        )
 
         results = []
         for interface, outcome in zip(ordered, outcomes):
@@ -707,6 +820,98 @@ class WifiMixin:
             "connected": len(connected) == len(ordered),
             "results": results,
         }
+
+    async def _replay_saved_wifi_profiles(self):
+        """Reconnects every interface pi_agent remembers successfully
+        connecting to, once per process start - see agent/wifi_profiles.py
+        for why this exists (NetworkManager no longer owns these
+        interfaces, so nothing else auto-reconnects them after a reboot or
+        an agent restart). Spawned once from PiAgent.start_background_loops.
+
+        Runs each interface through the normal lock/pending-command path so
+        it can't race a real user command arriving for the same interface
+        at the same time; different interfaces reconnect concurrently."""
+        profiles = wifi_profiles.load()
+        if not profiles:
+            return
+
+        async def one(interface, profile):
+            async with self._wifi_pending_command(interface):
+                async with self._wifi_lock_for(interface):
+                    try:
+                        return await self.connect_wifi(
+                            profile.get("ssid"), profile.get("password"), interface,
+                            profile.get("bssid"), profile.get("channel"), True,
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        return {"error": str(e)}
+
+        outcomes = await asyncio.gather(
+            *(one(interface, profile) for interface, profile in profiles.items()),
+            return_exceptions=True,
+        )
+        for (interface, profile), outcome in zip(profiles.items(), outcomes):
+            if isinstance(outcome, asyncio.CancelledError):
+                raise outcome
+            failed = isinstance(outcome, Exception) or not outcome.get("connected")
+            if failed:
+                detail = str(outcome) if isinstance(outcome, Exception) else (outcome.get("output") or outcome.get("error"))
+                target = profile.get("ssid") or profile.get("bssid")
+                print(f"[pi_agent] {interface}: startup reconnect to {target} failed: {detail}")
+
+    @staticmethod
+    def _profile_in_range(profile, networks):
+        bssid = profile.get("bssid")
+        ssid = profile.get("ssid")
+        for net in networks:
+            if bssid and net.get("bssid") == bssid.lower():
+                return True
+            if not bssid and ssid and net.get("ssid") == ssid:
+                return True
+        return False
+
+    async def _is_wifi_connected(self, interface):
+        """True if this interface currently has a live wpa_supplicant
+        association - the only way any wl* interface gets connected at
+        all now that NetworkManager is unmanaged (99-pi-agent-unmanaged-
+        wifi.conf), so this is a reliable "is this radio in use" check for
+        _maybe_auto_reconnect."""
+        if not self._wpa_ctrl_socket_exists(interface):
+            return False
+        return await self._current_wpa_state(interface) == "COMPLETED"
+
+    async def _maybe_auto_reconnect(self, interface, networks):
+        """Reconnects `interface` to its saved profile the moment it's back
+        in range, as long as auto_reconnect was enabled for it and it isn't
+        already connected to something. Called once per background scan
+        cycle (_wifi_background_scan_one) with that cycle's own scan
+        results, so it costs nothing extra - no separate scan of its own.
+
+        _wifi_command_pending doubles as the debounce here: once a
+        reconnect attempt is dispatched it holds the interface's lock for
+        the whole connect_wifi call (which can take tens of seconds), and
+        the pending marker is set before that lock is even requested - so
+        later cycles skip straight past this interface instead of queuing
+        up duplicate reconnect attempts behind the first one."""
+        profile = wifi_profiles.load().get(interface)
+        if not profile or not profile.get("auto_reconnect"):
+            return
+        if self._wifi_command_pending(interface):
+            return
+        if await self._is_wifi_connected(interface):
+            return
+        if not self._profile_in_range(profile, networks):
+            return
+
+        target = profile.get("ssid") or profile.get("bssid")
+        print(f"[pi_agent] {interface}: {target} back in range and not connected - auto-reconnecting")
+        self._dispatch_wifi_command(
+            "connect_wifi", str(uuid.uuid4()), interface, self.connect_wifi,
+            profile.get("ssid"), profile.get("password"), interface,
+            profile.get("bssid"), profile.get("channel"), True,
+        )
 
     def _dispatch_wifi_command(self, action, command_id, interface, fn, *args):
         """Runs connect_wifi/disconnect_wifi as its own task and publishes

@@ -2,7 +2,7 @@ import json
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
 from database.database import get_session
@@ -230,6 +230,130 @@ def get_wifi_scan_history(pi_id: str, interface: str, session: Session = Depends
         out.append(net)
     out.sort(key=lambda n: n["last_seen"], reverse=True)
     return out
+
+
+def _band_label(freq_mhz):
+    if freq_mhz is None:
+        return None
+    if 2400 <= freq_mhz <= 2495:
+        return "2.4GHz"
+    if 5150 <= freq_mhz <= 5895:
+        return "5GHz"
+    if 5925 <= freq_mhz <= 7125:
+        return "6GHz"
+    return "unknown"
+
+
+def _flatten_scan_entry(net):
+    """Same reduction pi_agent's WifiScanMixin._flatten_scan_entry applies -
+    kept in this exact shape (not the fuller stored snapshot fields) so the
+    frontend's existing hotspot cards (built against get_nearby_hotspots'
+    old MQTT-sourced shape) don't need to change at all, only where the
+    data comes from."""
+    freq_mhz = net.get("frequency_mhz")
+    max_speed = net.get("max_speed_mbps")
+    return {
+        "ssid": net.get("ssid"),
+        "bssid": net.get("bssid"),
+        "mode": net.get("bss_type"),
+        "channel": net.get("channel"),
+        "frequency_mhz": freq_mhz,
+        "band": _band_label(freq_mhz),
+        "rate": f"{max_speed:g} Mbit/s" if max_speed else None,
+        "signal_percent": net.get("signal_quality_percent"),
+        # Raw dBm alongside the percentage - the percentage saturates at
+        # 100 above -50 dBm, so it can't rank two strong signals against
+        # each other, which the merge below needs to do.
+        "signal_dbm": net.get("rssi_dbm"),
+        "security": net.get("security"),
+    }
+
+
+def _merge_hotspot(merged, interface, net):
+    """Ports pi_agent's WifiScanMixin._merge_hotspot - folds one
+    interface's view of an AP into the merged-by-BSSID set, tracking which
+    interfaces saw it (seen_by) and which measured it strongest
+    (best_interface, compared on raw dBm - see _flatten_scan_entry)."""
+    entry = _flatten_scan_entry(net)
+    bssid = entry["bssid"]
+    if not bssid:
+        return
+    existing = merged.get(bssid)
+    if existing is None:
+        entry["seen_by"] = [interface]
+        entry["best_interface"] = interface
+        merged[bssid] = entry
+        return
+
+    existing["seen_by"].append(interface)
+    new_signal = entry["signal_dbm"]
+    old_signal = existing["signal_dbm"]
+    if new_signal is not None and (old_signal is None or new_signal > old_signal):
+        seen_by = existing["seen_by"]
+        entry["seen_by"] = seen_by
+        entry["best_interface"] = interface
+        merged[bssid] = entry
+
+
+@router.get("/{pi_id}/nearby-hotspots", response_model=dict)
+def get_nearby_hotspots(
+    pi_id: str, interfaces: Optional[list[str]] = Query(None), session: Session = Depends(get_session),
+):
+    """Backend-only equivalent of pi_agent's own get_nearby_hotspots
+    (agent/wifi_scan.py) - merges each requested interface's cached
+    wifi_detail_scan results (WifiScanSnapshot, kept warm by
+    PiAgent._wifi_background_scan_loop and written here by
+    mqtt_service._update_wifi_scan_history) by BSSID, the same way the
+    agent does, but entirely from the database - no MQTT command sent to
+    the Pi, no waiting on it to actually run a scan. `interfaces` omitted
+    covers every interface this Pi has ever reported a snapshot for.
+
+    Trades a small amount of freshness (results are only as new as the
+    background loop's last successful scan per interface, not a scan
+    triggered by this request) for an answer that's instant regardless of
+    how many radios/Pis are being asked about at once, and that still
+    works through a stretch where the Pi's own scans are failing (see
+    WifiScanSnapshot's self-pruning cache, not a wall-clock cutoff)."""
+    if interfaces:
+        target_interfaces = interfaces
+    else:
+        target_interfaces = [
+            row for row in session.exec(
+                select(WifiScanSnapshot.interface)
+                .where(WifiScanSnapshot.pi_id == pi_id)
+                .distinct()
+            ).all()
+        ]
+
+    merged: dict[str, dict] = {}
+    for iface in target_interfaces:
+        snapshots = session.exec(
+            select(WifiScanSnapshot).where(
+                WifiScanSnapshot.pi_id == pi_id, WifiScanSnapshot.interface == iface,
+            ).order_by(WifiScanSnapshot.scanned_at.desc())
+        ).all()
+        # Only the freshest snapshot's view of a given BSSID on this
+        # interface counts - an older cached snapshot re-reporting the same
+        # AP shouldn't get folded in as if it were a second, independent
+        # sighting.
+        seen_on_this_iface = set()
+        for snap in snapshots:
+            try:
+                networks = json.loads(snap.networks_json)
+            except (TypeError, ValueError):
+                continue
+            for net in networks:
+                bssid = net.get("bssid")
+                if not bssid or bssid in seen_on_this_iface:
+                    continue
+                seen_on_this_iface.add(bssid)
+                _merge_hotspot(merged, iface, net)
+
+    networks = sorted(
+        merged.values(),
+        key=lambda n: (n["signal_dbm"] is None, -(n["signal_dbm"] or 0), n["ssid"] or ""),
+    )
+    return {"interfaces": target_interfaces, "networks": networks}
 
 
 @router.get("/{pi_id}/interface-status", response_model=list[dict])

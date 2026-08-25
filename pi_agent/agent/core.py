@@ -23,6 +23,12 @@ ROLE = os.environ["ROLE"]
 # of being written to a local file first and uploaded as a whole after stop.
 CAPTURE_SOCKET_HOST = os.environ["CAPTURE_SOCKET_HOST"]
 CAPTURE_SOCKET_PORT = int(os.environ["CAPTURE_SOCKET_PORT"])
+# When set, the MQTT connection to the broker is bound to this interface's
+# current IP address (see run()) - forcing the agent's communication with
+# the backend over wired Ethernet even on a Pi with several wifi radios
+# that might otherwise win the system's default route. Empty/unset keeps
+# the previous behavior: whatever the OS routing table picks.
+WIRED_INTERFACE = os.environ.get("WIRED_INTERFACE", "eth0")
 
 RECONNECT_DELAY_SECONDS = 5
 
@@ -46,13 +52,15 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
     """
 
     def __init__(self, broker_host=BROKER_HOST, broker_port=BROKER_PORT, pi_id=PI_ID, role=ROLE,
-                 capture_socket_host=CAPTURE_SOCKET_HOST, capture_socket_port=CAPTURE_SOCKET_PORT):
+                 capture_socket_host=CAPTURE_SOCKET_HOST, capture_socket_port=CAPTURE_SOCKET_PORT,
+                 wired_interface=WIRED_INTERFACE):
         self.broker_host = broker_host
         self.broker_port = broker_port
         self.pi_id = pi_id
         self.role = role
         self.capture_socket_host = capture_socket_host
         self.capture_socket_port = capture_socket_port
+        self.wired_interface = wired_interface
 
         self.cmd_topic_mine = f'test/{pi_id}/cmd'
         self.cmd_topic_all = 'test/all/cmd'
@@ -191,6 +199,7 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
                     action, payload.get("command_id"), interface, self.connect_wifi,
                     payload.get("ssid"), payload.get("password"), interface,
                     payload.get("bssid"), payload.get("channel"),
+                    payload.get("auto_reconnect", False),
                 )
                 return
             elif action == "disconnect_wifi":
@@ -218,6 +227,7 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
                     payload.get("ssid"), payload.get("password"),
                     payload.get("bssid"), payload.get("channel"),
                     payload.get("interfaces") or payload.get("interface"),
+                    payload.get("auto_reconnect", False),
                 )
                 return
             elif action == "wifi_detail_scan":
@@ -347,6 +357,12 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
             self._spawn(self._wifi_background_scan_loop(), "wifi-scan-loop")
         if not any(t.get_name() == "interface-status-loop" for t in self._background_tasks):
             self._spawn(self._interface_status_loop(), "interface-status-loop")
+        # Once per process start, not every reconnect - a saved profile is
+        # replayed here rather than in start() because it needs the wifi
+        # lock/pending-command machinery (asyncio primitives, same event
+        # loop) rather than running before the loop is definitely up.
+        if not any(t.get_name() == "wifi-reconnect" for t in self._background_tasks):
+            self._spawn(self._replay_saved_wifi_profiles(), "wifi-reconnect")
 
     async def on_message(self, message):
         try:
@@ -388,6 +404,35 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
         """
         while True:
             try:
+                # Bind to the wired interface's current IP, if it has one,
+                # so the connection to the broker goes out over Ethernet
+                # even when a wifi radio also has a route to it (and might
+                # otherwise be what the OS picks as the default route).
+                # Re-resolved on every (re)connect, not just once, since
+                # DHCP can renew that IP or the interface can come up after
+                # the agent already started. Best-effort: no IP yet (cable
+                # unplugged, interface still coming up) falls back to
+                # unbound - whatever the OS routing table picks - rather
+                # than refusing to connect at all.
+                bind_address = ""
+                if self.wired_interface:
+                    try:
+                        bind_address = await self.get_interface_ip(self.wired_interface) or ""
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        print(f"[pi_agent] could not resolve {self.wired_interface}'s IP, connecting unbound: {e}")
+                    if not bind_address:
+                        print(f"[pi_agent] {self.wired_interface} has no IPv4 address yet, connecting unbound")
+                    else:
+                        # Otherwise a successful bind is silent, which made
+                        # it indistinguishable from an agent build that
+                        # predates this feature entirely (both produce no
+                        # matching log line) - print it explicitly so
+                        # `journalctl -u pi-agent | grep bound` gives a
+                        # definite yes/no per connect.
+                        print(f"[pi_agent] MQTT connection bound to {self.wired_interface} ({bind_address})")
+
                 # clean_session=True: the broker (mosquitto 1.6.9) only
                 # speaks MQTT 3.1.1, and a fresh session on every connect is
                 # the unambiguous way to guarantee no stale/queued command
@@ -400,6 +445,7 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
                     clean_session=True,
                     keepalive=30,
                     will=aiomqtt.Will(self.status_topic, payload=b"offline", qos=1, retain=True),
+                    bind_address=bind_address,
                 ) as client:
                     self.client = client
                     await self.on_connect()

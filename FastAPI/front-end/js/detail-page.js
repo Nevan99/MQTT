@@ -79,22 +79,30 @@ async function sendDetailCommand(actionSelectEl, paramsContainer, resultsContain
   const action = actionSelectEl.value;
   const params = collectDetailParams(paramsContainer);
   const needsInterface = (ACTION_PARAMS[action] || []).some(f => f.type === 'interface');
+
+  // nearby_hotspots is a pure backend DB read now - no MQTT command sent
+  // to the Pi at all (see fetchNearbyHotspots/routers/Pis.get_nearby_hotspots)
+  // - so it's handled entirely separately from everything below, which is
+  // all still real command dispatch.
+  if (action === 'nearby_hotspots') {
+    const ifaces = params.interfaces || [];
+    if (!ifaces.length) {
+      alert('Select at least one interface.');
+      return;
+    }
+    try {
+      await sendScanWifiFanOut(ifaces.map(iface => ({ piId, interface: iface })), resultsContainer);
+    } catch (err) {
+      alert(`Command failed: ${err.message}`);
+    }
+    return;
+  }
+
   try {
     if (needsInterface && Array.isArray(params.interface)) {
       const pickedInterfaces = params.interfaces || params.interface || [];
       if (!pickedInterfaces.length) {
         alert('Select at least one interface.');
-        return;
-      }
-      if (action === 'nearby_hotspots') {
-        // One command for every selected radio: the agent scans them
-        // concurrently and merges by BSSID, so several radios looking at
-        // the same air report one de-duplicated list rather than the same
-        // APs once per interface.
-        await sendScanWifiFanOut(
-          (params.interfaces || []).map(iface => ({ piId, interface: iface })),
-          params, resultsContainer,
-        );
         return;
       }
       if (action === 'connect_hotspot') {
@@ -205,7 +213,7 @@ function applyDetailWifiIconStatus(iface, status) {
   const el = document.querySelector(`#pdInterfaceList .wifi-icon[data-iface="${CSS.escape(iface)}"]`);
   if (!el) return;
   const connected = !!(status && status.connected);
-  el.classList.remove('wifi-unknown');
+  el.classList.remove('wifi-unknown', 'wifi-connected', 'wifi-disconnected');
   el.classList.add(connected ? 'wifi-connected' : 'wifi-disconnected');
   el.title = connected ? `Wi-Fi connected${status.ssid ? ' — ' + status.ssid : ''}` : 'Wi-Fi not connected';
   const card = el.closest('.pd-iface-card');
@@ -230,7 +238,7 @@ async function refreshWifiIcon(piId, iface) {
     const el = document.querySelector(`#pdInterfaceList .wifi-icon[data-iface="${CSS.escape(iface)}"]`);
     if (!el) return;
     const connected = !!(result && result.connected);
-    el.classList.remove('wifi-unknown');
+    el.classList.remove('wifi-unknown', 'wifi-connected', 'wifi-disconnected');
     el.classList.add(connected ? 'wifi-connected' : 'wifi-disconnected');
     el.title = connected ? `Wi-Fi connected${result.ssid ? ' — ' + result.ssid : ''}` : 'Wi-Fi not connected';
     const card = el.closest('.pd-iface-card');
@@ -276,7 +284,7 @@ async function refreshDetailInterfaceStatusBuffer(piId) {
     const el = document.querySelector(`#pdInterfaceList .wifi-icon[data-iface="${CSS.escape(iface)}"]`);
     if (!el) return;
     const connected = !!status.connected;
-    el.classList.remove('wifi-unknown');
+    el.classList.remove('wifi-unknown', 'wifi-connected', 'wifi-disconnected');
     el.classList.add(connected ? 'wifi-connected' : 'wifi-disconnected');
     el.title = connected ? `Wi-Fi connected${status.ssid ? ' — ' + status.ssid : ''}` : 'Wi-Fi not connected';
     const card = el.closest('.pd-iface-card');
@@ -293,6 +301,14 @@ async function refreshDetailInterfaceStatusBuffer(piId) {
 // Only ever touches the '.pd-iface-info' sub-div, not the whole card body -
 // the wifi scan section (button + scanned-network cards) lives in a sibling
 // div so a link_info refresh here doesn't wipe out an in-progress scan.
+// Interfaces (piId::iface) with a set_interface_mode switch in flight -
+// same reasoning/pattern as fleet-table.js's wifiModeSwitchInFlight: every
+// re-render of this card's body (renderDetailIfaceBody rebuilds it from
+// scratch each time, and the periodic status-buffer refresh calls it
+// whenever the card is expanded) would otherwise silently replace a
+// disabled "Switching…" button with a fresh enabled one mid-operation.
+const detailWifiModeSwitchInFlight = new Set();
+
 function renderDetailIfaceBody(body, name) {
   const info = body.querySelector('.pd-iface-info') || body;
   const details = (detailIfaceDetailsCache || []).find(d => d.name === name);
@@ -345,12 +361,15 @@ function renderDetailIfaceBody(body, name) {
   // button only appears once details are loaded.
   if (details && (isWifiInterface(name) || isMonitor) && detailPiId) {
     const targetMode = isMonitor ? 'managed' : 'monitor';
+    const switching = detailWifiModeSwitchInFlight.has(`${detailPiId}::${name}`);
     info.insertAdjacentHTML('beforeend',
-      `<div class="wifi-disconnect-row"><button type="button" class="iface-mode-switch-btn${isMonitor ? ' recording' : ''}">Monitor mode: ${isMonitor ? 'On' : 'Off'}</button></div>`);
-    info.querySelector('.iface-mode-switch-btn').addEventListener('click', (e) => {
-      e.stopPropagation();
-      switchDetailInterfaceMode(name, e.currentTarget, targetMode);
-    });
+      `<div class="wifi-disconnect-row"><button type="button" class="iface-mode-switch-btn${isMonitor ? ' recording' : ''}" ${switching ? 'disabled' : ''}>${switching ? 'Switching…' : `Monitor mode: ${isMonitor ? 'On' : 'Off'}`}</button></div>`);
+    if (!switching) {
+      info.querySelector('.iface-mode-switch-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        switchDetailInterfaceMode(name, targetMode);
+      });
+    }
   }
 
   if ((isWifiInterface(name) || isMonitor) && detailPiId) {
@@ -362,7 +381,12 @@ function renderDetailIfaceBody(body, name) {
   }
 }
 
-async function switchDetailInterfaceMode(iface, btn, targetMode) {
+function detailIfaceBodyEl(iface) {
+  const card = document.querySelector(`#pdInterfaceList .pd-iface-card[data-iface="${CSS.escape(iface)}"]`);
+  return card && card.querySelector('.pd-iface-body');
+}
+
+async function switchDetailInterfaceMode(iface, targetMode) {
   const piId = detailPiId;
   if (targetMode === 'monitor') {
     const link = detailLinkInfoCache[iface];
@@ -371,9 +395,20 @@ async function switchDetailInterfaceMode(iface, btn, targetMode) {
       return;
     }
   }
-  btn.disabled = true;
-  const originalText = btn.textContent;
-  btn.textContent = 'Switching…';
+  // Tracked separately from the clicked button - see
+  // detailWifiModeSwitchInFlight above for why (renderDetailInterfaceList
+  // can also fully rebuild #pdInterfaceList mid-switch, same as
+  // fleet-table.js's rebuildFleetIfaceCards, discarding the button
+  // entirely; looking the body up fresh by iface each time, rather than
+  // holding a reference to it, is what survives that).
+  const key = `${piId}::${iface}`;
+  detailWifiModeSwitchInFlight.add(key);
+  const rerender = () => {
+    const body = detailIfaceBodyEl(iface);
+    if (body && !body.classList.contains('hidden')) renderDetailIfaceBody(body, iface);
+  };
+  rerender();
+  let succeeded = false;
   try {
     const res = await postCmd(piId, 'set_interface_mode', { interface: iface, mode: targetMode });
     if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
@@ -383,21 +418,21 @@ async function switchDetailInterfaceMode(iface, btn, targetMode) {
     const result = await awaitCommandResult(data.command_id, 180);
     if (!result || !result.applied) {
       alert(`Failed to switch ${iface} to ${targetMode} mode: ${(result && result.output) || 'unknown error'}`);
-      return;
+    } else {
+      succeeded = true;
     }
   } catch (err) {
     alert(`Failed to switch mode: ${err.message}`);
-    return;
   } finally {
-    btn.disabled = false;
-    btn.textContent = originalText;
+    detailWifiModeSwitchInFlight.delete(key);
   }
-  delete detailLinkInfoCache[iface];
-  detailIfaceDetailsCache = null;
-  detailIfaceDetailsPromise = null;
-  await loadDetailIfaceInfo(piId, iface);
-  const body = btn.closest('.pd-iface-body');
-  if (body) renderDetailIfaceBody(body, iface);
+  if (succeeded) {
+    delete detailLinkInfoCache[iface];
+    detailIfaceDetailsCache = null;
+    detailIfaceDetailsPromise = null;
+    await loadDetailIfaceInfo(piId, iface);
+  }
+  rerender();
   refreshWifiIcon(piId, iface);
 }
 
@@ -496,6 +531,25 @@ function wifiPasswordFieldHtml(net) {
   `;
 }
 
+// Auto reconnect: opts a connect into pi_agent's saved-profile mechanism
+// (agent/wifi_profiles.py) - if checked, the agent remembers this
+// SSID/password/BSSID for this interface and (a) reconnects to it on its
+// own next process start, and (b) keeps watching for it in every
+// background scan cycle while running, reconnecting automatically as soon
+// as it's back in range and the interface isn't already connected to
+// something else. Left unchecked (the default), a successful connect
+// clears any previously saved profile for this interface instead - so
+// connecting without the box checked also turns auto reconnect off for
+// whatever was saved before.
+function wifiAutoReconnectFieldHtml() {
+  return `
+    <label class="wifi-remember-row">
+      <input type="checkbox" class="wifi-autoreconnect-checkbox">
+      Auto reconnect
+    </label>
+  `;
+}
+
 // After a successful connect, save or forget the password per the
 // "Remember password" checkbox's state.
 function applyWifiPasswordMemory(body, net, password) {
@@ -547,6 +601,7 @@ function renderWifiNetworkCard(piId, iface, net, connectedBssid) {
       ${isConnected
         ? `<button type="button" class="wifi-disconnect-btn">Disconnect</button>`
         : `${open ? '' : wifiPasswordFieldHtml(net)}
+          ${wifiAutoReconnectFieldHtml()}
           <button type="button" class="wifi-connect-btn">Connect</button>`
       }
     </div>
@@ -568,6 +623,7 @@ function renderWifiNetworkCard(piId, iface, net, connectedBssid) {
       stop(e);
       const passwordInput = body.querySelector('.wifi-connect-password');
       const password = passwordInput && passwordInput.value ? passwordInput.value : undefined;
+      const autoReconnectInput = body.querySelector('.wifi-autoreconnect-checkbox');
       connectBtn.disabled = true;
       statusEl.textContent = 'Connecting…';
       try {
@@ -576,8 +632,9 @@ function renderWifiNetworkCard(piId, iface, net, connectedBssid) {
           bssid: net.bssid || undefined,
           password,
           interface: iface,
+          auto_reconnect: !!(autoReconnectInput && autoReconnectInput.checked),
         });
-        statusEl.textContent = result && result.connected ? 'Connected.' : `Failed to connect${result && result.output ? ': ' + result.output : ''}`;
+        statusEl.textContent = result && result.connected ? 'Connected.' : `Failed to connect${wifiFailureDetail(result) ? ': ' + wifiFailureDetail(result) : ''}`;
         if (result && result.connected) applyWifiPasswordMemory(body, net, password);
         // Only touch the Pi detail page's own cache/icon if this card is
         // actually being shown there for this same Pi - this card is also
@@ -600,6 +657,8 @@ function renderWifiNetworkCard(piId, iface, net, connectedBssid) {
   if (passwordInput) passwordInput.addEventListener('click', stop);
   const rememberCheckbox = body.querySelector('.wifi-remember-checkbox');
   if (rememberCheckbox) rememberCheckbox.addEventListener('click', stop);
+  const autoReconnectCheckbox = body.querySelector('.wifi-autoreconnect-checkbox');
+  if (autoReconnectCheckbox) autoReconnectCheckbox.addEventListener('click', stop);
 
   const disconnectBtn = body.querySelector('.wifi-disconnect-btn');
   if (disconnectBtn) {

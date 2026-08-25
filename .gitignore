@@ -10,3 +10,4 @@ __pycache__/
 .DS_Store
 # *.txt
 *.pcap
+wifi_profiles.json

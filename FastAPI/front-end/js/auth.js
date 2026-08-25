@@ -31,6 +31,21 @@ function formatVnDateTime(value) {
   return d.toLocaleString('en-GB', { timeZone: VN_TIME_ZONE });
 }
 
+// connect_wifi/connect_hotspot's `output` is just wpa_cli's "OK" echoes
+// for each configuration step (set_network ssid/psk/etc) - those all
+// succeed even when the actual over-the-air association then fails or
+// times out, which is why a failed connect can show the wholly unhelpful
+// "OK|OK|OK". The real reason lives in `failure_reason` instead - set from
+// wpa_supplicant's own control-socket event (wrong password, the AP
+// rejecting the association, etc. - see PiAgent.connect_wifi and
+// wpa_events.FAILURE_EVENTS) - which nothing was actually displaying.
+function wifiFailureDetail(result) {
+  const parts = [];
+  if (result && result.output) parts.push(result.output);
+  if (result && result.failure_reason) parts.push(result.failure_reason);
+  return parts.join(' | ');
+}
+
 function formatVnTime(value) {
   const d = value instanceof Date ? value : (value ? parseApiDate(value) : new Date());
   if (Number.isNaN(d.getTime())) return '';
