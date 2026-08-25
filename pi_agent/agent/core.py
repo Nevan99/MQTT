@@ -31,6 +31,14 @@ CAPTURE_SOCKET_PORT = int(os.environ["CAPTURE_SOCKET_PORT"])
 WIRED_INTERFACE = os.environ.get("WIRED_INTERFACE", "eth0")
 
 RECONNECT_DELAY_SECONDS = 5
+# How long a publish that failed because the connection was down stays
+# worth retrying. Bounded by the UI's own polling ceiling
+# (awaitCommandResult's maxAttempts x 1s, up to 320s in fleet-table.js /
+# detail-page.js) - replaying a result well past that just delivers it to
+# a browser that already gave up and reported "timed out waiting for the
+# Pi", which is worse than not delivering it: silently stale data landing
+# on a poll loop nobody is running any more.
+PENDING_RESULT_MAX_AGE_SECONDS = 300
 
 
 class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiProxyMixin):
@@ -146,6 +154,17 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
         # tolerates rather than raising into a background loop.
         self.client = None
         self._client_lock = asyncio.Lock()
+        # Results that failed to publish because the connection was down at
+        # that exact moment - flushed on the next successful (re)connect.
+        # See publish()/_flush_pending_results(). Without this, a command
+        # that genuinely succeeded (a disconnect_wifi that really did tear
+        # every interface down, say) could still leave the UI stuck on
+        # "pending" forever: the work completing was never the problem, only
+        # reporting that it completed was, and clean_session=True means the
+        # broker never queued that publish for us the way it would a
+        # subscription - a dropped publish is just gone unless we hold onto
+        # it ourselves.
+        self._pending_results = []
 
     # --- MQTT plumbing ---------------------------------------------------
 
@@ -153,13 +172,21 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
         """Publish, tolerating a disconnected client.
 
         Background loops publish constantly; a reconnect in progress must
-        drop those rather than raise into the loop and kill it. Command
-        results take the same path, which is acceptable for the same reason
-        it was under paho's clean_session=True: a result that can't be sent
-        during a disconnect window is gone either way.
+        drop those rather than raise into the loop and kill it - so on
+        failure this buffers rather than just dropping (see
+        _pending_results / _flush_pending_results), and returns False either
+        way so a caller that cares can still tell the send didn't happen
+        synchronously.
+
+        Buffering everything, not just command results, is deliberate: a
+        retained status="online"/registration publish landing late is
+        harmless (retained messages just overwrite the previous value), and
+        treating every publish uniformly means one code path instead of the
+        caller having to know which topics matter enough to retry.
         """
         client = self.client
         if client is None:
+            self._buffer_pending_result(topic, payload, qos, retain)
             return False
         try:
             # aiomqtt is not safe for concurrent publishes on one client.
@@ -170,7 +197,38 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
             raise
         except Exception as e:
             print(f"[pi_agent] publish to {topic} failed: {e}")
+            self._buffer_pending_result(topic, payload, qos, retain)
             return False
+
+    def _buffer_pending_result(self, topic, payload, qos, retain):
+        self._pending_results.append({
+            "topic": topic, "payload": payload, "qos": qos, "retain": retain,
+            "queued_at": asyncio.get_running_loop().time(),
+        })
+
+    async def _flush_pending_results(self):
+        """Replays anything publish() couldn't send, on the next successful
+        (re)connect. Age-checked here rather than on the way in, since an
+        entry can sit in the buffer for the whole outage - the check needs
+        to happen at flush time, against how old it actually turned out to
+        be, not how old it was when queued."""
+        if not self._pending_results:
+            return
+        pending, self._pending_results = self._pending_results, []
+        now = asyncio.get_running_loop().time()
+        sent = dropped = 0
+        for entry in pending:
+            age = now - entry["queued_at"]
+            if age > PENDING_RESULT_MAX_AGE_SECONDS:
+                dropped += 1
+                continue
+            if await self.publish(entry["topic"], entry["payload"], entry["qos"], entry["retain"]):
+                sent += 1
+            # else: publish() already re-buffered it (still disconnected,
+            # or dropped again) - nothing further to do here.
+        if sent or dropped:
+            print(f"[pi_agent] reconnect: replayed {sent} pending result(s)"
+                  f"{f', dropped {dropped} too stale to replay' if dropped else ''}")
 
     def _spawn(self, coro, name):
         task = asyncio.create_task(coro, name=name)
@@ -212,7 +270,6 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
                     action, payload.get("command_id"), interface, self.connect_wifi,
                     payload.get("ssid"), payload.get("password"), interface,
                     payload.get("bssid"), payload.get("channel"),
-                    payload.get("auto_reconnect", False),
                 )
                 return
             elif action == "disconnect_wifi":
@@ -240,7 +297,6 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
                     payload.get("ssid"), payload.get("password"),
                     payload.get("bssid"), payload.get("channel"),
                     payload.get("interfaces") or payload.get("interface"),
-                    payload.get("auto_reconnect", False),
                 )
                 return
             elif action == "wifi_detail_scan":
@@ -363,6 +419,7 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
         await self.client.subscribe(self.cmd_topic_all, qos=1)
         await self.publish(self.status_topic, "online", qos=1, retain=True)
         await self.publish_registration()
+        await self._flush_pending_results()
         await self.start_background_loops()
 
     async def start_background_loops(self):
@@ -370,12 +427,6 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
             self._spawn(self._wifi_background_scan_loop(), "wifi-scan-loop")
         if not any(t.get_name() == "interface-status-loop" for t in self._background_tasks):
             self._spawn(self._interface_status_loop(), "interface-status-loop")
-        # Once per process start, not every reconnect - a saved profile is
-        # replayed here rather than in start() because it needs the wifi
-        # lock/pending-command machinery (asyncio primitives, same event
-        # loop) rather than running before the loop is definitely up.
-        if not any(t.get_name() == "wifi-reconnect" for t in self._background_tasks):
-            self._spawn(self._replay_saved_wifi_profiles(), "wifi-reconnect")
 
     async def on_message(self, message):
         try:
