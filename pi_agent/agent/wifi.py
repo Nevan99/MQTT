@@ -190,10 +190,16 @@ class WifiMixin:
     # several radios connecting concurrently and taking the whole Pi offline
     # - pointed at the sheer subprocess/thread volume of a multi-interface
     # connect_wifi burst (roughly a dozen subprocess spawns per interface),
-    # not at NetworkManager; _wifi_op_semaphore below caps how many
-    # interfaces can be mid-connect/disconnect at once as a mitigation for
-    # that, pending confirmation on hardware (dmesg for OOM kills, TasksMax
-    # vs TasksCurrent on the systemd unit).
+    # not at NetworkManager; _wifi_connect_semaphore below caps how many
+    # interfaces can be mid-connect at once as a mitigation for that, pending
+    # confirmation on hardware (dmesg for OOM kills, TasksMax vs
+    # TasksCurrent on the systemd unit). disconnect_wifi has its own,
+    # separate _wifi_disconnect_semaphore - the two used to share one
+    # semaphore, which meant a disconnect could sit queued behind a slow
+    # connect (up to ~95s: 60s association wait + 35s DHCP wait) on any Pi
+    # busy enough to have both semaphore slots occupied by connects -
+    # confirmed as the reason disconnects measured slower on busier Pis even
+    # though disconnect_wifi's own code path never changed.
 
     WPA_CTRL_DIR = "/var/run/wpa_supplicant"
 
@@ -385,13 +391,14 @@ class WifiMixin:
         bands/channels and a specific one needs to be tested.
 
         The actual work (from _ensure_wpa_supplicant_running onward) runs
-        under _wifi_op_semaphore, capping how many interfaces can be
+        under _wifi_connect_semaphore, capping how many interfaces can be
         mid-connect at once - a multi-interface connect burst (connect_hotspot,
         or several interfaces connected together from the UI) spawns roughly
         a dozen subprocesses per interface; uncapped, four at once was enough
         to take a Pi offline. bssid resolution runs outside the semaphore -
         it's a scan-cache read, not part of the subprocess burst this exists
-        to bound.
+        to bound. disconnect_wifi deliberately does not share this semaphore
+        - see _wifi_disconnect_semaphore for why.
         """
         if not interface:
             return {"error": "interface is required"}
@@ -432,7 +439,7 @@ class WifiMixin:
                       f"{match['channel']}, not the requested {channel} - using the current one")
                 channel = match["channel"]
 
-        async with self._wifi_op_semaphore:
+        async with self._wifi_connect_semaphore:
             ok, err = await self._ensure_wpa_supplicant_running(interface)
             if not ok:
                 return {
@@ -528,7 +535,7 @@ class WifiMixin:
 
         wifi_profiles.clear(interface)
 
-        async with self._wifi_op_semaphore:
+        async with self._wifi_disconnect_semaphore:
             outputs = []
             if self._wpa_ctrl_socket_exists(interface):
                 term_ret = await self._wpa_cli(interface, "terminate", timeout=5)

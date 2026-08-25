@@ -105,23 +105,36 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
         # can be garbage-collected mid-command.
         self._wifi_tasks = set()
         self._background_tasks = set()
-        # Caps how many interfaces can be mid-connect/disconnect at once,
-        # system-wide on this Pi - separate from _wifi_lock_for, which only
-        # serializes commands aimed at the *same* interface and does
-        # nothing to limit different interfaces running fully in parallel.
-        # connect_wifi alone spawns roughly a dozen subprocesses per
-        # interface (wpa_supplicant, ~7 wpa_cli calls, dhcpcd, ...); a
-        # 4-interface burst - connect_hotspot, or several interfaces
-        # connected together from the UI - fired ~50 near-simultaneous
-        # subprocess spawns with nothing bounding it, and was the leading
-        # suspect when a Pi went fully offline (no error logged - consistent
-        # with the process/event loop stalling under the load rather than
-        # raising, since our error handling only prints on a caught
-        # exception) after receiving several connect_wifi commands at once.
-        # 2 is a starting point, not a measured number - tune once this is
-        # confirmed against real hardware (dmesg for OOM kills, TasksMax vs
-        # TasksCurrent on the systemd unit during a repro).
-        self._wifi_op_semaphore = asyncio.Semaphore(2)
+        # Caps how many interfaces can be mid-connect at once, system-wide
+        # on this Pi - separate from _wifi_lock_for, which only serializes
+        # commands aimed at the *same* interface and does nothing to limit
+        # different interfaces running fully in parallel. connect_wifi alone
+        # spawns roughly a dozen subprocesses per interface (wpa_supplicant,
+        # ~7 wpa_cli calls, dhcpcd, ...); a 4-interface burst - connect_hotspot,
+        # or several interfaces connected together from the UI - fired ~50
+        # near-simultaneous subprocess spawns with nothing bounding it, and
+        # was the leading suspect when a Pi went fully offline (no error
+        # logged - consistent with the process/event loop stalling under the
+        # load rather than raising, since our error handling only prints on
+        # a caught exception) after receiving several connect_wifi commands
+        # at once. 2 is a starting point, not a measured number - tune once
+        # this is confirmed against real hardware (dmesg for OOM kills,
+        # TasksMax vs TasksCurrent on the systemd unit during a repro).
+        self._wifi_connect_semaphore = asyncio.Semaphore(2)
+        # Separate from the above on purpose. disconnect_wifi's own work is
+        # light (~3 subprocess spawns, normally done in a couple seconds) -
+        # it never needed the same protection connect_wifi does. Sharing one
+        # semaphore between them meant a disconnect could queue behind a
+        # connect that was still mid-association or mid-DHCP, which can
+        # legitimately run for up to ~95s (60s association wait + 35s DHCP
+        # wait) - confirmed as the reason disconnects measured slower on
+        # busier Pis (several interfaces mid-connect at once) than on quieter
+        # ones, even though disconnect_wifi's own code path never changed.
+        # 4 here is generous rather than tightly reasoned - disconnect's
+        # subprocess burden is low enough that this is mostly a safety net
+        # against something unbounded in the future, not a load-bearing cap
+        # today.
+        self._wifi_disconnect_semaphore = asyncio.Semaphore(4)
 
         # interface -> {"port", "gateway", "timer"} for start_ap_webui_proxy's
         # DNAT/MASQUERADE rules - see that method for the full explanation.
