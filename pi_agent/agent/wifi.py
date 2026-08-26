@@ -305,15 +305,23 @@ class WifiMixin:
                 return False
             return True
 
+        async def poll_fallback():
+            # Same "never leave a failure unexplained" rule as the event
+            # path below - see _wpa_timeout_reason.
+            if await self._poll_for_wpa_state(matches, timeout):
+                return True
+            self.last_wpa_failure = self._wpa_timeout_reason(target_state, timeout)
+            return False
+
         listener = wpa_events.WpaEventListener(interface)
         if not listener.available:
-            return await self._poll_for_wpa_state(matches, timeout)
+            return await poll_fallback()
 
         try:
             await listener.attach()
         except (OSError, RuntimeError, asyncio.TimeoutError) as e:
             print(f"[pi_agent] {interface}: wpa control socket unavailable ({e}), polling instead")
-            return await self._poll_for_wpa_state(matches, timeout)
+            return await poll_fallback()
 
         try:
             # Check once up front: the target state may already have been
@@ -340,9 +348,29 @@ class WifiMixin:
                     # state rather than trying to map every event name.
                     if await matches():
                         return True
+            self.last_wpa_failure = self._wpa_timeout_reason(target_state, timeout)
             return False
         finally:
             await listener.detach()
+
+    @staticmethod
+    def _wpa_timeout_reason(target_state, timeout):
+        """Why a wait ended with nothing to report.
+
+        A rejected association names itself (CTRL-EVENT-ASSOC-REJECT and
+        friends), but running out the clock does not - and without this the
+        result went back to the UI as `connected: false` with an entirely
+        empty failure_reason, indistinguishable from a command that never
+        ran or a crashed agent. Silence here is itself informative: it means
+        wpa_supplicant kept scanning and neither reached the state nor was
+        turned away, which in practice means the requested BSSID/SSID was
+        never seen on air (an AP that moved channel, a hotspot that rotated
+        its MAC or went to sleep, or one simply out of range)."""
+        return (
+            f"timed out after {timeout}s waiting for wpa_state={target_state} - "
+            "wpa_supplicant reported no rejection, so the requested BSSID/SSID "
+            "was most likely never found on air"
+        )
 
     async def _poll_for_wpa_state(self, matches, timeout):
         """Pre-control-socket fallback: ask `status` once a second."""
@@ -353,6 +381,42 @@ class WifiMixin:
                 return True
             await asyncio.sleep(1)
         return False
+
+    # How long connect_wifi waits for an address to actually land on the
+    # interface after handing off to dhcpcd. Sized against the lease
+    # negotiations seen on real hardware (solicit to lease is typically
+    # 5-8s, occasionally longer when several radios negotiate at once), not
+    # against dhcpcd's own -t, which bounds a different thing entirely.
+    DHCP_IP_WAIT_SECONDS = 30
+
+    async def _wait_for_interface_ip(self, interface, timeout=None):
+        """Poll until `interface` has an IPv4 address, or `timeout` elapses.
+
+        connect_wifi used to read the address exactly once, immediately
+        after the dhcpcd call returned - which quietly assumed dhcpcd only
+        returns once a lease is in place. It does not. When a dhcpcd daemon
+        is already running on this Pi, `dhcpcd -n` is a control client: it
+        hands the rebind to the running daemon ("sending commands to dhcpcd
+        process"), exits in milliseconds, and the negotiation carries on in
+        the background for several seconds afterwards. The single read then
+        found no address yet, so `connected` came back false with an empty
+        failure_reason - on a connect that had in fact associated fine and
+        picked up its lease moments later. That empty failure_reason is the
+        tell: nothing failed, we just looked too early.
+
+        Polling covers both dhcpcd modes rather than special-casing either,
+        and costs one extra `ip addr show` in the common case where the
+        address is already there.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + (self.DHCP_IP_WAIT_SECONDS if timeout is None else timeout)
+        while True:
+            ip_address = await self.get_interface_ip(interface)
+            if ip_address:
+                return ip_address
+            if loop.time() >= deadline:
+                return None
+            await asyncio.sleep(0.5)
 
     @staticmethod
     def _freq_for_channel(channel):
@@ -476,9 +540,27 @@ class WifiMixin:
             ip_address = None
             dhcp_output = ""
             if associated:
-                dhcp_ret = await proc.run_hard(["dhcpcd", "-n", "-t", "30", interface], timeout=35)
+                # detach_output: dhcpcd daemonizes, and a daemon holding our
+                # stdout/stderr pipes open kept communicate() waiting out the
+                # full timeout below on calls that had already done their job
+                # - see proc.run_hard.
+                dhcp_ret = await proc.run_hard(
+                    ["dhcpcd", "-n", "-t", "30", interface], timeout=35, detach_output=True,
+                )
                 dhcp_output = (dhcp_ret.stdout or dhcp_ret.stderr).strip()
-                ip_address = await self.get_interface_ip(interface)
+                # Not a single read: dhcpcd returning does not mean a lease
+                # is in place - see _wait_for_interface_ip.
+                ip_address = await self._wait_for_interface_ip(interface)
+                if not ip_address:
+                    # Association worked, DHCP did not. Worth naming
+                    # explicitly: it is the one failure here that says the
+                    # radio and the PSK were both fine, so the next place to
+                    # look is the AP's DHCP server (or a client cap it
+                    # enforces by handing out no lease), not the wifi config.
+                    self.last_wpa_failure = (
+                        f"associated but no IPv4 address after "
+                        f"{self.DHCP_IP_WAIT_SECONDS}s - DHCP did not complete"
+                    )
 
         connected = associated and bool(ip_address)
 

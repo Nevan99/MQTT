@@ -436,7 +436,6 @@ function renderHotspotConnectCard(piId, net) {
     ).join('')}</table>
     <div class="wifi-connect-row">
       ${open ? '' : wifiPasswordFieldHtml(net)}
-      ${wifiAutoReconnectFieldHtml()}
       <button type="button" class="wifi-connect-btn" ${targets.length ? '' : 'disabled'}>Connect${targets.length > 1 ? ` (${targets.length} interfaces)` : ''}</button>
     </div>
     <div class="wifi-connect-status hint"></div>
@@ -454,8 +453,6 @@ function renderHotspotConnectCard(piId, net) {
   if (passwordInput) passwordInput.addEventListener('click', stop);
   const rememberCheckbox = body.querySelector('.wifi-remember-checkbox');
   if (rememberCheckbox) rememberCheckbox.addEventListener('click', stop);
-  const autoReconnectCheckbox = body.querySelector('.wifi-autoreconnect-checkbox');
-  if (autoReconnectCheckbox) autoReconnectCheckbox.addEventListener('click', stop);
 
   const connectBtn = body.querySelector('.wifi-connect-btn');
   connectBtn.addEventListener('click', async (e) => {
@@ -471,7 +468,6 @@ function renderHotspotConnectCard(piId, net) {
         password,
         channel: net.channel || undefined,
         interfaces: targets,
-        auto_reconnect: !!(autoReconnectCheckbox && autoReconnectCheckbox.checked),
       });
       const okCount = (result && result.connected_interfaces) ? result.connected_interfaces.length : 0;
       statusEl.textContent = result && result.connected

@@ -16,6 +16,7 @@ import asyncio
 import os
 import signal
 import subprocess
+import tempfile
 
 # Matches the old sync default: calls that pass no timeout used to be able
 # to hang forever. Under asyncio a hung call no longer blocks a thread, but
@@ -55,7 +56,7 @@ async def run(cmd, timeout=DEFAULT_TIMEOUT):
     )
 
 
-async def run_hard(cmd, timeout):
+async def run_hard(cmd, timeout, detach_output=False):
     """Like `run`, but guarantees the whole process *group* dies on timeout.
 
     Killing only the direct child isn't always enough: dhcpcd and nmcli
@@ -68,18 +69,55 @@ async def run_hard(cmd, timeout):
     lock until this returns, so a call that outlives its nominal timeout
     doesn't just leave one command pending - it blocks every later
     connect/disconnect on that interface.
+
+    detach_output goes a step further and stops the daemon inheriting our
+    pipes at all, writing output to a temporary file instead. The kill-on-
+    timeout above bounds that hazard but does not avoid it: a command like
+    `dhcpcd` that *succeeds* by daemonizing leaves a child holding the
+    pipes open, so communicate() waits out the full timeout on a call that
+    actually finished in seconds, and the process group then gets SIGKILLed
+    - taking the working daemon with it. With a file there is no pipe to
+    hold open, so the call returns as soon as the direct child exits and
+    the daemon it left behind is free to keep running. Output is still
+    captured, just read back afterwards rather than streamed.
     """
     cmd = [str(c) for c in cmd]
     kwargs = {}
     if hasattr(os, "killpg"):
         kwargs["start_new_session"] = True
 
+    out_file = None
+    if detach_output:
+        out_file = tempfile.TemporaryFile()
+        kwargs["stdout"] = out_file
+        kwargs["stderr"] = subprocess.STDOUT
+    else:
+        kwargs["stdout"] = asyncio.subprocess.PIPE
+        kwargs["stderr"] = asyncio.subprocess.PIPE
+
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **kwargs
-        )
+        proc = await asyncio.create_subprocess_exec(*cmd, **kwargs)
     except (FileNotFoundError, PermissionError, OSError) as e:
+        if out_file is not None:
+            out_file.close()
         return subprocess.CompletedProcess(cmd, 127, "", str(e))
+
+    if out_file is not None:
+        try:
+            await asyncio.wait_for(proc.wait(), timeout)
+        except asyncio.TimeoutError:
+            _killpg(proc)
+            try:
+                await asyncio.wait_for(proc.wait(), 5)
+            except asyncio.TimeoutError:
+                pass
+            return subprocess.CompletedProcess(
+                cmd, -9, _read_and_close(out_file),
+                f"[pi_agent] {cmd[0]} killed after exceeding {timeout}s (process group)",
+            )
+        return subprocess.CompletedProcess(
+            cmd, proc.returncode, _read_and_close(out_file), "",
+        )
 
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout)
@@ -98,6 +136,21 @@ async def run_hard(cmd, timeout):
     return subprocess.CompletedProcess(
         cmd, proc.returncode, _decode(stdout), _decode(stderr),
     )
+
+
+def _read_and_close(out_file):
+    """Drain a detach_output temp file. Best-effort: losing the diagnostic
+    text must never turn an otherwise successful command into an error."""
+    try:
+        out_file.seek(0)
+        return _decode(out_file.read())
+    except OSError:
+        return ""
+    finally:
+        try:
+            out_file.close()
+        except OSError:
+            pass
 
 
 async def _kill(proc):

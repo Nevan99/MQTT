@@ -109,7 +109,6 @@ function wifiInfoConnectSectionHtml(net) {
   return `
     <div class="wifi-connect-row">
       ${open ? '' : wifiPasswordFieldHtml(net)}
-      ${wifiAutoReconnectFieldHtml()}
       <button type="button" class="wifi-connect-btn">Connect</button>
     </div>
     <div class="wifi-connect-status hint"></div>
@@ -123,7 +122,6 @@ function wireWifiInfoConnectSection(container, piId, iface, net) {
   connectBtn.addEventListener('click', async () => {
     const passwordInput = container.querySelector('.wifi-connect-password');
     const password = passwordInput && passwordInput.value ? passwordInput.value : undefined;
-    const autoReconnectInput = container.querySelector('.wifi-autoreconnect-checkbox');
     connectBtn.disabled = true;
     statusEl.textContent = 'Connecting…';
     try {
@@ -132,7 +130,6 @@ function wireWifiInfoConnectSection(container, piId, iface, net) {
         bssid: net.bssid || undefined,
         password,
         interface: iface,
-        auto_reconnect: !!(autoReconnectInput && autoReconnectInput.checked),
       });
       statusEl.textContent = result && result.connected ? 'Connected.' : `Failed to connect${wifiFailureDetail(result) ? ': ' + wifiFailureDetail(result) : ''}`;
       if (result && result.connected) {

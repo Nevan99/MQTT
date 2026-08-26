@@ -59,7 +59,6 @@ function renderMergedWifiNetworkCard(targets, net) {
     ).join('')}</table>
     <div class="wifi-connect-row">
       ${open ? '' : wifiPasswordFieldHtml(net)}
-      ${wifiAutoReconnectFieldHtml()}
       <button type="button" class="wifi-connect-btn">Connect (${targets.length} interface${targets.length === 1 ? '' : 's'})</button>
     </div>
     <div class="wifi-connect-status hint"></div>
@@ -77,8 +76,6 @@ function renderMergedWifiNetworkCard(targets, net) {
   if (passwordInput) passwordInput.addEventListener('click', stop);
   const rememberCheckbox = body.querySelector('.wifi-remember-checkbox');
   if (rememberCheckbox) rememberCheckbox.addEventListener('click', stop);
-  const autoReconnectCheckbox = body.querySelector('.wifi-autoreconnect-checkbox');
-  if (autoReconnectCheckbox) autoReconnectCheckbox.addEventListener('click', stop);
 
   body.querySelector('.wifi-connect-btn').addEventListener('click', async (e) => {
     stop(e);
@@ -86,7 +83,6 @@ function renderMergedWifiNetworkCard(targets, net) {
     btn.disabled = true;
     statusEl.textContent = `Connecting on ${targets.length} interface(s)…`;
     const password = passwordInput && passwordInput.value ? passwordInput.value : undefined;
-    const autoReconnect = !!(autoReconnectCheckbox && autoReconnectCheckbox.checked);
     // Staggered start, same reasoning as PiAgent.CONNECT_HOTSPOT_STAGGER_SECONDS -
     // several radios (often across several Pis here) all starting their
     // association at the same instant is what actually trips up a single
@@ -101,7 +97,6 @@ function renderMergedWifiNetworkCard(targets, net) {
         bssid: net.bssid || undefined,
         password,
         interface: iface,
-        auto_reconnect: autoReconnect,
       });
       if (!(result && result.connected)) {
         throw new Error(`${piId}/${iface}: failed${wifiFailureDetail(result) ? ' - ' + wifiFailureDetail(result) : ''}`);
