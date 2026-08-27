@@ -6,6 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=root
+Environment=PYTHONUNBUFFERED=1
 WorkingDirectory=__PI_AGENT_DIR__
 ExecStart=__VENV_DIR__/bin/python __PI_AGENT_DIR__/pi_agent.py
 Restart=on-failure

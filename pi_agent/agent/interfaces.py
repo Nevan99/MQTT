@@ -74,15 +74,50 @@ class InterfacesMixin:
                 interfaces.append(m.group(1))
         return interfaces
 
+    async def _bulk_interface_addrs(self):
+        """Every interface's addresses in one `ip -o addr show` call, bucketed
+        by name into (ipv4, ipv6) - what get_interface_details used to get by
+        calling get_interface_ip/get_interface_ipv6 per interface, which for
+        N interfaces was 2N separate subprocess spawns (plus the `ip link
+        show` itself) on every single call. That N+1 pattern, hit every 5-6s
+        by two independent background loops, was burning enough of the
+        agent's own CPU under real load to help starve the asyncio event
+        loop - see the MQTT operation-timeout bump in run() for the other
+        half of that story. One unfiltered listing costs the same as one
+        single-interface one and answers for every interface at once.
+
+        ipv6 keeps get_interface_ipv6's preference for a global address over
+        a link-local fe80::/10 one (present on every up interface regardless
+        of real IPv6 connectivity), falling back to link-local only if
+        that's all there is.
+        """
+        out = (await proc.run(["ip", "-o", "addr", "show"])).stdout
+        ipv4, ipv6_candidates = {}, {}
+        for line in out.splitlines():
+            m = re.match(r'^\d+:\s+([^:@\s]+)(?:@\S+)?\s+inet(6)?\s+([0-9a-fA-F.:]+)/\d+', line)
+            if not m:
+                continue
+            name, is_v6, addr = m.group(1), m.group(2), m.group(3)
+            if is_v6:
+                ipv6_candidates.setdefault(name, []).append(addr)
+            else:
+                ipv4.setdefault(name, addr)
+        ipv6 = {}
+        for name, addrs in ipv6_candidates.items():
+            global_addrs = [a for a in addrs if not a.startswith("fe80:")]
+            ipv6[name] = global_addrs[0] if global_addrs else addrs[0]
+        return ipv4, ipv6
+
     async def get_interface_details(self):
         """Per-interface details (excluding loopback): MAC, link state, MTU,
         and type (wifi/ethernet/other) - richer than get_network_interfaces's
         plain name list, for the list_interfaces UI table."""
-        out = (await proc.run(
-            ["ip", "-o", "link", "show"],
-        )).stdout
+        link_out, (ipv4_by_name, ipv6_by_name) = await asyncio.gather(
+            proc.run(["ip", "-o", "link", "show"]),
+            self._bulk_interface_addrs(),
+        )
         details = []
-        for line in out.splitlines():
+        for line in link_out.stdout.splitlines():
             head = re.match(r'^\d+:\s+([^:@]+)(?:@\S+)?:\s+<(\S*)>', line)
             if not head:
                 continue
@@ -111,10 +146,37 @@ class InterfacesMixin:
                 "type": "monitor" if link_type and "radiotap" in link_type else
                         ("wifi" if name.startswith(("wl", "wlan")) else
                          ("ethernet" if link_type == "ether" else link_type)),
-                "ip_address": await self.get_interface_ip(name),
-                "ipv6_address": await self.get_interface_ipv6(name),
+                "ip_address": ipv4_by_name.get(name),
+                "ipv6_address": ipv6_by_name.get(name),
             })
         return details
+
+    # Shared by _wifi_background_scan_loop (wifi_scan.py) and
+    # _interface_status_loop below - their timers are close enough (6s and
+    # 5s) that, left to call get_interface_details independently, they'd
+    # regularly pay for two full `ip link`/`ip addr` round trips within a
+    # second of each other for the exact same answer. Deliberately NOT used
+    # by command-triggered paths (list_interfaces, connect_wifi's own
+    # lookups, nearby_hotspots/_resolve_scan_interfaces) - those are one-shot
+    # user actions that want this instant's real state, not up to
+    # INTERFACE_DETAILS_CACHE_TTL_SECONDS stale.
+    INTERFACE_DETAILS_CACHE_TTL_SECONDS = 2
+
+    async def get_cached_interface_details(self):
+        loop = asyncio.get_running_loop()
+        if self._interface_details_cache is not None and \
+                loop.time() - self._interface_details_cache_at < self.INTERFACE_DETAILS_CACHE_TTL_SECONDS:
+            return self._interface_details_cache
+        async with self._interface_details_cache_lock:
+            # Re-check after acquiring: a racing caller may have just
+            # refreshed it while this one waited for the lock.
+            if self._interface_details_cache is not None and \
+                    loop.time() - self._interface_details_cache_at < self.INTERFACE_DETAILS_CACHE_TTL_SECONDS:
+                return self._interface_details_cache
+            details = await self.get_interface_details()
+            self._interface_details_cache = details
+            self._interface_details_cache_at = loop.time()
+            return details
 
     async def _wired_source_ip(self):
         """IP address of a connected wired interface, if any - used to bind
@@ -181,7 +243,7 @@ class InterfacesMixin:
         while True:
             await asyncio.sleep(self.INTERFACE_STATUS_INTERVAL_SECONDS)
             try:
-                details_list = await self.get_interface_details()
+                details_list = await self.get_cached_interface_details()
             except asyncio.CancelledError:
                 raise
             except Exception as e:

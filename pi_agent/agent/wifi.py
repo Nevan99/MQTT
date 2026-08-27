@@ -17,6 +17,17 @@ class WifiMixin:
     (_dispatch_wifi_command) shared with WifiScanMixin's background scan
     loop (both respect the same per-interface lock, see _wifi_lock_for)."""
 
+    # get_link_info's result is cached by interface as a side effect of
+    # every call, regardless of caller - see _cached_link_info. This is how
+    # long get_wifi_scan_detail's connected_bssid lookup (wifi_scan.py) is
+    # willing to trust a status-loop-populated entry before falling back to
+    # its own `iw dev link` call: comfortably above the 5s
+    # _interface_status_loop cadence (interfaces.py) that's the usual
+    # producer, so one full cycle's worth of scheduling jitter doesn't
+    # already force the fallback, but short enough that a real roam shows up
+    # in scan results within a cycle or two.
+    LINK_INFO_CACHE_MAX_AGE_SECONDS = 8
+
     async def get_link_info(self, interface):
         """Current association info for an interface (Pi acting as a station):
         connected BSSID, SSID, signal strength, bitrates, etc."""
@@ -28,7 +39,9 @@ class WifiMixin:
         )).stdout
 
         if out.startswith("Not connected"):
-            return {"interface": interface, "connected": False}
+            result = {"interface": interface, "connected": False}
+            self._cache_link_info(interface, result)
+            return result
 
         m = re.match(r'Connected to ([0-9a-fA-F:]+)', out)
         bssid = m.group(1) if m else None
@@ -39,7 +52,7 @@ class WifiMixin:
         rx_bitrate_m = re.search(r'rx bitrate:\s*([\d.]+)\s*MBit/s', out)
         tx_bitrate_m = re.search(r'tx bitrate:\s*([\d.]+)\s*MBit/s', out)
 
-        return {
+        result = {
             "interface": interface,
             "connected": True,
             "bssid": bssid,
@@ -55,6 +68,23 @@ class WifiMixin:
             "gateway": await self._default_gateway_for(interface),
             "raw_output": out.strip(),
         }
+        self._cache_link_info(interface, result)
+        return result
+
+    def _cache_link_info(self, interface, result):
+        self._link_info_cache[interface] = (asyncio.get_running_loop().time(), result)
+
+    def _cached_link_info(self, interface, max_age=LINK_INFO_CACHE_MAX_AGE_SECONDS):
+        """A recent get_link_info() result for `interface`, if one is fresh
+        enough - None on a cold or stale cache, leaving the fallback to the
+        caller (see get_wifi_scan_detail)."""
+        cached = self._link_info_cache.get(interface)
+        if cached is None:
+            return None
+        cached_at, result = cached
+        if asyncio.get_running_loop().time() - cached_at > max_age:
+            return None
+        return result
 
     async def _default_gateway_for(self, interface):
         """This interface's gateway, checked in its own per-interface

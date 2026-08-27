@@ -166,6 +166,23 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
         # it ourselves.
         self._pending_results = []
 
+        # get_cached_interface_details()'s cache - see that method
+        # (interfaces.py). Shared between _wifi_background_scan_loop and
+        # _interface_status_loop so their independent ~5-6s timers don't
+        # each pay for their own `ip link`/`ip addr` round trip within a
+        # second of each other.
+        self._interface_details_cache = None
+        self._interface_details_cache_at = 0
+        self._interface_details_cache_lock = asyncio.Lock()
+
+        # get_link_info()'s cache - see _cache_link_info/_cached_link_info
+        # (wifi.py). interface -> (cached_at, result); populated as a side
+        # effect of every get_link_info call regardless of caller, read by
+        # get_wifi_scan_detail's connected_bssid lookup so it doesn't have
+        # to fire its own `iw dev link` when _interface_status_loop already
+        # asked the same question moments ago.
+        self._link_info_cache = {}
+
     # --- MQTT plumbing ---------------------------------------------------
 
     async def publish(self, topic, payload, qos=1, retain=False):
@@ -508,6 +525,15 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
                     protocol=aiomqtt.ProtocolVersion.V311,
                     clean_session=True,
                     keepalive=30,
+                    # Default is 10s (aiomqtt.Client's `timeout`), which this
+                    # Pi's own CPU contention (wifi scans/connects across 4
+                    # radios, plus this box doubling as an interactive
+                    # desktop) can occasionally outrun even though the
+                    # broker acks in milliseconds - see the "Operation timed
+                    # out" publish failures that motivated this. Kept below
+                    # `keepalive` so a genuinely dead connection still gets
+                    # caught before this would.
+                    timeout=20,
                     will=aiomqtt.Will(self.status_topic, payload=b"offline", qos=1, retain=True),
                     bind_address=bind_address,
                 ) as client:

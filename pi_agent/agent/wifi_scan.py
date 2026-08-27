@@ -214,6 +214,47 @@ class WifiScanMixin:
         return None
 
     _OUI_FILE_CANDIDATES = ("/usr/share/ieee-data/oui.txt", "/var/lib/ieee-data/oui.txt")
+    # prefix (6 hex chars, no separators) -> vendor name. None until first
+    # use, then built once and shared by every interface/instance for the
+    # rest of the process's life - see _build_oui_index/_oui_vendor.
+    _oui_index = None
+
+    @classmethod
+    def _build_oui_index(cls):
+        """Parses oui.txt's `10-E9-92   (hex)   Vendor Name` lines into a
+        prefix->vendor dict, once.
+
+        _oui_vendor used to re-open this file and linear-scan it - all
+        214k+ lines, worst case - for every single BSSID in every scan
+        result, with no cache and no `await` anywhere in the loop, so it ran
+        fully synchronously on the event loop. A profile of the agent
+        pegged at ~50% CPU showed 90% of samples inside this one function:
+        with several radios each seeing a few dozen APs every scan cycle,
+        that's dozens of full-file scans blocking the loop back to back -
+        long enough to starve the MQTT client past its own operation
+        timeout and drop the connection, which is what actually caused the
+        "goes offline every few seconds" symptom this was all chasing.
+        (It also never returned a match: the lookup key stripped the BSSID
+        down to bare hex with no separators, but every line in the file
+        keeps the dashes, so `line.startswith(prefix)` could never be True
+        - a full scan for nothing, every time.)
+        """
+        index = {}
+        for path in cls._OUI_FILE_CANDIDATES:
+            try:
+                with open(path, encoding="utf-8", errors="ignore") as f:
+                    for line in f:
+                        if "(hex)" not in line:
+                            continue
+                        prefix, _, vendor = line.partition("(hex)")
+                        prefix = prefix.strip().replace("-", "")
+                        if len(prefix) == 6:
+                            index[prefix] = vendor.strip()
+            except OSError:
+                continue
+            if index:
+                break
+        return index
 
     @classmethod
     def _oui_vendor(cls, bssid):
@@ -221,16 +262,10 @@ class WifiScanMixin:
         `ieee-data` package's oui.txt if it happens to be installed. Not
         every Pi will have it - callers should treat a None company as
         "unknown", not "open" (e.g. a hidden/locally-administered MAC)."""
+        if cls._oui_index is None:
+            cls._oui_index = cls._build_oui_index()
         prefix = bssid.upper().replace(":", "")[:6]
-        for path in cls._OUI_FILE_CANDIDATES:
-            try:
-                with open(path, encoding="utf-8", errors="ignore") as f:
-                    for line in f:
-                        if line.startswith(prefix) and "(hex)" in line:
-                            return line.split("(hex)", 1)[1].strip()
-            except OSError:
-                continue
-        return None
+        return cls._oui_index.get(prefix)
 
     def _parse_scan_bss_block(self, block, connected_bssid):
         lines = block.splitlines()
@@ -477,11 +512,22 @@ class WifiScanMixin:
         if ret.returncode != 0:
             return {"interface": interface, "error": (ret.stderr or ret.stdout).strip()}
 
-        link_out = (await proc.run(
-            ["iw", "dev", interface, "link"], timeout=10,
-        )).stdout
-        link_m = re.match(r'Connected to ([0-9a-fA-F:]+)', link_out)
-        connected_bssid = link_m.group(1).lower() if link_m else None
+        # _interface_status_loop (interfaces.py) already asks this same
+        # question - "what's this interface connected to" - on its own ~5s
+        # timer and caches the answer (see _cache_link_info). Reusing that
+        # here saves a second `iw dev link` spawn on the same interface
+        # within the same few seconds; a cold/stale cache (right after
+        # startup, or a mode switch that just made this interface scannable)
+        # falls back to asking directly, same as before this cache existed.
+        cached_link = self._cached_link_info(interface)
+        if cached_link is not None:
+            connected_bssid = (cached_link.get("bssid") or "").lower() or None
+        else:
+            link_out = (await proc.run(
+                ["iw", "dev", interface, "link"], timeout=10,
+            )).stdout
+            link_m = re.match(r'Connected to ([0-9a-fA-F:]+)', link_out)
+            connected_bssid = link_m.group(1).lower() if link_m else None
 
         blocks = re.split(r'^BSS ', ret.stdout, flags=re.MULTILINE)[1:]
         networks = [n for n in (self._parse_scan_bss_block(b, connected_bssid) for b in blocks) if n]
@@ -614,7 +660,16 @@ class WifiScanMixin:
     # interval does still cost is the radio going off-channel to probe,
     # which eats into throughput on an associated link - so this is set for
     # the freshness the "Wifi Info" popup wants, not pushed to the floor.
-    WIFI_BACKGROUND_SCAN_INTERVAL_SECONDS = 6
+    #
+    # Widened from 6s to 20s: this loop's own subprocess-spawn rate (trigger
+    # + dump + occasional link fallback, per scannable radio, every cycle)
+    # was a direct contributor to the CPU contention that was starving the
+    # asyncio event loop badly enough to blow the MQTT client's operation
+    # timeout and drop the connection (see run()'s `timeout=20` and the
+    # get_cached_interface_details/get_cached_link_info dedup - this is the
+    # remaining, cheapest lever on top of those). Costs the "Wifi Info"
+    # popup up to 20s staleness instead of 6s.
+    WIFI_BACKGROUND_SCAN_INTERVAL_SECONDS = 20
 
     async def _wifi_background_scan_loop(self):
         while True:
@@ -626,7 +681,7 @@ class WifiScanMixin:
                 # frontend's own name-based isWifiInterface() check, which
                 # decides whether the "Nearby Hotspot" button even exists.
                 wifi_interfaces = [
-                    d["name"] for d in await self.get_interface_details()
+                    d["name"] for d in await self.get_cached_interface_details()
                     if d["name"].startswith("wl") and self.is_scannable(d)
                 ]
             except asyncio.CancelledError:
