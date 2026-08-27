@@ -13,6 +13,20 @@ let tcSteps = [];
 let tcActiveRunId = null;
 let tcRunPollTimer = null;
 
+// Pagination is server-side (GET /testcases?offset=&limit=, total in the
+// X-Total-Count header) - tcList only ever holds the page on screen, so
+// nothing here may assume it contains every testcase.
+let tcPage = 0;
+let tcPageSize = 25;
+let tcTotal = 0;
+
+// Ids ticked in the table's checkbox column. A Set of ids rather than a
+// per-row flag because it deliberately survives paging: tick three rows on
+// page 1, page forward, tick two more, and Delete acts on all five. The
+// header checkbox is "select all on this page" only, which is why it
+// reflects the current page's rows rather than this whole set.
+let tcSelected = new Set();
+
 function debounce(fn, ms) {
   let t;
   return (...args) => {
@@ -51,6 +65,11 @@ function showTcListView() {
   stopTcRunPolling();
   tcHideAllViews();
   document.getElementById('tcListView').classList.remove('hidden');
+  // Entering the tab starts clean: a selection carried over from a previous
+  // visit would arm the bulk toolbar against rows the operator can no longer
+  // see, and page 3 of a stale result set is rarely where they meant to be.
+  tcClearSelection();
+  tcPage = 0;
   loadTestcases();
 }
 
@@ -86,6 +105,14 @@ function showTcRunHistoryView() {
 
 // --- list -----------------------------------------------------------------
 
+// Filters narrow the whole result set, not just the visible page, so a
+// changed filter has to go back to page 1 - staying on page 3 of a set that
+// just shrank to 12 rows would show an empty table.
+function reloadTestcasesFromFirstPage() {
+  tcPage = 0;
+  loadTestcases();
+}
+
 async function loadTestcases() {
   const q = document.getElementById('tcSearchInput').value.trim();
   const tag = document.getElementById('tcTagFilterInput').value.trim();
@@ -93,10 +120,28 @@ async function loadTestcases() {
     const params = new URLSearchParams();
     if (q) params.set('q', q);
     if (tag) params.set('tag', tag);
+    params.set('offset', tcPage * tcPageSize);
+    params.set('limit', tcPageSize);
     const res = await apiFetch(`${API}/testcases?${params}`);
     if (!res.ok) return;
     tcList = await res.json();
+    // Absent only if something upstream strips the header; falling back to
+    // the page length keeps the pager coherent (single page) rather than
+    // rendering "1-25 of 0".
+    const total = Number(res.headers.get('X-Total-Count'));
+    tcTotal = Number.isFinite(total) && total >= 0 ? total : tcList.length;
+
+    // A page can empty out under us - the last row deleted, or a filter
+    // narrowing the set - in which case step back rather than showing an
+    // empty table with pages still listed after it.
+    if (!tcList.length && tcPage > 0 && tcTotal > 0) {
+      tcPage = Math.max(0, Math.ceil(tcTotal / tcPageSize) - 1);
+      await loadTestcases();
+      return;
+    }
     renderTcTable();
+    renderTcPager();
+    tcRenderBulkBar();
   } catch {
     // backend unreachable; keep last known list
   }
@@ -105,11 +150,13 @@ async function loadTestcases() {
 function renderTcTable() {
   const body = document.getElementById('tcTableBody');
   if (!tcList.length) {
-    body.innerHTML = '<tr><td colspan="7" class="pi-log-empty">no testcases yet</td></tr>';
+    body.innerHTML = '<tr><td colspan="8" class="pi-log-empty">no testcases yet</td></tr>';
+    tcSyncSelectAllCheckbox();
     return;
   }
   body.innerHTML = tcList.map(t => `
-    <tr>
+    <tr class="${tcSelected.has(t.id) ? 'tc-row-selected' : ''}" data-id="${t.id}">
+      <td class="tc-check-col"><input type="checkbox" class="tc-row-check" data-id="${t.id}" ${tcSelected.has(t.id) ? 'checked' : ''}></td>
       <td>${t.name}</td>
       <td>${(t.tags || []).join(', ')}</td>
       <td>${t.status}</td>
@@ -129,6 +176,208 @@ function renderTcTable() {
   body.querySelectorAll('.tc-edit-btn').forEach(btn => btn.addEventListener('click', () => openEditTestcase(btn.dataset.id)));
   body.querySelectorAll('.tc-dup-btn').forEach(btn => btn.addEventListener('click', () => duplicateTestcase(btn.dataset.id)));
   body.querySelectorAll('.tc-delete-btn').forEach(btn => btn.addEventListener('click', () => deleteTestcase(btn.dataset.id)));
+  body.querySelectorAll('.tc-row-check').forEach(cb => cb.addEventListener('change', () => {
+    const id = Number(cb.dataset.id);
+    if (cb.checked) tcSelected.add(id); else tcSelected.delete(id);
+    cb.closest('tr').classList.toggle('tc-row-selected', cb.checked);
+    tcSyncSelectAllCheckbox();
+    tcRenderBulkBar();
+  }));
+  tcSyncSelectAllCheckbox();
+}
+
+// --- selection + bulk toolbar --------------------------------------------
+
+function tcPageIds() {
+  return tcList.map(t => t.id);
+}
+
+// Header checkbox tracks only the rows on screen (it is "select all on this
+// page"), and shows indeterminate when the page is partly selected.
+function tcSyncSelectAllCheckbox() {
+  const all = document.getElementById('tcSelectAll');
+  if (!all) return;
+  const ids = tcPageIds();
+  const selectedHere = ids.filter(id => tcSelected.has(id)).length;
+  all.checked = ids.length > 0 && selectedHere === ids.length;
+  all.indeterminate = selectedHere > 0 && selectedHere < ids.length;
+}
+
+function tcRenderBulkBar() {
+  const n = tcSelected.size;
+  document.getElementById('tcBulkCount').textContent =
+    n ? `${n} selected` : 'none selected';
+  ['tcBulkRunBtn', 'tcBulkDuplicateBtn', 'tcBulkTagBtn', 'tcBulkExportBtn', 'tcBulkDeleteBtn']
+    .forEach(id => { document.getElementById(id).disabled = n === 0; });
+}
+
+function tcClearSelection() {
+  tcSelected.clear();
+  tcRenderBulkBar();
+}
+
+function tcSelectedIds() {
+  return [...tcSelected];
+}
+
+// --- pager ---------------------------------------------------------------
+
+// CDRouter-style: a range summary, First/Previous, numbered pages, then
+// Next/Last. Page numbers are windowed around the current page so a large
+// set doesn't render a hundred buttons.
+function renderTcPager() {
+  const el = document.getElementById('tcPager');
+  const pageCount = Math.max(1, Math.ceil(tcTotal / tcPageSize));
+  if (tcTotal === 0) {
+    el.innerHTML = '';
+    return;
+  }
+  const first = tcPage * tcPageSize + 1;
+  const last = Math.min(tcTotal, first + tcList.length - 1);
+
+  const windowSize = 5;
+  let start = Math.max(0, tcPage - Math.floor(windowSize / 2));
+  const end = Math.min(pageCount, start + windowSize);
+  start = Math.max(0, end - windowSize);
+
+  const numbered = [];
+  for (let p = start; p < end; p++) {
+    numbered.push(
+      `<button type="button" class="tc-pager-page${p === tcPage ? ' tc-pager-current' : ''}" data-page="${p}">${p + 1}</button>`
+    );
+  }
+
+  el.innerHTML = `
+    <span class="tc-pager-range">${first}-${last} of ${tcTotal} testcase${tcTotal === 1 ? '' : 's'}</span>
+    <button type="button" data-page="0" ${tcPage === 0 ? 'disabled' : ''}>First</button>
+    <button type="button" data-page="${tcPage - 1}" ${tcPage === 0 ? 'disabled' : ''}>Previous</button>
+    ${numbered.join('')}
+    <button type="button" data-page="${tcPage + 1}" ${tcPage >= pageCount - 1 ? 'disabled' : ''}>Next</button>
+    <button type="button" data-page="${pageCount - 1}" ${tcPage >= pageCount - 1 ? 'disabled' : ''}>Last</button>
+    <select id="tcPageSizeSelect" class="tc-pager-size" title="Rows per page">
+      ${[10, 25, 50, 100].map(n => `<option value="${n}" ${n === tcPageSize ? 'selected' : ''}>${n} / page</option>`).join('')}
+    </select>
+  `;
+
+  el.querySelectorAll('button[data-page]').forEach(btn => btn.addEventListener('click', () => {
+    const p = Number(btn.dataset.page);
+    if (p < 0 || p >= pageCount || p === tcPage) return;
+    tcPage = p;
+    loadTestcases();
+  }));
+  document.getElementById('tcPageSizeSelect').addEventListener('change', (e) => {
+    tcPageSize = Number(e.target.value) || 25;
+    tcPage = 0;
+    loadTestcases();
+  });
+}
+
+// --- bulk actions --------------------------------------------------------
+
+async function tcBulkPost(path, body, failLabel) {
+  const res = await apiFetch(`${API}/testcases/bulk/${path}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`${failLabel}: ${res.status} ${await res.text()}`);
+  return res.json();
+}
+
+async function bulkRunSelected() {
+  const ids = tcSelectedIds();
+  if (!ids.length) return;
+  if (!confirm(`Start ${ids.length} testcase run${ids.length === 1 ? '' : 's'}?`)) return;
+  try {
+    const runs = await tcBulkPost('run', { ids }, 'Failed to start runs');
+    tcClearSelection();
+    // One selection, several independent runs - there is no single run view
+    // to land on, so show the history (where they all appear) unless it was
+    // really just one, which behaves exactly like the row's own Run button.
+    if (runs.length === 1) openRunView(runs[0].id);
+    else showTcRunHistoryView();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+async function bulkDuplicateSelected() {
+  const ids = tcSelectedIds();
+  if (!ids.length) return;
+  try {
+    await tcBulkPost('duplicate', { ids }, 'Failed to duplicate');
+    tcClearSelection();
+    await loadTestcases();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+async function bulkDeleteSelected() {
+  const ids = tcSelectedIds();
+  if (!ids.length) return;
+  if (!confirm(`Delete ${ids.length} testcase${ids.length === 1 ? '' : 's'}? This cannot be undone.`)) return;
+  try {
+    await tcBulkPost('delete', { ids }, 'Failed to delete');
+    tcClearSelection();
+    await loadTestcases();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+// Fetched rather than linked: every /testcases route is behind a Bearer
+// token (see apiFetch), which a plain <a download> would not send.
+async function bulkExportSelected() {
+  const ids = tcSelectedIds();
+  if (!ids.length) return;
+  try {
+    const res = await apiFetch(`${API}/testcases/bulk/export?ids=${ids.join(',')}`);
+    if (!res.ok) { alert(`Failed to export: ${res.status} ${await res.text()}`); return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = (res.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/)?.[1] || 'testcases.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert(`Failed to export: ${err.message}`);
+  }
+}
+
+function openTcBulkTagModal() {
+  if (!tcSelected.size) return;
+  const n = tcSelected.size;
+  document.getElementById('tcBulkTagTarget').textContent =
+    `${n} testcase${n === 1 ? '' : 's'} selected`;
+  document.getElementById('tcBulkTagInput').value = '';
+  document.getElementById('tcBulkTagMode').value = 'add';
+  document.getElementById('tcBulkTagOverlay').classList.remove('hidden');
+}
+
+function closeTcBulkTagModal() {
+  document.getElementById('tcBulkTagOverlay').classList.add('hidden');
+}
+
+async function applyTcBulkTag() {
+  const ids = tcSelectedIds();
+  if (!ids.length) return;
+  const tags = document.getElementById('tcBulkTagInput').value
+    .split(',').map(s => s.trim()).filter(Boolean);
+  const mode = document.getElementById('tcBulkTagMode').value;
+  if (!tags.length && mode !== 'set') {
+    alert('Enter at least one tag.');
+    return;
+  }
+  try {
+    await tcBulkPost('tag', { ids, tags, mode }, 'Failed to tag');
+    closeTcBulkTagModal();
+    tcClearSelection();
+    await loadTestcases();
+  } catch (err) {
+    alert(err.message);
+  }
 }
 
 async function duplicateTestcase(id) {
@@ -146,6 +395,9 @@ async function deleteTestcase(id) {
   try {
     const res = await apiFetch(`${API}/testcases/${id}`, { method: 'DELETE' });
     if (!res.ok) { alert(`Failed to delete: ${res.status} ${await res.text()}`); return; }
+    // Drop it from the selection too, or the bulk toolbar keeps counting a
+    // row that no longer exists.
+    tcSelected.delete(Number(id));
     await loadTestcases();
   } catch (err) {
     alert(`Failed to delete: ${err.message}`);
@@ -558,8 +810,27 @@ document.getElementById('tcRunHistoryBackBtn').addEventListener('click', showTcL
 document.getElementById('tcAddStepBtn').addEventListener('click', addTcStep);
 document.getElementById('tcSaveDraftBtn').addEventListener('click', () => saveTestcase('draft', false));
 document.getElementById('tcSaveRunBtn').addEventListener('click', () => saveTestcase('ready', true));
-document.getElementById('tcSearchInput').addEventListener('input', debounce(loadTestcases, 300));
-document.getElementById('tcTagFilterInput').addEventListener('input', debounce(loadTestcases, 300));
+document.getElementById('tcSearchInput').addEventListener('input', debounce(reloadTestcasesFromFirstPage, 300));
+document.getElementById('tcTagFilterInput').addEventListener('input', debounce(reloadTestcasesFromFirstPage, 300));
+
+document.getElementById('tcSelectAll').addEventListener('change', (e) => {
+  const ids = tcPageIds();
+  if (e.target.checked) ids.forEach(id => tcSelected.add(id));
+  else ids.forEach(id => tcSelected.delete(id));
+  renderTcTable();
+  tcRenderBulkBar();
+});
+document.getElementById('tcBulkRunBtn').addEventListener('click', bulkRunSelected);
+document.getElementById('tcBulkDuplicateBtn').addEventListener('click', bulkDuplicateSelected);
+document.getElementById('tcBulkTagBtn').addEventListener('click', openTcBulkTagModal);
+document.getElementById('tcBulkExportBtn').addEventListener('click', bulkExportSelected);
+document.getElementById('tcBulkDeleteBtn').addEventListener('click', bulkDeleteSelected);
+document.getElementById('tcBulkTagApplyBtn').addEventListener('click', applyTcBulkTag);
+document.getElementById('tcBulkTagCancelBtn').addEventListener('click', closeTcBulkTagModal);
+document.getElementById('tcBulkTagCloseBtn').addEventListener('click', closeTcBulkTagModal);
+document.getElementById('tcBulkTagOverlay').addEventListener('click', (e) => {
+  if (e.target.id === 'tcBulkTagOverlay') closeTcBulkTagModal();
+});
 
 // Reset to the list view (discarding any in-progress run view) whenever
 // this tab actually becomes the visible one - a click, a reload landing
@@ -575,5 +846,8 @@ document.getElementById('tcTagFilterInput').addEventListener('input', debounce(l
 // handled separately, in showPiDetail (detail-page.js).
 document.addEventListener('tabshown', (e) => {
   if (e.detail.viewId === 'testcases') showTcListView();
-  else closeTcEditorModal();
+  else {
+    closeTcEditorModal();
+    closeTcBulkTagModal();
+  }
 });

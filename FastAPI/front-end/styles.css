@@ -355,6 +355,27 @@
   .tc-editor-overlay.hidden { display: none; }
   .tc-editor-modal { max-width: 900px; max-height: 88vh; }
   .tc-editor-modal .wifi-info-modal-body { max-height: 80vh; }
+  .tc-bulk-tag-modal { max-width: 420px; }
+
+  /* Testcases bulk toolbar + checkbox column + pager. The toolbar is always
+     rendered rather than shown on first selection, so ticking a row doesn't
+     shift the table down under the pointer; its buttons carry [disabled]
+     instead (see tcRenderBulkBar in testcases-tab.js). */
+  .tc-bulk-bar { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.5rem; padding: 0.35rem 0.5rem; border: 1px solid #262626; border-radius: 4px; background: #161616; }
+  .tc-bulk-count { flex: 1 1 auto; font-size: 0.8rem; color: #888; }
+  .tc-bulk-bar button { font-size: 0.8rem; padding: 0.25rem 0.6rem; }
+  .tc-bulk-bar button[disabled] { opacity: 0.4; cursor: not-allowed; }
+  .tc-bulk-danger:not([disabled]) { color: #e06c6c; }
+
+  .tc-check-col { width: 1.6rem; }
+  .tc-row-selected > td { background: #1b2430; }
+
+  .tc-pager { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; margin-top: 0.6rem; font-size: 0.8rem; color: #888; }
+  .tc-pager-range { flex: 1 1 auto; }
+  .tc-pager button { font-size: 0.78rem; padding: 0.2rem 0.5rem; }
+  .tc-pager button[disabled] { opacity: 0.4; cursor: not-allowed; }
+  .tc-pager button.tc-pager-current { border-color: #4a7ab8; color: #cfe1f7; }
+  .tc-pager-size { font-size: 0.78rem; padding: 0.15rem 0.3rem; }
 
   /* Testsuites: no tab/section of its own - the list is a permanent panel
      inside the Testcases tab (.ts-list-panel above); editor/run/run-history

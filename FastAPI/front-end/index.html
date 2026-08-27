@@ -151,12 +151,29 @@
         <button type="button" id="tcRunHistoryBtn" style="flex: 0 0 auto;">Run History</button>
         <button type="button" id="tcNewBtn" style="flex: 0 0 auto;">+ New Testcase</button>
       </div>
+
+      <!-- Bulk toolbar: acts on the checkbox column below. Always present so
+           the table doesn't shift when a row is ticked; its buttons are
+           disabled until something is selected (see tcRenderBulkBar). -->
+      <div class="tc-bulk-bar">
+        <span id="tcBulkCount" class="tc-bulk-count">none selected</span>
+        <button type="button" id="tcBulkRunBtn">Run</button>
+        <button type="button" id="tcBulkDuplicateBtn">Duplicate</button>
+        <button type="button" id="tcBulkTagBtn">Tag&hellip;</button>
+        <button type="button" id="tcBulkExportBtn">Export</button>
+        <button type="button" id="tcBulkDeleteBtn" class="tc-bulk-danger">Delete&hellip;</button>
+      </div>
+
       <table>
         <thead>
-          <tr><th>Name</th><th>Tags</th><th>Status</th><th>Steps</th><th>Author</th><th>Updated</th><th></th></tr>
+          <tr>
+            <th class="tc-check-col"><input type="checkbox" id="tcSelectAll" title="Select all on this page"></th>
+            <th>Name</th><th>Tags</th><th>Status</th><th>Steps</th><th>Author</th><th>Updated</th><th></th>
+          </tr>
         </thead>
         <tbody id="tcTableBody"></tbody>
       </table>
+      <div id="tcPager" class="tc-pager"></div>
     </div>
   </div>
 
@@ -180,6 +197,34 @@
     </table>
   </div>
 </section>
+
+<!-- Bulk tag dialog for the Testcases table's toolbar. Its own small popup
+     rather than a prompt() because it needs both the tags and what to do
+     with them (add/remove/replace) - see bulkTagTestcases. -->
+<div id="tcBulkTagOverlay" class="wifi-info-overlay tc-editor-overlay hidden">
+  <div class="wifi-info-modal tc-bulk-tag-modal">
+    <div class="wifi-info-modal-header">
+      <span>Tag selected testcases</span>
+      <span class="wifi-info-modal-status hint"></span>
+      <button type="button" class="icon-btn" id="tcBulkTagCloseBtn" title="Close">&times;</button>
+    </div>
+    <div class="wifi-info-modal-body">
+      <div class="hint" id="tcBulkTagTarget" style="margin-bottom: 0.5rem;"></div>
+      <label>Tags (comma separated)</label>
+      <input type="text" id="tcBulkTagInput" class="field" placeholder="e.g. wifi roaming, nightly">
+      <label>Apply as</label>
+      <select id="tcBulkTagMode" class="field">
+        <option value="add">Add to existing tags</option>
+        <option value="remove">Remove from existing tags</option>
+        <option value="set">Replace all tags</option>
+      </select>
+      <div class="row" style="margin-top: 1rem; gap: 0.5rem;">
+        <button type="button" id="tcBulkTagApplyBtn">Apply</button>
+        <button type="button" id="tcBulkTagCancelBtn">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <div id="tcEditorOverlay" class="wifi-info-overlay tc-editor-overlay hidden">
   <div class="wifi-info-modal tc-editor-modal">

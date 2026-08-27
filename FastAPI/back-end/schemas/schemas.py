@@ -101,6 +101,20 @@ class TestCaseOut(TestCaseRequest):
     updated_at: datetime
 
 
+class TestCaseBulkRequest(BaseModel):
+    """Ids selected in the Testcases table's checkbox column, for the bulk
+    toolbar's Run/Duplicate/Delete actions."""
+    ids: list[int] = []
+
+
+class TestCaseBulkTagRequest(TestCaseBulkRequest):
+    """Bulk tag edit. `mode` decides what happens to each testcase's existing
+    tags: "add" merges (the common case - tagging a batch without disturbing
+    what they already carry), "remove" subtracts, "set" replaces outright."""
+    tags: list[str] = []
+    mode: str = "add"
+
+
 class TestRunOut(BaseModel):
     id: int
     testcase_id: int

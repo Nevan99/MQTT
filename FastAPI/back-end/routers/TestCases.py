@@ -3,12 +3,15 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlmodel import Session, select
 
 from database.database import get_session, get_session_direct
 from database.models import TestCase, TestRun, Command
-from schemas.schemas import TestCaseRequest, TestCaseOut, TestRunOut, CommandRequest
+from schemas.schemas import (
+    TestCaseRequest, TestCaseOut, TestRunOut, CommandRequest,
+    TestCaseBulkRequest, TestCaseBulkTagRequest,
+)
 from service.mqtt_service import mqtt_service
 from service.auth import get_current_user
 from routers.Commands import _dispatch
@@ -41,13 +44,35 @@ def _run_to_out(r: TestRun) -> TestRunOut:
 
 
 @router.get("", response_model=list[TestCaseOut])
-def list_testcases(q: str = "", tag: str = "", session: Session = Depends(get_session)):
+def list_testcases(
+    response: Response,
+    q: str = "",
+    tag: str = "",
+    offset: int = 0,
+    limit: int = 0,
+    session: Session = Depends(get_session),
+):
+    """Testcases matching the filters, newest-updated first.
+
+    Paginated via offset/limit, with the *unpaginated* match count returned
+    in the X-Total-Count header - the table's pager needs "of 64" as well as
+    the 25 rows it's showing, and a body that carried both would change this
+    endpoint's shape for its other caller (the testsuite editor's testcase
+    picker, which wants every testcase and no slicing). limit=0 means "no
+    limit", which is what that caller keeps getting.
+    """
     testcases = session.exec(select(TestCase).order_by(TestCase.updated_at.desc())).all()
     if q:
         ql = q.lower()
         testcases = [t for t in testcases if ql in t.name.lower() or ql in t.description.lower()]
     if tag:
         testcases = [t for t in testcases if tag in t.tags]
+
+    response.headers["X-Total-Count"] = str(len(testcases))
+    if limit > 0:
+        testcases = testcases[offset:offset + limit]
+    elif offset:
+        testcases = testcases[offset:]
     return [_testcase_to_out(t) for t in testcases]
 
 
@@ -82,6 +107,136 @@ def get_run(run_id: int, session: Session = Depends(get_session)):
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
     return _run_to_out(run)
+
+
+# --- bulk actions --------------------------------------------------------
+# Back the Testcases table's checkbox toolbar. Also declared ahead of
+# /{testcase_id} so "bulk" isn't matched as a testcase id.
+#
+# Ids that no longer exist are skipped rather than 404ing the whole call: a
+# selection is a snapshot of what the table showed, and someone else
+# deleting one of those rows in between shouldn't fail the other 24.
+
+def _testcases_by_ids(session: Session, ids: list[int]) -> list[TestCase]:
+    """Selected testcases, in the order the ids were given, skipping any
+    that have since been deleted."""
+    found = (session.get(TestCase, i) for i in dict.fromkeys(ids))
+    return [t for t in found if t is not None]
+
+
+@router.post("/bulk/run", response_model=list[TestRunOut])
+def bulk_run_testcases(req: TestCaseBulkRequest, session: Session = Depends(get_session)):
+    """Start one independent run per selected testcase.
+
+    Deliberately not a single combined run: each testcase keeps its own
+    stop_on_failure/repeat_count and its own row in the run history, exactly
+    as if each had been launched from its own row button. They run
+    concurrently, one background thread each, the same way _run_testcase is
+    already started from run_testcase below."""
+    runs = []
+    for testcase in _testcases_by_ids(session, req.ids):
+        run = TestRun(
+            testcase_id=testcase.id, testcase_name=testcase.name,
+            stop_on_failure=testcase.stop_on_failure, repeat_count=testcase.repeat_count,
+            steps_json=testcase.steps_json,
+        )
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+        threading.Thread(target=_run_testcase, args=(run.id,), daemon=True).start()
+        runs.append(_run_to_out(run))
+    return runs
+
+
+@router.post("/bulk/duplicate", response_model=list[TestCaseOut])
+def bulk_duplicate_testcases(req: TestCaseBulkRequest, session: Session = Depends(get_session)):
+    copies = []
+    for src in _testcases_by_ids(session, req.ids):
+        copy = TestCase(
+            name=f"{src.name} (copy)", description=src.description, tags_json=src.tags_json,
+            author=src.author, status="draft", stop_on_failure=src.stop_on_failure,
+            repeat_count=src.repeat_count, steps_json=src.steps_json,
+        )
+        session.add(copy)
+        copies.append(copy)
+    session.commit()
+    for copy in copies:
+        session.refresh(copy)
+    return [_testcase_to_out(c) for c in copies]
+
+
+@router.post("/bulk/tag", response_model=list[TestCaseOut])
+def bulk_tag_testcases(req: TestCaseBulkTagRequest, session: Session = Depends(get_session)):
+    if req.mode not in ("add", "remove", "set"):
+        raise HTTPException(status_code=400, detail="mode must be add, remove or set")
+
+    updated = []
+    for testcase in _testcases_by_ids(session, req.ids):
+        if req.mode == "set":
+            tags = list(dict.fromkeys(req.tags))
+        elif req.mode == "add":
+            # dict.fromkeys rather than a set: tag order is what the table
+            # renders, so it should stay stable instead of reshuffling on
+            # every bulk edit.
+            tags = list(dict.fromkeys([*testcase.tags, *req.tags]))
+        else:
+            drop = set(req.tags)
+            tags = [t for t in testcase.tags if t not in drop]
+        testcase.tags_json = json.dumps(tags)
+        testcase.updated_at = datetime.now(timezone.utc)
+        session.add(testcase)
+        updated.append(testcase)
+    session.commit()
+    for testcase in updated:
+        session.refresh(testcase)
+    return [_testcase_to_out(t) for t in updated]
+
+
+@router.post("/bulk/delete")
+def bulk_delete_testcases(req: TestCaseBulkRequest, session: Session = Depends(get_session)):
+    deleted = []
+    for testcase in _testcases_by_ids(session, req.ids):
+        deleted.append(testcase.id)
+        session.delete(testcase)
+    session.commit()
+    return {"deleted": deleted, "requested": len(set(req.ids))}
+
+
+@router.get("/bulk/export")
+def bulk_export_testcases(ids: str = "", session: Session = Depends(get_session)):
+    """Selected testcases as a downloadable JSON file.
+
+    `ids` is comma-separated to keep this a plain link the browser can
+    follow (the toolbar's Export is an <a href>, not a fetch - so the
+    download goes through the browser's own handling rather than needing a
+    blob round-trip). Empty means every testcase."""
+    try:
+        wanted = [int(i) for i in ids.split(",") if i.strip()]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="ids must be comma-separated integers")
+
+    if wanted:
+        testcases = _testcases_by_ids(session, wanted)
+    else:
+        testcases = session.exec(select(TestCase).order_by(TestCase.updated_at.desc())).all()
+
+    # Exported without ids/timestamps: this is a definition to import
+    # elsewhere, not a row to restore in place - carrying an id would invite
+    # an import that silently overwrites an unrelated local testcase.
+    payload = [
+        {
+            "name": t.name, "description": t.description, "tags": t.tags, "author": t.author,
+            "status": t.status, "stop_on_failure": t.stop_on_failure,
+            "repeat_count": t.repeat_count, "steps": t.steps,
+        }
+        for t in testcases
+    ]
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    return Response(
+        content=json.dumps(payload, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="testcases-{stamp}.json"'},
+    )
 
 
 @router.get("/{testcase_id}", response_model=TestCaseOut)
