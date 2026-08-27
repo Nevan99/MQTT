@@ -418,6 +418,23 @@
   .tc-expect-value-wrap.hidden { visibility: hidden; }
   .tc-expect-custom .tc-expect-field { flex: 1 1 auto; }
 
+  /* Interface param in a testcase step: an all/selected mode picker plus the
+     Action panel's own multi-select dropdown (.iface-dropdown, mounted by
+     renderTcStepParamFields) when "Selected" is chosen. */
+  .tc-iface-param { display: flex; flex-direction: column; gap: 0.3rem; }
+  .tc-iface-pick.hidden { display: none; }
+  .tc-iface-param .iface-dropdown { width: 100%; }
+
+  /* Loops: contiguous step ranges repeated as a block. */
+  .tc-loop-row { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; padding: 0.35rem 0.5rem; border: 1px solid #262626; border-radius: 4px; background: #161616; margin-bottom: 0.35rem; }
+  .tc-step-body .tc-loop-row label, .tc-loop-row label { margin: 0; font-size: 0.75rem; color: #888; }
+  .tc-loop-name { font-size: 0.75rem; font-weight: 600; color: #7fb0e8; flex: 0 0 auto; }
+  .tc-loop-row .field { padding: 0.2rem 0.4rem; font-size: 0.78rem; }
+  .tc-loop-row .tc-loop-from, .tc-loop-row .tc-loop-to { max-width: 12rem; }
+  .tc-loop-row .tc-loop-count { width: 4rem; }
+  .tc-loop-row .tc-loop-remove { margin-left: auto; }
+  .tc-step-loop-badge { font-size: 0.68rem; color: #7fb0e8; border: 1px solid #2c4a6e; border-radius: 3px; padding: 0.05rem 0.3rem; flex: 0 0 auto; }
+
   /* Per-field check outcomes on a run's entry. */
   .tc-run-checks { margin: 0.3rem 0; display: flex; flex-direction: column; gap: 0.15rem; }
   .tc-run-check { display: flex; gap: 0.4rem; align-items: baseline; font-size: 0.76rem; flex-wrap: wrap; }
