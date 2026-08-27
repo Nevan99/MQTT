@@ -422,11 +422,35 @@ def _pi_interfaces(pi_id: str) -> list:
 
 
 def _resolve_iface_value(value, pi_id: str) -> list:
+    """This Pi's share of an interface param, in any of the shapes a step can
+    carry it:
+
+      "*"                              every radio this Pi reports
+      {"pi01": [...], "pi03": [...]}   per-Pi selection - only this Pi's entry
+      ["wlan1", "wlan2"]               those names on every targeted Pi
+      "wlan1"                          one name (the original single-select)
+
+    The dict form is what the editor writes for a step targeting several Pis,
+    and is the only one that can say "pi01's wlan1 but not pi03's". The list
+    and string forms are kept because steps saved earlier use them.
+    """
     if value == ALL_INTERFACES:
         return _pi_interfaces(pi_id)
+    if isinstance(value, dict):
+        return [v for v in (value.get(pi_id) or []) if v]
     if isinstance(value, list):
         return [v for v in value if v]
     return [value] if value else []
+
+
+def _selection_omits_pi(value, pi_id: str) -> bool:
+    """True when a per-Pi selection simply has nothing for this Pi.
+
+    Distinguishes "you didn't pick anything here" from "you asked for every
+    radio and this Pi reports none" - the first is the selection working as
+    written and is skipped, the second is a real problem and fails the step.
+    Only the dict form can express the former."""
+    return isinstance(value, dict) and not (value.get(pi_id) or [])
 
 
 def _expand_interface_dispatches(params: dict, pi_id: str):
@@ -442,9 +466,13 @@ def _expand_interface_dispatches(params: dict, pi_id: str):
       multi-interface selection fans out into one command per interface -
       "connect these three radios" is three connects, not one.
 
-    Returns (list_of_params, resolved_interfaces). An empty list means the
-    step resolved to no interfaces at all, which the caller reports rather
-    than silently sending nothing.
+    Whichever shape the param holds, _resolve_iface_value reduces it to this
+    Pi's own list first - so a per-Pi map yields different interfaces per
+    target, which is the whole point of it.
+
+    Returns (list_of_params, resolved_interfaces). An empty list means this
+    Pi resolved to no interfaces; the caller decides whether that is a skip
+    (nothing was selected for it) or a failure - see _selection_omits_pi.
     """
     if "interfaces" in params:
         resolved = _resolve_iface_value(params["interfaces"], pi_id)
@@ -538,11 +566,18 @@ def _run_step_once(step: dict, step_index: int = 0, iteration: int = 1) -> dict:
     for pi_id in targets:
         dispatches, resolved_ifaces = _expand_interface_dispatches(params, pi_id)
         if not dispatches:
+            asked = params.get("interfaces", params.get("interface"))
+            if _selection_omits_pi(asked, pi_id):
+                # Targeted by the step but deliberately given no interfaces -
+                # not a failure, just nothing to do here. Logged so a step
+                # that silently does nothing on a Pi is still visible.
+                log.append(_log_line(
+                    "debug", f"{label} -> {pi_id}: no interfaces selected for this Pi, skipping"))
+                continue
             log.append(_log_line(
                 "error",
                 f"{label} -> {pi_id}: no interfaces resolved "
-                f"(step asked for {params.get('interfaces', params.get('interface'))!r}; "
-                f"this Pi reports {_pi_interfaces(pi_id) or 'none'})",
+                f"(step asked for {asked!r}; this Pi reports {_pi_interfaces(pi_id) or 'none'})",
             ))
             entries.append({"pi_id": pi_id, "status": "failed",
                             "error": "no interfaces resolved for this Pi"})
@@ -581,6 +616,18 @@ def _run_step_once(step: dict, step_index: int = 0, iteration: int = 1) -> dict:
                 label, pi_id, iface, out, expected, entry_started, log, entries,
             ) is False:
                 step_passed = False
+
+    # Every target skipped for having nothing selected means the step ran no
+    # commands at all. Without this it would report "passed" on the strength
+    # of having done nothing, which is the worst possible way to report it.
+    if not entries:
+        log.append(_log_line(
+            "error",
+            f"{label}: no commands sent - none of the {len(targets)} targeted Pi(s) "
+            f"had any interface selected",
+        ))
+        entries.append({"status": "failed", "error": "no interfaces selected on any targeted Pi"})
+        step_passed = False
 
     completed_at = datetime.now(timezone.utc)
     log.append(_log_line(

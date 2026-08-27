@@ -527,51 +527,66 @@ async function deleteTestcase(id) {
 // fleet whose members don't have matching interface names.
 const TC_ALL_INTERFACES = '*';
 
-// Interfaces offerable for this step: the union across whichever Pis its
-// target resolves to. A union rather than one Pi's list because a step can
-// target several at once - and it's only the pick list, so a name one Pi
-// lacks simply fails on that Pi, where the real answer is.
-function tcInterfacesForStep(step) {
+// The Pi objects this step's target resolves to, in fleet order.
+function tcTargetPis(step) {
   const target = step.target;
-  let candidates;
   if (target === 'multicast') {
     const ids = step.target_pi_ids || [];
-    candidates = pis.filter(p => ids.includes(p.pi_id));
-  } else if (target && target !== 'all') {
-    candidates = pis.filter(p => p.pi_id === target);
-  } else {
-    candidates = pis;
+    return pis.filter(p => ids.includes(p.pi_id));
   }
-  const names = new Set();
-  candidates.forEach(p => {
-    const list = (p.metadata && Array.isArray(p.metadata.interfaces)) ? p.metadata.interfaces : [];
-    list.forEach(i => names.add(i));
-  });
-  return [...names].sort();
+  if (target && target !== 'all') return pis.filter(p => p.pi_id === target);
+  return pis;
 }
 
-// A saved interface param as (mode, list). '*' is "all"; anything else is an
-// explicit selection - a bare string included, which is what steps saved
-// before multi-select carried.
-function tcIfaceValueToMode(saved) {
-  if (saved === TC_ALL_INTERFACES) return { mode: 'all', selected: [] };
-  if (Array.isArray(saved)) return { mode: 'select', selected: saved };
-  if (typeof saved === 'string' && saved) return { mode: 'select', selected: [saved] };
-  return { mode: 'all', selected: [] };
+function tcPiInterfaces(p) {
+  return (p.metadata && Array.isArray(p.metadata.interfaces)) ? p.metadata.interfaces : [];
+}
+
+// Whether the param is on "all" or an explicit selection. '*' is all;
+// everything else (map, list, bare string) is a selection.
+function tcIfaceMode(saved) {
+  return saved === TC_ALL_INTERFACES || saved === undefined || saved === null ? 'all' : 'select';
+}
+
+// What's selected for one specific Pi, from whichever shape the value has.
+// A flat list or bare string predates per-Pi selection and meant "these names
+// on every Pi", so it pre-ticks here on any Pi that actually has them - which
+// is what it was doing at run time anyway, minus the impossible ones.
+function tcIfaceSelectedForPi(saved, pi) {
+  const own = tcPiInterfaces(pi);
+  if (Array.isArray(saved)) return saved.filter(i => own.includes(i));
+  if (saved && typeof saved === 'object') return (saved[pi.pi_id] || []).filter(i => own.includes(i));
+  if (typeof saved === 'string' && saved && saved !== TC_ALL_INTERFACES) {
+    return own.includes(saved) ? [saved] : [];
+  }
+  return [];
+}
+
+// Flattened selection, for the single-Pi case where a plain list is stored.
+function tcIfaceFlatSelection(saved) {
+  if (Array.isArray(saved)) return saved;
+  if (saved && typeof saved === 'object') {
+    return [...new Set(Object.values(saved).flat())];
+  }
+  if (typeof saved === 'string' && saved && saved !== TC_ALL_INTERFACES) return [saved];
+  return [];
 }
 
 function renderTcStepParamFields(container, step) {
   const fields = ACTION_PARAMS[step.action] || [];
-  const interfaces = tcInterfacesForStep(step);
+  const targetPis = tcTargetPis(step);
   container.innerHTML = fields.map(f => {
     const saved = step.params[f.name];
     if (f.type === 'interface') {
-      const { mode } = tcIfaceValueToMode(saved);
+      const mode = tcIfaceMode(saved);
+      const allLabel = targetPis.length === 1
+        ? `All interfaces on ${targetPis[0].pi_id}`
+        : 'All interfaces on each target Pi';
       return `
         <label>${f.label}</label>
         <div class="tc-iface-param" data-param="${f.name}">
           <select class="field tc-iface-mode">
-            <option value="all" ${mode === 'all' ? 'selected' : ''}>All interfaces on the target Pi</option>
+            <option value="all" ${mode === 'all' ? 'selected' : ''}>${allLabel}</option>
             <option value="select" ${mode === 'select' ? 'selected' : ''}>Selected interfaces…</option>
           </select>
           <div class="tc-iface-pick${mode === 'all' ? ' hidden' : ''}"></div>
@@ -600,22 +615,83 @@ function renderTcStepParamFields(container, step) {
     return `<label>${f.label}</label><input class="field tc-step-param" data-param="${f.name}" type="${f.type}" value="${value}">`;
   }).join('') || '<div class="hint">this action has no parameters</div>';
 
-  // The multi-select itself is the Action panel's own widget (fleet-table.js's
-  // buildIfaceDropdown/setDropdownOptions - it already has the "Select all"
-  // row and the one-open-at-a-time behaviour), mounted here rather than
-  // reimplemented so both places pick interfaces identically.
   container.querySelectorAll('.tc-iface-param').forEach(wrap => {
-    const { selected } = tcIfaceValueToMode(step.params[wrap.dataset.param]);
+    const saved = step.params[wrap.dataset.param];
     const pick = wrap.querySelector('.tc-iface-pick');
-    const box = buildIfaceDropdown();
-    setDropdownOptions(box, interfaces, selected);
-    pick.appendChild(box);
+
+    if (targetPis.length === 1) {
+      // One Pi: the Action panel's own widget (fleet-table.js's
+      // buildIfaceDropdown/setDropdownOptions, which already has the "Select
+      // all" row), listing exactly that Pi's radios. Stored as a plain list -
+      // no need to name the Pi when there's only one, and a flat list stays
+      // correct if the target is later pointed at a different Pi.
+      const box = buildIfaceDropdown();
+      setDropdownOptions(box, tcPiInterfaces(targetPis[0]), tcIfaceFlatSelection(saved));
+      pick.appendChild(box);
+    } else {
+      // Several Pis: one section each, listing only that Pi's own radios, so
+      // pi01's wlan1 and pi03's wlan1 are separately checkable and an
+      // interface a Pi doesn't have can't be picked for it at all. Stored as
+      // a {pi_id: [...]} map - see _resolve_iface_value.
+      pick.innerHTML = targetPis.length
+        ? targetPis.map(p => {
+            const own = tcPiInterfaces(p);
+            const sel = tcIfaceSelectedForPi(saved, p);
+            return `
+              <div class="tc-iface-pi" data-pi="${p.pi_id}">
+                <label class="tc-iface-pi-hdr">
+                  <input type="checkbox" class="tc-iface-pi-all">
+                  <span class="tc-iface-pi-name">${p.pi_id}</span>
+                  <span class="hint">${own.length ? `${own.length} interface(s)` : 'none reported'}</span>
+                </label>
+                <div class="tc-iface-pi-list">
+                  ${own.map(i => `
+                    <label class="iface-row">
+                      <input type="checkbox" value="${i}" ${sel.includes(i) ? 'checked' : ''}>${i}
+                    </label>
+                  `).join('') || '<div class="hint">no interfaces reported for this Pi</div>'}
+                </div>
+              </div>`;
+          }).join('')
+        : '<div class="hint">no Pis targeted - pick some above</div>';
+
+      pick.querySelectorAll('.tc-iface-pi').forEach(section => {
+        const all = section.querySelector('.tc-iface-pi-all');
+        const items = [...section.querySelectorAll('.tc-iface-pi-list input[type="checkbox"]')];
+        const sync = () => {
+          const n = items.filter(cb => cb.checked).length;
+          all.checked = items.length > 0 && n === items.length;
+          all.indeterminate = n > 0 && n < items.length;
+        };
+        items.forEach(cb => cb.addEventListener('change', sync));
+        all.addEventListener('change', () => {
+          items.forEach(cb => { cb.checked = all.checked; });
+          all.indeterminate = false;
+        });
+        sync();
+      });
+    }
 
     const modeSel = wrap.querySelector('.tc-iface-mode');
     modeSel.addEventListener('change', () => {
       pick.classList.toggle('hidden', modeSel.value === 'all');
     });
   });
+}
+
+// The step as the card currently reads, for the renderers that need to know
+// the action/target/params without a full syncTcStepsFromDom. target_pi_ids
+// matters as much as target here: the interface picker is per-Pi, so
+// "multicast" alone doesn't say which Pis to show.
+function tcStepShapeFromCard(card, overrides = {}) {
+  return {
+    action: card.querySelector('.tc-step-action').value,
+    target: card.querySelector('.tc-step-target').value,
+    target_pi_ids: [...card.querySelectorAll('.tc-step-multicast-list input[type="checkbox"]:checked')]
+      .map(cb => cb.value),
+    params: collectTcStepParams(card),
+    ...overrides,
+  };
 }
 
 function collectTcStepParams(card) {
@@ -631,6 +707,22 @@ function collectTcStepParams(card) {
       params[name] = TC_ALL_INTERFACES;
       return;
     }
+
+    const sections = [...wrap.querySelectorAll('.tc-iface-pi')];
+    if (sections.length) {
+      // Per-Pi map. Pis with nothing ticked are left out entirely rather than
+      // given an empty list - that absence is what tells the backend to skip
+      // them instead of failing the step (see _selection_omits_pi).
+      const map = {};
+      sections.forEach(section => {
+        const chosen = [...section.querySelectorAll('.tc-iface-pi-list input[type="checkbox"]:checked')]
+          .map(cb => cb.value);
+        if (chosen.length) map[section.dataset.pi] = chosen;
+      });
+      if (Object.keys(map).length) params[name] = map;
+      return;
+    }
+
     const box = wrap.querySelector('.iface-dropdown');
     const selected = box ? getDropdownSelected(box) : [];
     // Left on "Selected" with nothing ticked: omitted rather than sent as an
@@ -855,7 +947,7 @@ function wireTcStepCard(i) {
   // needs to react to them immediately.
   card.querySelector('.tc-step-action').addEventListener('change', (e) => {
     const action = e.target.value;
-    renderTcStepParamFields(paramsContainer, { action, target: card.querySelector('.tc-step-target').value, params: {} });
+    renderTcStepParamFields(paramsContainer, tcStepShapeFromCard(card, { action, params: {} }));
     // The expected section is per-action too (each action returns different
     // fields), so it has to be rebuilt here as well. Whatever was ticked for
     // the previous action is dropped deliberately: those fields don't exist
@@ -863,11 +955,19 @@ function wireTcStepCard(i) {
     // assert on something that can never be there.
     renderTcStepExpectedFields(expectedContainer, { action, expected: null });
   });
+  // The interface picker is built from the step's *resolved target Pis*, so
+  // it has to be rebuilt whenever the target changes - including when the
+  // multicast checkboxes change, which alter which Pis are targeted without
+  // touching the target select itself.
+  const rerenderParams = () => {
+    renderTcStepParamFields(paramsContainer, tcStepShapeFromCard(card));
+  };
   card.querySelector('.tc-step-target').addEventListener('change', (e) => {
-    const target = e.target.value;
-    card.querySelector('.tc-step-multicast-list').classList.toggle('hidden', target !== 'multicast');
-    renderTcStepParamFields(paramsContainer, { action: card.querySelector('.tc-step-action').value, target, params: collectTcStepParams(card) });
+    card.querySelector('.tc-step-multicast-list').classList.toggle('hidden', e.target.value !== 'multicast');
+    rerenderParams();
   });
+  card.querySelectorAll('.tc-step-multicast-list input[type="checkbox"]')
+    .forEach(cb => cb.addEventListener('change', rerenderParams));
   card.querySelector('.tc-step-expected-toggle').addEventListener('change', (e) => {
     card.querySelector('.tc-step-expected').classList.toggle('hidden', !e.target.checked);
   });

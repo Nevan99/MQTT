@@ -425,6 +425,16 @@
   .tc-iface-pick.hidden { display: none; }
   .tc-iface-param .iface-dropdown { width: 100%; }
 
+  /* Multi-Pi target: one section per Pi, each listing only that Pi's own
+     radios, so same-named interfaces on different Pis stay separately
+     checkable. */
+  .tc-iface-pi { border: 1px solid #262626; border-radius: 4px; background: #141414; margin-bottom: 0.35rem; }
+  .tc-step-body .tc-iface-pi-hdr { display: flex; align-items: center; gap: 0.4rem; margin: 0; padding: 0.3rem 0.5rem; border-bottom: 1px solid #222; font-size: 0.8rem; color: #ddd; cursor: pointer; }
+  .tc-iface-pi-name { font-weight: 600; }
+  .tc-iface-pi-hdr .hint { margin: 0 0 0 auto; font-size: 0.72rem; }
+  .tc-iface-pi-list { display: flex; flex-wrap: wrap; gap: 0.2rem 0.75rem; padding: 0.35rem 0.5rem; }
+  .tc-step-body .tc-iface-pi-list label.iface-row { display: flex; align-items: center; gap: 0.3rem; margin: 0; font-size: 0.78rem; color: #ccc; cursor: pointer; }
+
   /* Loops: contiguous step ranges repeated as a block. */
   .tc-loop-row { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; padding: 0.35rem 0.5rem; border: 1px solid #262626; border-radius: 4px; background: #161616; margin-bottom: 0.35rem; }
   .tc-step-body .tc-loop-row label, .tc-loop-row label { margin: 0; font-size: 0.75rem; color: #888; }
