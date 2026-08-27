@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlmodel import Session, select
 
 from database.database import get_session, get_session_direct
-from database.models import TestCase, TestRun, Command
+from database.models import TestCase, TestRun, Command, Pi
 from schemas.schemas import (
     TestCaseRequest, TestCaseOut, TestRunOut, CommandRequest,
     TestCaseBulkRequest, TestCaseBulkTagRequest,
@@ -404,6 +404,69 @@ def _resolve_targets(step: dict) -> list:
     return [target]
 
 
+# Sentinel an interface param carries to mean "whatever radios this Pi has",
+# resolved per-Pi at run time rather than frozen into the testcase. A step
+# saved with it keeps working when a Pi gains or loses a dongle, and one step
+# covers a fleet whose members don't all have the same interface names.
+ALL_INTERFACES = "*"
+
+
+def _pi_interfaces(pi_id: str) -> list:
+    """This Pi's known interfaces, as last reported by its registration (see
+    routers/Pis - metadata_dict["interfaces"])."""
+    with get_session_direct() as session:
+        pi = session.get(Pi, pi_id)
+        if pi is None:
+            return []
+        return [i for i in pi.metadata_dict.get("interfaces", []) if i]
+
+
+def _resolve_iface_value(value, pi_id: str) -> list:
+    if value == ALL_INTERFACES:
+        return _pi_interfaces(pi_id)
+    if isinstance(value, list):
+        return [v for v in value if v]
+    return [value] if value else []
+
+
+def _expand_interface_dispatches(params: dict, pi_id: str):
+    """One params dict per command this step should send to `pi_id`.
+
+    Which key is present decides the shape, matching what pi_agent accepts:
+
+      "interfaces" (nearby_hotspots, connect_hotspot) takes a list in a
+      single command - the agent scans/connects them together on purpose, so
+      "all" widens that one command's list rather than making several.
+
+      "interface" (connect_wifi, link_info, ...) takes exactly one, so a
+      multi-interface selection fans out into one command per interface -
+      "connect these three radios" is three connects, not one.
+
+    Returns (list_of_params, resolved_interfaces). An empty list means the
+    step resolved to no interfaces at all, which the caller reports rather
+    than silently sending nothing.
+    """
+    if "interfaces" in params:
+        resolved = _resolve_iface_value(params["interfaces"], pi_id)
+        if not resolved:
+            return [], []
+        return [{**params, "interfaces": resolved}], resolved
+
+    if "interface" in params:
+        value = params["interface"]
+        # A plain single name is passed through untouched - no lookup, so a
+        # step naming an interface the backend hasn't seen reported still
+        # dispatches (and fails on the Pi, where the real answer is).
+        if isinstance(value, str) and value != ALL_INTERFACES:
+            return [dict(params)], [value]
+        resolved = _resolve_iface_value(value, pi_id)
+        if not resolved:
+            return [], []
+        return [{**params, "interface": i} for i in resolved], resolved
+
+    return [dict(params)], []
+
+
 def _log_line(level: str, message: str) -> dict:
     return {"ts": datetime.now(timezone.utc).isoformat(), "level": level, "message": message}
 
@@ -473,69 +536,51 @@ def _run_step_once(step: dict, step_index: int = 0, iteration: int = 1) -> dict:
         log.append(_log_line("debug", f"{label}: params {json.dumps(params, default=str)}"))
 
     for pi_id in targets:
-        entry_started = datetime.now(timezone.utc)
-        with get_session_direct() as session:
-            req = CommandRequest(action=action, params=dict(params))
-            try:
-                out = _dispatch(pi_id, req, session)
-                session.commit()
-            except Exception as e:
-                log.append(_log_line("error", f"{label} -> {pi_id}: dispatch failed: {e}"))
-                entries.append({
-                    "pi_id": pi_id, "status": "failed", "error": str(e),
-                    "dispatched_at": entry_started.isoformat(),
-                    "completed_at": datetime.now(timezone.utc).isoformat(),
-                    "duration_ms": _elapsed_ms(entry_started),
-                })
-                step_passed = False
-                continue
-
-        log.append(_log_line("info", f"{label} -> {pi_id}: dispatched (command {out.command_id})"))
-        status, result = _await_command(out.command_id)
-        duration_ms = _elapsed_ms(entry_started)
-
-        if status == "timeout":
+        dispatches, resolved_ifaces = _expand_interface_dispatches(params, pi_id)
+        if not dispatches:
             log.append(_log_line(
                 "error",
-                f"{label} -> {pi_id}: no result after {COMMAND_TIMEOUT_SECONDS}s "
-                f"- giving up (command {out.command_id} may still be running on the Pi)",
+                f"{label} -> {pi_id}: no interfaces resolved "
+                f"(step asked for {params.get('interfaces', params.get('interface'))!r}; "
+                f"this Pi reports {_pi_interfaces(pi_id) or 'none'})",
             ))
-            entries.append({
-                "pi_id": pi_id, "command_id": out.command_id, "status": "timeout",
-                "command_status": "timeout",
-                "dispatched_at": entry_started.isoformat(),
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-                "duration_ms": duration_ms,
-            })
+            entries.append({"pi_id": pi_id, "status": "failed",
+                            "error": "no interfaces resolved for this Pi"})
             step_passed = False
             continue
 
-        log.append(_log_line(
-            "info" if status == "complete" else "error",
-            f"{label} -> {pi_id}: {status} in {duration_ms / 1000:.1f}s - {_result_summary(result)}",
-        ))
-
-        ok, reason, checks = _evaluate_expected(result, expected)
-        # One line per checked field rather than one for the step: with
-        # several fields asserted, "expectation NOT met" alone doesn't say
-        # which of them was wrong.
-        for c in checks:
+        if len(dispatches) > 1:
             log.append(_log_line(
-                "info" if c["passed"] else "error",
-                f"{label} -> {pi_id}: check {c['field'] or '<result>'} {c['op']} "
-                f"{c['value']!r} -> {'OK' if c['passed'] else 'FAIL'} (actual {c['actual']!r})",
-            ))
-        entry_status = "passed" if status == "complete" and ok else "failed"
-        if entry_status == "failed":
-            step_passed = False
-        entries.append({
-            "pi_id": pi_id, "command_id": out.command_id, "status": entry_status,
-            "command_status": status, "result": result, "reason": reason,
-            "expected": expected, "checks": checks,
-            "dispatched_at": entry_started.isoformat(),
-            "completed_at": datetime.now(timezone.utc).isoformat(),
-            "duration_ms": duration_ms,
-        })
+                "info", f"{label} -> {pi_id}: fanning out over {len(resolved_ifaces)} "
+                        f"interface(s): {', '.join(resolved_ifaces)}"))
+
+        for dispatch_params in dispatches:
+            # Which interface this particular command went to, for the entry
+            # label - the singular case has one per dispatch, the plural case
+            # carries the whole list in one.
+            iface = dispatch_params.get("interface") or dispatch_params.get("interfaces")
+            entry_started = datetime.now(timezone.utc)
+            with get_session_direct() as session:
+                req = CommandRequest(action=action, params=dict(dispatch_params))
+                try:
+                    out = _dispatch(pi_id, req, session)
+                    session.commit()
+                except Exception as e:
+                    log.append(_log_line("error", f"{label} -> {pi_id}/{iface}: dispatch failed: {e}"))
+                    entries.append({
+                        "pi_id": pi_id, "interface": iface, "status": "failed", "error": str(e),
+                        "dispatched_at": entry_started.isoformat(),
+                        "completed_at": datetime.now(timezone.utc).isoformat(),
+                        "duration_ms": _elapsed_ms(entry_started),
+                    })
+                    step_passed = False
+                    continue
+
+            log.append(_log_line("info", f"{label} -> {pi_id}/{iface}: dispatched (command {out.command_id})"))
+            if _run_one_dispatch(
+                label, pi_id, iface, out, expected, entry_started, log, entries,
+            ) is False:
+                step_passed = False
 
     completed_at = datetime.now(timezone.utc)
     log.append(_log_line(
@@ -557,6 +602,91 @@ def _run_step_once(step: dict, step_index: int = 0, iteration: int = 1) -> dict:
     }
 
 
+def _run_one_dispatch(label, pi_id, iface, out, expected, entry_started, log, entries):
+    """Waits on one dispatched command and appends its entry. Returns False
+    if it did not pass, so the caller can fail the whole step.
+
+    Split out of _run_step_once only because that function now has an extra
+    nesting level (target -> interface -> command); the logic is unchanged."""
+    who = f"{pi_id}/{iface}" if iface else str(pi_id)
+    status, result = _await_command(out.command_id)
+    duration_ms = _elapsed_ms(entry_started)
+
+    if status == "timeout":
+        log.append(_log_line(
+            "error",
+            f"{label} -> {who}: no result after {COMMAND_TIMEOUT_SECONDS}s "
+            f"- giving up (command {out.command_id} may still be running on the Pi)",
+        ))
+        entries.append({
+            "pi_id": pi_id, "interface": iface, "command_id": out.command_id,
+            "status": "timeout", "command_status": "timeout",
+            "dispatched_at": entry_started.isoformat(),
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "duration_ms": duration_ms,
+        })
+        return False
+
+    log.append(_log_line(
+        "info" if status == "complete" else "error",
+        f"{label} -> {who}: {status} in {duration_ms / 1000:.1f}s - {_result_summary(result)}",
+    ))
+
+    ok, reason, checks = _evaluate_expected(result, expected)
+    # One line per checked field rather than one for the step: with several
+    # fields asserted, "expectation NOT met" alone doesn't say which was wrong.
+    for c in checks:
+        log.append(_log_line(
+            "info" if c["passed"] else "error",
+            f"{label} -> {who}: check {c['field'] or '<result>'} {c['op']} "
+            f"{c['value']!r} -> {'OK' if c['passed'] else 'FAIL'} (actual {c['actual']!r})",
+        ))
+
+    entry_status = "passed" if status == "complete" and ok else "failed"
+    entries.append({
+        "pi_id": pi_id, "interface": iface, "command_id": out.command_id,
+        "status": entry_status, "command_status": status, "result": result,
+        "reason": reason, "expected": expected, "checks": checks,
+        "dispatched_at": entry_started.isoformat(),
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "duration_ms": duration_ms,
+    })
+    return entry_status == "passed"
+
+
+# --- loop groups ----------------------------------------------------------
+# Steps carry the loop with them (loop_group + loop_count) rather than the
+# testcase holding a separate list of ranges: it keeps everything inside the
+# existing steps_json, so no new column and no migration of the live
+# pi_fleet.db. A group is a *contiguous* run of steps sharing loop_group; the
+# count is taken from its first step.
+
+def _expand_step_plan(steps: list) -> list:
+    """(step, step_index, loop_group, loop_pass) in execution order.
+
+    Non-contiguous reuse of the same group name is treated as two separate
+    groups, each looping on its own - the editor only ever writes contiguous
+    ranges, and silently stitching distant steps together would be a
+    surprising way to interpret hand-edited JSON."""
+    plan = []
+    i, n = 0, len(steps)
+    while i < n:
+        group = steps[i].get("loop_group")
+        if not group:
+            plan.append((steps[i], i, None, None))
+            i += 1
+            continue
+        j = i
+        while j < n and steps[j].get("loop_group") == group:
+            j += 1
+        count = max(1, int(steps[i].get("loop_count") or 1))
+        for it in range(count):
+            for k in range(i, j):
+                plan.append((steps[k], k, group, it + 1))
+        i = j
+    return plan
+
+
 def _run_testcase(run_id: int):
     with get_session_direct() as session:
         run = session.get(TestRun, run_id)
@@ -570,10 +700,15 @@ def _run_testcase(run_id: int):
     overall_passed = True
     stopped = False
 
+    # Built once: loop groups expand into the flat execution order here, so
+    # the run loop below stays a straight walk and every step result can name
+    # which loop pass produced it.
+    plan = _expand_step_plan(steps)
+
     for pass_no in range(repeat_count):
         if stopped:
             break
-        for idx, step in enumerate(steps):
+        for step, idx, loop_group, loop_pass in plan:
             if stopped:
                 break
             for rep in range(max(1, step.get("repeat_count", 1))):
@@ -593,8 +728,11 @@ def _run_testcase(run_id: int):
                 # Which outer repeat of the whole testcase this belongs to -
                 # without it, repeat_count > 1 produces several identical-
                 # looking rows for the same step with nothing to tell them
-                # apart.
+                # apart. loop_group/loop_pass do the same job for a step
+                # inside a looped block.
                 step_result["pass_index"] = pass_no
+                step_result["loop_group"] = loop_group
+                step_result["loop_pass"] = loop_pass
                 if delay_log:
                     step_result["log"] = delay_log + step_result.get("log", [])
                 results.append(step_result)

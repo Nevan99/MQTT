@@ -43,7 +43,117 @@ const TC_ACTIONS = Object.keys(ACTION_PARAMS).filter(a => a !== 'set_interface_d
 const TC_EXPECTED_OPS = ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'contains', 'exists'];
 
 function newTcStep() {
-  return { action: TC_ACTIONS[0], target: 'all', target_pi_ids: [], params: {}, delay_before_seconds: 0, repeat_count: 1, expected: null };
+  return {
+    action: TC_ACTIONS[0], target: 'all', target_pi_ids: [], params: {},
+    delay_before_seconds: 0, repeat_count: 1, expected: null,
+    loop_group: null, loop_count: 1,
+  };
+}
+
+// --- loops ---------------------------------------------------------------
+// Edited as ranges ("repeat steps 2-4, three times") but *stored* on the
+// steps themselves as loop_group/loop_count, which is what the backend walks
+// (TestCases.py's _expand_step_plan). Keeping it inside steps_json avoids a
+// new column on the live pi_fleet.db; the range view is derived back from the
+// steps whenever the editor opens.
+
+let tcLoops = [];
+
+function tcLoopsFromSteps(steps) {
+  const loops = [];
+  let i = 0;
+  while (i < steps.length) {
+    const group = steps[i].loop_group;
+    if (!group) { i++; continue; }
+    let j = i;
+    while (j < steps.length && steps[j].loop_group === group) j++;
+    loops.push({ from: i, to: j - 1, count: Math.max(1, Number(steps[i].loop_count) || 1) });
+    i = j;
+  }
+  return loops;
+}
+
+// Stamps the range list back onto the steps, then re-derives it. The
+// round-trip is deliberate: overlapping ranges resolve by later-wins, and
+// re-deriving means the editor immediately shows what actually resulted
+// rather than a range list that disagrees with the steps it produced.
+function applyTcLoopsToSteps() {
+  tcSteps.forEach(s => { s.loop_group = null; s.loop_count = 1; });
+  tcLoops.forEach((loop, idx) => {
+    if (!tcSteps.length) return;
+    const from = Math.max(0, Math.min(Number(loop.from) || 0, tcSteps.length - 1));
+    const to = Math.max(from, Math.min(Number(loop.to) || 0, tcSteps.length - 1));
+    const count = Math.max(1, Number(loop.count) || 1);
+    const group = `L${idx + 1}`;
+    for (let i = from; i <= to; i++) {
+      tcSteps[i].loop_group = group;
+      tcSteps[i].loop_count = count;
+    }
+  });
+  tcLoops = tcLoopsFromSteps(tcSteps);
+}
+
+function tcStepOptionsHtml(selectedIndex) {
+  return tcSteps.map((s, i) =>
+    `<option value="${i}" ${i === selectedIndex ? 'selected' : ''}>${i + 1}. ${actionLabel(s.action)}</option>`
+  ).join('');
+}
+
+function renderTcLoops() {
+  const el = document.getElementById('tcLoopsList');
+  if (!tcSteps.length) {
+    el.innerHTML = '<div class="pi-log-empty">add steps first</div>';
+    return;
+  }
+  el.innerHTML = tcLoops.length
+    ? tcLoops.map((l, i) => `
+        <div class="tc-loop-row" data-index="${i}">
+          <span class="tc-loop-name">L${i + 1}</span>
+          <label>steps</label>
+          <select class="field tc-loop-from">${tcStepOptionsHtml(l.from)}</select>
+          <label>to</label>
+          <select class="field tc-loop-to">${tcStepOptionsHtml(l.to)}</select>
+          <label>&times;</label>
+          <input type="number" class="field tc-loop-count" min="1" value="${l.count}">
+          <button type="button" class="icon-btn tc-loop-remove" title="Remove loop">&#128465;</button>
+        </div>
+      `).join('')
+    : '<div class="pi-log-empty">no loops - each step runs once per pass</div>';
+
+  el.querySelectorAll('.tc-loop-row').forEach(row => {
+    const i = Number(row.dataset.index);
+    const commit = () => {
+      const from = Number(row.querySelector('.tc-loop-from').value);
+      let to = Number(row.querySelector('.tc-loop-to').value);
+      // A range can only run forwards; snap the end back rather than
+      // rejecting the pick.
+      if (to < from) { to = from; row.querySelector('.tc-loop-to').value = String(to); }
+      tcLoops[i] = { from, to, count: Math.max(1, Number(row.querySelector('.tc-loop-count').value) || 1) };
+      syncTcStepsFromDom();
+      applyTcLoopsToSteps();
+      renderTcSteps();          // refresh the per-step loop badges
+      renderTcLoops();
+    };
+    row.querySelector('.tc-loop-from').addEventListener('change', commit);
+    row.querySelector('.tc-loop-to').addEventListener('change', commit);
+    row.querySelector('.tc-loop-count').addEventListener('change', commit);
+    row.querySelector('.tc-loop-remove').addEventListener('click', () => {
+      syncTcStepsFromDom();
+      tcLoops.splice(i, 1);
+      applyTcLoopsToSteps();
+      renderTcSteps();
+      renderTcLoops();
+    });
+  });
+}
+
+function addTcLoop() {
+  if (!tcSteps.length) return;
+  syncTcStepsFromDom();
+  tcLoops.push({ from: 0, to: Math.min(1, tcSteps.length - 1), count: 2 });
+  applyTcLoopsToSteps();
+  renderTcSteps();
+  renderTcLoops();
 }
 
 // --- view switching ---------------------------------------------------
@@ -411,27 +521,61 @@ async function deleteTestcase(id) {
 // where the resolved Pi(s) aren't fixed until run time - it falls back to a
 // plain text field (the operator types the interface name directly, e.g.
 // "wlan0"), since there's no single Pi to source a dropdown from.
-function tcInterfacesForTarget(target) {
-  if (target === 'all' || target === 'multicast' || !target) return null;
-  const pi = pis.find(p => p.pi_id === target);
-  return (pi && pi.metadata && Array.isArray(pi.metadata.interfaces)) ? pi.metadata.interfaces : [];
+// The sentinel the backend expands per-Pi at run time (TestCases.py's
+// ALL_INTERFACES). Stored instead of a frozen list so "all interfaces" keeps
+// meaning that when a Pi gains or loses a dongle, and so one step can cover a
+// fleet whose members don't have matching interface names.
+const TC_ALL_INTERFACES = '*';
+
+// Interfaces offerable for this step: the union across whichever Pis its
+// target resolves to. A union rather than one Pi's list because a step can
+// target several at once - and it's only the pick list, so a name one Pi
+// lacks simply fails on that Pi, where the real answer is.
+function tcInterfacesForStep(step) {
+  const target = step.target;
+  let candidates;
+  if (target === 'multicast') {
+    const ids = step.target_pi_ids || [];
+    candidates = pis.filter(p => ids.includes(p.pi_id));
+  } else if (target && target !== 'all') {
+    candidates = pis.filter(p => p.pi_id === target);
+  } else {
+    candidates = pis;
+  }
+  const names = new Set();
+  candidates.forEach(p => {
+    const list = (p.metadata && Array.isArray(p.metadata.interfaces)) ? p.metadata.interfaces : [];
+    list.forEach(i => names.add(i));
+  });
+  return [...names].sort();
+}
+
+// A saved interface param as (mode, list). '*' is "all"; anything else is an
+// explicit selection - a bare string included, which is what steps saved
+// before multi-select carried.
+function tcIfaceValueToMode(saved) {
+  if (saved === TC_ALL_INTERFACES) return { mode: 'all', selected: [] };
+  if (Array.isArray(saved)) return { mode: 'select', selected: saved };
+  if (typeof saved === 'string' && saved) return { mode: 'select', selected: [saved] };
+  return { mode: 'all', selected: [] };
 }
 
 function renderTcStepParamFields(container, step) {
   const fields = ACTION_PARAMS[step.action] || [];
-  const interfaces = tcInterfacesForTarget(step.target);
+  const interfaces = tcInterfacesForStep(step);
   container.innerHTML = fields.map(f => {
     const saved = step.params[f.name];
     if (f.type === 'interface') {
-      if (interfaces === null) {
-        return `<label>${f.label}</label><input type="text" class="field tc-step-param" data-param="${f.name}" placeholder="interface name (e.g. wlan0)" value="${saved || ''}">`;
-      }
+      const { mode } = tcIfaceValueToMode(saved);
       return `
         <label>${f.label}</label>
-        <select class="field tc-step-param" data-param="${f.name}">
-          <option value="">(select interface)</option>
-          ${interfaces.map(i => `<option value="${i}" ${saved === i ? 'selected' : ''}>${i}</option>`).join('')}
-        </select>
+        <div class="tc-iface-param" data-param="${f.name}">
+          <select class="field tc-iface-mode">
+            <option value="all" ${mode === 'all' ? 'selected' : ''}>All interfaces on the target Pi</option>
+            <option value="select" ${mode === 'select' ? 'selected' : ''}>Selected interfaces…</option>
+          </select>
+          <div class="tc-iface-pick${mode === 'all' ? ' hidden' : ''}"></div>
+        </div>
       `;
     }
     if (f.type === 'password') {
@@ -455,6 +599,23 @@ function renderTcStepParamFields(container, step) {
     const value = saved !== undefined ? saved : (f.default !== undefined ? f.default : '');
     return `<label>${f.label}</label><input class="field tc-step-param" data-param="${f.name}" type="${f.type}" value="${value}">`;
   }).join('') || '<div class="hint">this action has no parameters</div>';
+
+  // The multi-select itself is the Action panel's own widget (fleet-table.js's
+  // buildIfaceDropdown/setDropdownOptions - it already has the "Select all"
+  // row and the one-open-at-a-time behaviour), mounted here rather than
+  // reimplemented so both places pick interfaces identically.
+  container.querySelectorAll('.tc-iface-param').forEach(wrap => {
+    const { selected } = tcIfaceValueToMode(step.params[wrap.dataset.param]);
+    const pick = wrap.querySelector('.tc-iface-pick');
+    const box = buildIfaceDropdown();
+    setDropdownOptions(box, interfaces, selected);
+    pick.appendChild(box);
+
+    const modeSel = wrap.querySelector('.tc-iface-mode');
+    modeSel.addEventListener('change', () => {
+      pick.classList.toggle('hidden', modeSel.value === 'all');
+    });
+  });
 }
 
 function collectTcStepParams(card) {
@@ -463,6 +624,19 @@ function collectTcStepParams(card) {
     const name = el.dataset.param;
     if (el.value === '') return;
     params[name] = el.type === 'number' ? Number(el.value) : el.value;
+  });
+  card.querySelectorAll('.tc-iface-param').forEach(wrap => {
+    const name = wrap.dataset.param;
+    if (wrap.querySelector('.tc-iface-mode').value === 'all') {
+      params[name] = TC_ALL_INTERFACES;
+      return;
+    }
+    const box = wrap.querySelector('.iface-dropdown');
+    const selected = box ? getDropdownSelected(box) : [];
+    // Left on "Selected" with nothing ticked: omitted rather than sent as an
+    // empty list, so the step reports a missing required param instead of
+    // quietly resolving to no interfaces.
+    if (selected.length) params[name] = selected;
   });
   return params;
 }
@@ -619,6 +793,7 @@ function tcStepCardHtml(step, i) {
     <div class="tc-step-card" data-index="${i}">
       <div class="tc-step-header">
         <span class="tc-step-num">#${i + 1}</span>
+        ${step.loop_group ? `<span class="tc-step-loop-badge" title="Repeats with loop ${step.loop_group}">${step.loop_group} &times;${step.loop_count}</span>` : ''}
         <select class="field tc-step-action">
           ${TC_ACTIONS.map(a => `<option value="${a}" ${a === step.action ? 'selected' : ''}>${actionLabel(a)}</option>`).join('')}
         </select>
@@ -730,16 +905,29 @@ function syncTcStepsFromDom() {
   });
 }
 
+// Adding, removing or reordering steps shifts the indices a loop range is
+// written in terms of, so the range list is re-derived from the (already
+// moved) steps afterwards and the loops panel redrawn. Because the group tag
+// travels on the step itself, a moved step keeps its membership and the
+// derived range follows it rather than silently pointing at whatever landed
+// on the old index.
+function tcAfterStepsChanged() {
+  tcLoops = tcLoopsFromSteps(tcSteps);
+  applyTcLoopsToSteps();
+  renderTcSteps();
+  renderTcLoops();
+}
+
 function addTcStep() {
   syncTcStepsFromDom();
   tcSteps.push(newTcStep());
-  renderTcSteps();
+  tcAfterStepsChanged();
 }
 
 function removeTcStep(i) {
   syncTcStepsFromDom();
   tcSteps.splice(i, 1);
-  renderTcSteps();
+  tcAfterStepsChanged();
 }
 
 function moveTcStep(i, dir) {
@@ -747,7 +935,7 @@ function moveTcStep(i, dir) {
   const j = i + dir;
   if (j < 0 || j >= tcSteps.length) return;
   [tcSteps[i], tcSteps[j]] = [tcSteps[j], tcSteps[i]];
-  renderTcSteps();
+  tcAfterStepsChanged();
 }
 
 // --- editor: open/save -------------------------------------------------
@@ -755,6 +943,7 @@ function moveTcStep(i, dir) {
 function openNewTestcase() {
   tcEditingId = null;
   tcSteps = [];
+  tcLoops = [];
   document.getElementById('tcEditorTitle').textContent = 'New Testcase';
   document.getElementById('tcName').value = '';
   document.getElementById('tcDescription').value = '';
@@ -763,6 +952,7 @@ function openNewTestcase() {
   document.getElementById('tcStopOnFailure').checked = true;
   document.getElementById('tcRepeatCount').value = 1;
   renderTcSteps();
+  renderTcLoops();
   openTcEditorModal();
 }
 
@@ -773,6 +963,9 @@ async function openEditTestcase(id) {
     const t = await res.json();
     tcEditingId = t.id;
     tcSteps = t.steps.map(s => ({ ...s, target_pi_ids: s.target_pi_ids || [] }));
+    // Range view derived from the steps' own loop_group tags - see
+    // tcLoopsFromSteps. A testcase saved before loops existed has none.
+    tcLoops = tcLoopsFromSteps(tcSteps);
     document.getElementById('tcEditorTitle').textContent = `Edit: ${t.name}`;
     document.getElementById('tcName').value = t.name;
     document.getElementById('tcDescription').value = t.description || '';
@@ -781,6 +974,7 @@ async function openEditTestcase(id) {
     document.getElementById('tcStopOnFailure').checked = t.stop_on_failure;
     document.getElementById('tcRepeatCount').value = t.repeat_count;
     renderTcSteps();
+    renderTcLoops();
     openTcEditorModal();
   } catch (err) {
     alert(`Failed to load testcase: ${err.message}`);
@@ -789,6 +983,8 @@ async function openEditTestcase(id) {
 
 function collectTestcaseFromForm() {
   syncTcStepsFromDom();
+  // Loop ranges live on the steps in the payload (loop_group/loop_count).
+  applyTcLoopsToSteps();
   const tags = document.getElementById('tcTags').value.split(',').map(s => s.trim()).filter(Boolean);
   return {
     name: document.getElementById('tcName').value.trim(),
@@ -1041,6 +1237,7 @@ document.getElementById('tcRunBackBtn').addEventListener('click', showTcListView
 document.getElementById('tcRunHistoryBtn').addEventListener('click', showTcRunHistoryView);
 document.getElementById('tcRunHistoryBackBtn').addEventListener('click', showTcListView);
 document.getElementById('tcAddStepBtn').addEventListener('click', addTcStep);
+document.getElementById('tcAddLoopBtn').addEventListener('click', addTcLoop);
 document.getElementById('tcSaveDraftBtn').addEventListener('click', () => saveTestcase('draft', false));
 document.getElementById('tcSaveRunBtn').addEventListener('click', () => saveTestcase('ready', true));
 document.getElementById('tcSearchInput').addEventListener('input', debounce(reloadTestcasesFromFirstPage, 300));

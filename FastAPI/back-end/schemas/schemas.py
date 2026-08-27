@@ -81,6 +81,14 @@ class TestCaseStep(BaseModel):
     params: dict[str, Any] = {}
     delay_before_seconds: float = 0
     repeat_count: int = 1
+    # Loop membership. A contiguous run of steps sharing loop_group repeats
+    # together loop_count times (taken from the group's first step) - see
+    # routers/TestCases._expand_step_plan. Carried on the step rather than as
+    # a separate range list on the testcase so it stays inside steps_json and
+    # needs no new column. repeat_count above is still the *single* step's own
+    # repeat, and applies within each loop pass.
+    loop_group: Optional[str] = None
+    loop_count: int = 1
     # A list: the step editor offers one checkable row per known result field
     # of the chosen action, so asserting on several at once (connected AND
     # ip_address AND signal_dbm) is the normal case rather than needing a
