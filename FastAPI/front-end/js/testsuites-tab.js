@@ -476,10 +476,10 @@ document.getElementById('tsAvailableSearchInput').addEventListener('input', debo
 // its own tab - loads alongside the testcase list whenever that tab
 // actually becomes visible (click, reload, Back/Forward - see showTabView
 // in detail-page.js), and every testsuite popup (editor/run/run history,
-// all of which live outside #testcases) closes on navigating to any other
+// all of which live outside #packages) closes on navigating to any other
 // tab so nothing is left floating over unrelated content.
 document.addEventListener('tabshown', (e) => {
-  if (e.detail.viewId === 'testcases') {
+  if (e.detail.viewId === 'packages') {
     loadTestsuites();
   } else {
     closeTsEditorModal();

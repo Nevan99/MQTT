@@ -325,24 +325,54 @@ _EXPECTED_OPS = {
 }
 
 
-def _evaluate_expected(result, expected):
-    """Returns (passed, reason). No expectation configured always passes -
-    the step still has to complete without erroring/timing out to be
-    considered passed at all (see _run_step_once)."""
+def _normalise_expectations(expected) -> list:
+    """The step's expectations as a list, whatever shape it was saved in.
+
+    The editor now sends one entry per result field the operator ticked, but
+    testcases saved before that carry a single bare object - accepted here
+    rather than migrated, so an old testcase keeps running unchanged."""
     if not expected:
-        return True, None
-    field = expected.get("field")
-    op = expected.get("op", "eq")
-    expected_value = expected.get("value")
-    actual = _get_dotted(result or {}, field)
-    fn = _EXPECTED_OPS.get(op)
-    if fn is None:
-        return False, f"unknown operator: {op}"
-    try:
-        ok = bool(fn(actual, expected_value))
-    except TypeError as e:
-        return False, f"comparison error: {e}"
-    return ok, None if ok else f"expected {field or '<result>'} {op} {expected_value!r}, got {actual!r}"
+        return []
+    if isinstance(expected, dict):
+        return [expected]
+    return [e for e in expected if e]
+
+
+def _evaluate_expected(result, expected):
+    """Returns (passed, reason, checks) - one check per expected field, each
+    recording what was wanted and what actually came back.
+
+    Every check must pass for the step to pass. `checks` is kept on the
+    entry and written to the log line by line, so a failed step names the
+    specific field that missed rather than just the first one: asserting
+    connected AND ip_address AND signal_dbm should tell you which of the
+    three was wrong.
+
+    No expectations configured always passes - the step still has to
+    complete without erroring or timing out to be considered passed at all
+    (see _run_step_once)."""
+    checks = []
+    for exp in _normalise_expectations(expected):
+        field = exp.get("field")
+        op = exp.get("op", "eq")
+        expected_value = exp.get("value")
+        actual = _get_dotted(result or {}, field)
+        fn = _EXPECTED_OPS.get(op)
+        if fn is None:
+            checks.append({"field": field, "op": op, "value": expected_value, "actual": actual,
+                           "passed": False, "reason": f"unknown operator: {op}"})
+            continue
+        try:
+            ok = bool(fn(actual, expected_value))
+            reason = None if ok else f"expected {field or '<result>'} {op} {expected_value!r}, got {actual!r}"
+        except TypeError as e:
+            ok, reason = False, f"comparison error on {field or '<result>'}: {e}"
+        checks.append({"field": field, "op": op, "value": expected_value, "actual": actual,
+                       "passed": ok, "reason": reason})
+
+    failed = [c for c in checks if not c["passed"]]
+    reason = "; ".join(c["reason"] for c in failed if c["reason"]) or None
+    return not failed, reason, checks
 
 
 def _await_command(command_id: str, timeout_seconds: float = COMMAND_TIMEOUT_SECONDS):
@@ -374,48 +404,157 @@ def _resolve_targets(step: dict) -> list:
     return [target]
 
 
-def _run_step_once(step: dict) -> dict:
+def _log_line(level: str, message: str) -> dict:
+    return {"ts": datetime.now(timezone.utc).isoformat(), "level": level, "message": message}
+
+
+def _elapsed_ms(since: datetime) -> int:
+    return int((datetime.now(timezone.utc) - since).total_seconds() * 1000)
+
+
+def _result_summary(result) -> str:
+    """One-line gist of a command result, for the step log.
+
+    The full payload is kept on the entry itself - this is the bit that goes
+    in the log stream, so it has to stay short enough to scan. Picks out the
+    fields that actually say what happened on a wifi action (connected /
+    ip_address / failure_reason and friends) and falls back to a truncated
+    dump for actions with no known shape."""
+    if result is None:
+        return "no result payload"
+    if not isinstance(result, dict):
+        return str(result)[:200]
+
+    interesting = ("connected", "disconnected", "ip_address", "ssid", "bssid",
+                   "interface", "applied", "failure_reason", "error")
+    parts = [f"{k}={result[k]!r}" for k in interesting if result.get(k) not in (None, "")]
+    if parts:
+        return ", ".join(parts)
+    dumped = json.dumps(result, default=str)
+    return dumped if len(dumped) <= 200 else dumped[:197] + "..."
+
+
+def _run_step_once(step: dict, step_index: int = 0, iteration: int = 1) -> dict:
     """Runs one step against every one of its resolved targets - one entry
     per target, each with its own dispatched command's result and pass/fail
     against the step's expected outcome. The step as a whole only passes if
-    every target's entry does."""
+    every target's entry does.
+
+    Every entry also carries its own timing and a `log` of what happened to
+    it (dispatch, outcome, expectation check), and the step carries the
+    merged stream. That detail is the point: a step that reports only
+    "failed" leaves you guessing whether the command was never dispatched,
+    timed out, came back with an error, or came back fine and simply missed
+    its expected value - which are four different problems.
+    """
     action = step.get("action")
     params = step.get("params") or {}
     expected = step.get("expected")
     entries = []
+    log = []
     step_passed = True
+    started_at = datetime.now(timezone.utc)
+    label = f"step {step_index + 1} '{action}'"
 
     targets = _resolve_targets(step)
     if not targets:
-        return {"action": action, "status": "failed", "entries": [{"status": "failed", "error": "no target resolved"}]}
+        log.append(_log_line("error", f"{label}: no target resolved (target={step.get('target')!r})"))
+        return {
+            "action": action, "status": "failed", "target": step.get("target"),
+            "params": params, "iteration": iteration,
+            "started_at": started_at.isoformat(),
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "duration_ms": 0, "log": log,
+            "entries": [{"status": "failed", "error": "no target resolved"}],
+        }
+
+    log.append(_log_line("info", f"{label} -> {len(targets)} target(s): {', '.join(map(str, targets))}"))
+    if params:
+        log.append(_log_line("debug", f"{label}: params {json.dumps(params, default=str)}"))
 
     for pi_id in targets:
+        entry_started = datetime.now(timezone.utc)
         with get_session_direct() as session:
             req = CommandRequest(action=action, params=dict(params))
             try:
                 out = _dispatch(pi_id, req, session)
                 session.commit()
             except Exception as e:
-                entries.append({"pi_id": pi_id, "status": "failed", "error": str(e)})
+                log.append(_log_line("error", f"{label} -> {pi_id}: dispatch failed: {e}"))
+                entries.append({
+                    "pi_id": pi_id, "status": "failed", "error": str(e),
+                    "dispatched_at": entry_started.isoformat(),
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "duration_ms": _elapsed_ms(entry_started),
+                })
                 step_passed = False
                 continue
 
+        log.append(_log_line("info", f"{label} -> {pi_id}: dispatched (command {out.command_id})"))
         status, result = _await_command(out.command_id)
+        duration_ms = _elapsed_ms(entry_started)
+
         if status == "timeout":
-            entries.append({"pi_id": pi_id, "command_id": out.command_id, "status": "timeout"})
+            log.append(_log_line(
+                "error",
+                f"{label} -> {pi_id}: no result after {COMMAND_TIMEOUT_SECONDS}s "
+                f"- giving up (command {out.command_id} may still be running on the Pi)",
+            ))
+            entries.append({
+                "pi_id": pi_id, "command_id": out.command_id, "status": "timeout",
+                "command_status": "timeout",
+                "dispatched_at": entry_started.isoformat(),
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "duration_ms": duration_ms,
+            })
             step_passed = False
             continue
 
-        ok, reason = _evaluate_expected(result, expected)
+        log.append(_log_line(
+            "info" if status == "complete" else "error",
+            f"{label} -> {pi_id}: {status} in {duration_ms / 1000:.1f}s - {_result_summary(result)}",
+        ))
+
+        ok, reason, checks = _evaluate_expected(result, expected)
+        # One line per checked field rather than one for the step: with
+        # several fields asserted, "expectation NOT met" alone doesn't say
+        # which of them was wrong.
+        for c in checks:
+            log.append(_log_line(
+                "info" if c["passed"] else "error",
+                f"{label} -> {pi_id}: check {c['field'] or '<result>'} {c['op']} "
+                f"{c['value']!r} -> {'OK' if c['passed'] else 'FAIL'} (actual {c['actual']!r})",
+            ))
         entry_status = "passed" if status == "complete" and ok else "failed"
         if entry_status == "failed":
             step_passed = False
         entries.append({
             "pi_id": pi_id, "command_id": out.command_id, "status": entry_status,
-            "result": result, "reason": reason,
+            "command_status": status, "result": result, "reason": reason,
+            "expected": expected, "checks": checks,
+            "dispatched_at": entry_started.isoformat(),
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "duration_ms": duration_ms,
         })
 
-    return {"action": action, "status": "passed" if step_passed else "failed", "entries": entries}
+    completed_at = datetime.now(timezone.utc)
+    log.append(_log_line(
+        "info" if step_passed else "error",
+        f"{label}: {'passed' if step_passed else 'failed'} "
+        f"({_elapsed_ms(started_at) / 1000:.1f}s total)",
+    ))
+    return {
+        "action": action,
+        "status": "passed" if step_passed else "failed",
+        "target": step.get("target"),
+        "params": params,
+        "iteration": iteration,
+        "started_at": started_at.isoformat(),
+        "completed_at": completed_at.isoformat(),
+        "duration_ms": _elapsed_ms(started_at),
+        "log": log,
+        "entries": entries,
+    }
 
 
 def _run_testcase(run_id: int):
@@ -431,19 +570,33 @@ def _run_testcase(run_id: int):
     overall_passed = True
     stopped = False
 
-    for _ in range(repeat_count):
+    for pass_no in range(repeat_count):
         if stopped:
             break
         for idx, step in enumerate(steps):
             if stopped:
                 break
-            for _ in range(max(1, step.get("repeat_count", 1))):
+            for rep in range(max(1, step.get("repeat_count", 1))):
                 delay = step.get("delay_before_seconds") or 0
+                delay_log = []
                 if delay:
+                    # Logged rather than slept through silently: a run that
+                    # looks stalled is usually a step's own configured delay,
+                    # and without this there is nothing in the stream between
+                    # the previous step finishing and this one dispatching.
+                    delay_log.append(_log_line(
+                        "debug", f"step {idx + 1} '{step.get('action')}': waiting {delay}s before dispatch"))
                     time.sleep(delay)
 
-                step_result = _run_step_once(step)
+                step_result = _run_step_once(step, step_index=idx, iteration=rep + 1)
                 step_result["step_index"] = idx
+                # Which outer repeat of the whole testcase this belongs to -
+                # without it, repeat_count > 1 produces several identical-
+                # looking rows for the same step with nothing to tell them
+                # apart.
+                step_result["pass_index"] = pass_no
+                if delay_log:
+                    step_result["log"] = delay_log + step_result.get("log", [])
                 results.append(step_result)
 
                 if step_result["status"] == "failed":
