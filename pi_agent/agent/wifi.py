@@ -293,7 +293,7 @@ class WifiMixin:
         status = await self._current_wpa_status(interface)
         return status.get("wpa_state") if status else None
 
-    async def _wait_for_wpa_state(self, interface, target_state, timeout=60, expected_net_id=None):
+    async def _wait_for_wpa_state(self, interface, target_state, timeout=60, expected_net_id=None, expected_bssid=None):
         """Wait for wpa_supplicant to reach `target_state`.
 
         Listens on the control socket rather than polling `status` once a
@@ -320,6 +320,23 @@ class WifiMixin:
         matches the one just selected - the previous association had a
         different id, so its lingering COMPLETED can't be mistaken for
         this one any more.
+
+        expected_bssid guards the failure side the same way expected_net_id
+        guards the success side. connect_wifi's own network block pins a
+        specific bssid when one was given (set_network ... bssid), but
+        wpa_supplicant's config accumulates a network block per past
+        connect_wifi call (every call ends in save_config, none of them
+        clean up an older one) - so a FAILURE_EVENTS line arriving on this
+        same control socket can belong to wpa_supplicant's own background
+        scanning/roaming against an *older* saved network for the same SSID,
+        not to this call's attempt. A rejection naming a different bssid
+        than the one this call pinned gets skipped rather than reported as
+        this attempt's own failure_reason - confirmed as a real case, not a
+        hypothetical: a "Kaon-Guest" connect pinned to one BSSID came back
+        with a CTRL-EVENT-ASSOC-REJECT for a completely different one. Only
+        applies when this call actually pinned a bssid and the event itself
+        names one; an SSID-only connect (bssid=None) has no such signal to
+        filter on and keeps the old trust-the-event behavior.
 
         Falls back to polling when the socket isn't attachable (no
         AF_UNIX, wpa_supplicant not running with a control interface, or
@@ -371,6 +388,12 @@ class WifiMixin:
                         return True
                     continue
                 if name in wpa_events.FAILURE_EVENTS:
+                    event_bssid = fields.get("bssid")
+                    if expected_bssid and event_bssid and event_bssid.lower() != expected_bssid.lower():
+                        # Someone else's rejection (an older saved network
+                        # for this SSID, still enabled) - not a verdict on
+                        # the bssid this call actually pinned. Keep waiting.
+                        continue
                     self.last_wpa_failure = f"{name} {' '.join(f'{k}={v}' for k, v in fields.items())}".strip()
                     return False
                 if name.startswith("CTRL-EVENT-"):
@@ -566,7 +589,7 @@ class WifiMixin:
             await self._wpa_cli(interface, "select_network", net_id)
             await self._wpa_cli(interface, "save_config")
 
-            associated = await self._wait_for_wpa_state(interface, "COMPLETED", timeout=60)
+            associated = await self._wait_for_wpa_state(interface, "COMPLETED", timeout=60, expected_bssid=bssid)
             ip_address = None
             dhcp_output = ""
             if associated:
@@ -884,6 +907,18 @@ class WifiMixin:
         # otherwise deadlock on its own lock.
         ordered = list(dict.fromkeys(interfaces))
 
+        # A caller can hand this an interface name that no longer exists - a
+        # stale cached list (e.g. a Nearby Hotspot card's seen_by, built from
+        # an old scan snapshot) surviving a USB radio being unplugged is the
+        # case this was written for. Reject those up front rather than
+        # letting connect_wifi discover it deep inside `ip link set <gone>
+        # up`/wpa_supplicant, where the failure is easy to lose track of
+        # amid the interfaces that *did* connect - see the same live check
+        # _resolve_scan_interfaces (wifi_scan.py) already does for scans.
+        known = {d["name"] for d in await self.get_interface_details()}
+        present = [i for i in ordered if i in known]
+        missing = [i for i in ordered if i not in known]
+
         async def one(interface, delay):
             if delay:
                 await asyncio.sleep(delay)
@@ -892,18 +927,21 @@ class WifiMixin:
                     return await self.connect_wifi(ssid, password, interface, bssid, channel)
 
         outcomes = await asyncio.gather(
-            *(one(i, idx * self.CONNECT_HOTSPOT_STAGGER_SECONDS) for idx, i in enumerate(ordered)),
+            *(one(i, idx * self.CONNECT_HOTSPOT_STAGGER_SECONDS) for idx, i in enumerate(present)),
             return_exceptions=True,
         )
 
-        results = []
-        for interface, outcome in zip(ordered, outcomes):
+        by_interface = {}
+        for interface in missing:
+            by_interface[interface] = {"interface": interface, "connected": False, "error": "no such interface"}
+        for interface, outcome in zip(present, outcomes):
             if isinstance(outcome, asyncio.CancelledError):
                 raise outcome
             if isinstance(outcome, Exception):
-                results.append({"interface": interface, "connected": False, "error": str(outcome)})
+                by_interface[interface] = {"interface": interface, "connected": False, "error": str(outcome)}
             else:
-                results.append(outcome)
+                by_interface[interface] = outcome
+        results = [by_interface[i] for i in ordered]
 
         connected = [r["interface"] for r in results if r.get("connected")]
         return {
