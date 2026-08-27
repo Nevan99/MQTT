@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional, Any
+from typing import Optional, Any, Union
 
 from pydantic import BaseModel
 
@@ -81,7 +81,14 @@ class TestCaseStep(BaseModel):
     params: dict[str, Any] = {}
     delay_before_seconds: float = 0
     repeat_count: int = 1
-    expected: Optional[TestCaseStepExpected] = None
+    # A list: the step editor offers one checkable row per known result field
+    # of the chosen action, so asserting on several at once (connected AND
+    # ip_address AND signal_dbm) is the normal case rather than needing a
+    # step each. The bare-object form is still accepted so testcases saved
+    # before that existed keep loading and running - see
+    # routers/TestCases._normalise_expectations. All checks must pass for the
+    # step to pass.
+    expected: Optional[Union[TestCaseStepExpected, list[TestCaseStepExpected]]] = None
 
 
 class TestCaseRequest(BaseModel):

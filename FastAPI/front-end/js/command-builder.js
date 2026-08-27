@@ -78,6 +78,145 @@ const ACTION_PARAMS = {
   ],
 };
 
+// What each action's *result* looks like - the mirror of ACTION_PARAMS above,
+// which describes its inputs. Drives the testcase step editor's expected-
+// result section (see renderTcStepExpectedFields in testcases-tab.js), so an
+// operator picks the field to assert on from a list of what this action
+// actually returns instead of having to remember and type a dot-path.
+//
+// Kept in sync by hand with pi_agent's return dicts (agent/wifi.py,
+// interfaces.py, streaming.py, core.py's handle_command). Being incomplete is
+// not fatal: the editor always also offers a free-text "other field" row, so
+// an unlisted or nested field is still assertable.
+//
+// `type` picks the value input and which operators make sense:
+//   boolean -> eq/ne/exists, rendered as a true/false select
+//   number  -> the full ordering set
+//   text    -> eq/ne/contains/exists
+//   json    -> exists/contains only (arrays/objects have no useful ordering)
+const ACTION_RESULT_FIELDS = {
+  ping: [
+    { name: 'packets_transmitted', type: 'number' },
+    { name: 'packets_received', type: 'number' },
+    { name: 'packet_lost', type: 'number' },
+    { name: 'rtt_avg_ms', type: 'number' },
+    { name: 'rtt_min_ms', type: 'number' },
+    { name: 'rtt_max_ms', type: 'number' },
+    { name: 'rtt_mdev_ms', type: 'number' },
+    { name: 'time_ms', type: 'number' },
+    { name: 'interface', type: 'text' },
+    { name: 'target', type: 'text' },
+  ],
+  signal_stats: [{ name: 'stations', type: 'json' }],
+  band_channel_info: [
+    { name: 'interface', type: 'text' },
+    { name: 'wiphy', type: 'text' },
+    { name: 'current', type: 'json' },
+    { name: 'bands', type: 'json' },
+  ],
+  link_info: [
+    { name: 'connected', type: 'boolean' },
+    { name: 'ssid', type: 'text' },
+    { name: 'bssid', type: 'text' },
+    { name: 'signal_dbm', type: 'number' },
+    { name: 'frequency_mhz', type: 'number' },
+    { name: 'band', type: 'text' },
+    { name: 'rx_bitrate_mbps', type: 'number' },
+    { name: 'tx_bitrate_mbps', type: 'number' },
+    { name: 'gateway', type: 'text' },
+    { name: 'interface', type: 'text' },
+    { name: 'raw_output', type: 'text' },
+  ],
+  throughput_test: [
+    { name: 'throughput_mbps', type: 'number' },
+    { name: 'retransmits', type: 'number' },
+    { name: 'interface', type: 'text' },
+  ],
+  set_channel: [
+    { name: 'restarted', type: 'boolean' },
+    { name: 'channel', type: 'number' },
+  ],
+  syslog: [{ name: 'logs', type: 'json' }],
+  stream_logs: [
+    { name: 'streaming', type: 'boolean' },
+    { name: 'already_running', type: 'boolean' },
+    { name: 'interface', type: 'text' },
+  ],
+  stop_logs: [
+    { name: 'streaming', type: 'boolean' },
+    { name: 'stopped', type: 'boolean' },
+  ],
+  tcpdump: [
+    { name: 'streaming', type: 'boolean' },
+    { name: 'already_running', type: 'boolean' },
+    { name: 'interface', type: 'text' },
+  ],
+  stop_tcpdump: [
+    { name: 'streaming', type: 'boolean' },
+    { name: 'stopped', type: 'boolean' },
+    { name: 'interface', type: 'text' },
+  ],
+  connect_wifi: [
+    { name: 'connected', type: 'boolean' },
+    { name: 'ip_address', type: 'text' },
+    { name: 'ssid', type: 'text' },
+    { name: 'bssid', type: 'text' },
+    { name: 'channel', type: 'number' },
+    { name: 'interface', type: 'text' },
+    { name: 'failure_reason', type: 'text' },
+    { name: 'output', type: 'text' },
+  ],
+  disconnect_wifi: [
+    { name: 'disconnected', type: 'boolean' },
+    { name: 'interface', type: 'text' },
+    { name: 'output', type: 'text' },
+  ],
+  list_interfaces: [{ name: 'interfaces', type: 'json' }],
+  nearby_hotspots: [
+    { name: 'networks', type: 'json' },
+    { name: 'interfaces', type: 'json' },
+    { name: 'errors', type: 'json' },
+  ],
+  connect_hotspot: [
+    { name: 'connected', type: 'boolean' },
+    { name: 'connected_interfaces', type: 'json' },
+    { name: 'ssid', type: 'text' },
+    { name: 'bssid', type: 'text' },
+    { name: 'channel', type: 'number' },
+    { name: 'interfaces', type: 'json' },
+    { name: 'results', type: 'json' },
+  ],
+  set_monitor_channel: [
+    { name: 'applied', type: 'boolean' },
+    { name: 'interface', type: 'text' },
+    { name: 'channel', type: 'number' },
+    { name: 'output', type: 'text' },
+  ],
+  set_interface_mode: [
+    { name: 'applied', type: 'boolean' },
+    { name: 'resulting_type', type: 'text' },
+    { name: 'mode', type: 'text' },
+    { name: 'interface', type: 'text' },
+    { name: 'output', type: 'text' },
+  ],
+};
+
+// Offered on every action: pi_agent returns {"error": "..."} for a rejected
+// command whatever the action was, so "error exists" is a valid assertion
+// (and its negative a useful smoke check) everywhere.
+const COMMON_RESULT_FIELDS = [{ name: 'error', type: 'text' }];
+
+function resultFieldsForAction(action) {
+  return [...(ACTION_RESULT_FIELDS[action] || []), ...COMMON_RESULT_FIELDS];
+}
+
+const RESULT_OPS_BY_TYPE = {
+  boolean: ['eq', 'ne', 'exists'],
+  number: ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'exists'],
+  text: ['eq', 'ne', 'contains', 'exists'],
+  json: ['exists', 'contains'],
+};
+
 function currentTargetInterfaces() {
   const target = targetSelect.value;
   if (!target || target === 'all' || target === 'multicast') return [];

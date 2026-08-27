@@ -467,8 +467,154 @@ function collectTcStepParams(card) {
   return params;
 }
 
+// A step's expectations as a list, whatever shape it was saved in - matches
+// the backend's _normalise_expectations, so a testcase written before the
+// per-field editor existed (single {field, op, value}) still loads into it.
+function tcExpectedList(step) {
+  const e = step.expected;
+  if (!e) return [];
+  return Array.isArray(e) ? e.filter(Boolean) : [e];
+}
+
+function tcOpsForType(type) {
+  return RESULT_OPS_BY_TYPE[type] || TC_EXPECTED_OPS;
+}
+
+// Renders the saved value back into its input. Strings go in bare (so
+// `ip_address eq 192.168.1.5` shows the address, not a quoted one); anything
+// else is JSON so booleans/numbers/objects round-trip.
+function tcExpectedValueText(value) {
+  if (value === undefined || value === null) return '';
+  return typeof value === 'string' ? value : JSON.stringify(value);
+}
+
+function tcExpectedValueInputHtml(field, check) {
+  const value = check ? check.value : undefined;
+  if (field.type === 'boolean') {
+    return `
+      <select class="field tc-expect-value" data-vtype="boolean">
+        <option value="true" ${value === true ? 'selected' : ''}>true</option>
+        <option value="false" ${value === false ? 'selected' : ''}>false</option>
+      </select>`;
+  }
+  const inputType = field.type === 'number' ? 'number' : 'text';
+  return `<input type="${inputType}" class="field tc-expect-value" data-vtype="${field.type || 'text'}"
+    placeholder="expected value" value="${tcExpectedValueText(value)}">`;
+}
+
+function tcExpectRowHtml(field, check) {
+  const on = !!check;
+  const ops = tcOpsForType(field.type);
+  const op = check ? check.op : ops[0];
+  // "exists" takes no value - hide the input rather than leave a box that
+  // does nothing.
+  const valueHidden = op === 'exists' ? ' hidden' : '';
+  return `
+    <div class="tc-expect-row${on ? '' : ' tc-expect-off'}" data-field="${field.name}" data-type="${field.type || 'text'}">
+      <label class="tc-expect-check">
+        <input type="checkbox" class="tc-expect-on" ${on ? 'checked' : ''}>
+        <span class="tc-expect-name">${field.name}</span>
+      </label>
+      <select class="field tc-expect-op">
+        ${ops.map(o => `<option value="${o}" ${o === op ? 'selected' : ''}>${o}</option>`).join('')}
+      </select>
+      <span class="tc-expect-value-wrap${valueHidden}">${tcExpectedValueInputHtml(field, check)}</span>
+    </div>`;
+}
+
+// Fields the saved checks reference that aren't in this action's known list -
+// a nested path, or a field added to pi_agent since ACTION_RESULT_FIELDS was
+// last updated. Kept as editable custom rows so opening an old testcase never
+// silently drops an assertion it was relying on.
+function tcCustomExpectRowHtml(check, i) {
+  const ops = TC_EXPECTED_OPS;
+  const op = check ? check.op : 'eq';
+  return `
+    <div class="tc-expect-row tc-expect-custom${check ? '' : ' tc-expect-off'}" data-custom="${i}">
+      <label class="tc-expect-check">
+        <input type="checkbox" class="tc-expect-on" ${check ? 'checked' : ''}>
+        <input type="text" class="field tc-expect-field" placeholder="other field (dot path)"
+          value="${check ? (check.field || '') : ''}">
+      </label>
+      <select class="field tc-expect-op">
+        ${ops.map(o => `<option value="${o}" ${o === op ? 'selected' : ''}>${o}</option>`).join('')}
+      </select>
+      <span class="tc-expect-value-wrap${op === 'exists' ? ' hidden' : ''}">
+        <input type="text" class="field tc-expect-value" data-vtype="text" placeholder="expected value"
+          value="${check ? tcExpectedValueText(check.value) : ''}">
+      </span>
+    </div>`;
+}
+
+function renderTcStepExpectedFields(container, step) {
+  const fields = resultFieldsForAction(step.action);
+  const checks = tcExpectedList(step);
+  const byField = new Map(checks.filter(c => c.field).map(c => [c.field, c]));
+
+  const known = fields.map(f => tcExpectRowHtml(f, byField.get(f.name)));
+  const knownNames = new Set(fields.map(f => f.name));
+  // Anything saved that this action's list doesn't cover, plus one blank row
+  // to add another.
+  const custom = checks.filter(c => !c.field || !knownNames.has(c.field));
+  const customRows = [...custom.map((c, i) => tcCustomExpectRowHtml(c, i)),
+                      tcCustomExpectRowHtml(null, custom.length)];
+
+  container.innerHTML = `
+    <div class="hint tc-expect-hint">Tick each result field to assert on. All ticked checks must pass.</div>
+    <div class="tc-expect-rows">${known.join('')}${customRows.join('')}</div>`;
+
+  container.querySelectorAll('.tc-expect-row').forEach(row => {
+    const on = row.querySelector('.tc-expect-on');
+    const op = row.querySelector('.tc-expect-op');
+    on.addEventListener('change', () => row.classList.toggle('tc-expect-off', !on.checked));
+    op.addEventListener('change', () => {
+      row.querySelector('.tc-expect-value-wrap').classList.toggle('hidden', op.value === 'exists');
+    });
+    // Typing a path into a blank custom row is the intent to use it - saves
+    // having to also tick the box.
+    const fieldInput = row.querySelector('.tc-expect-field');
+    if (fieldInput) {
+      fieldInput.addEventListener('input', () => {
+        if (fieldInput.value.trim() && !on.checked) {
+          on.checked = true;
+          row.classList.remove('tc-expect-off');
+        }
+      });
+    }
+  });
+}
+
+function collectTcStepExpected(card) {
+  if (!card.querySelector('.tc-step-expected-toggle').checked) return null;
+  const checks = [];
+  card.querySelectorAll('.tc-expect-row').forEach(row => {
+    if (!row.querySelector('.tc-expect-on').checked) return;
+    const fieldInput = row.querySelector('.tc-expect-field');
+    const field = fieldInput ? fieldInput.value.trim() : row.dataset.field;
+    if (fieldInput && !field) return;          // blank custom row - ignore
+
+    const op = row.querySelector('.tc-expect-op').value;
+    if (op === 'exists') {
+      checks.push({ field, op, value: null });
+      return;
+    }
+    const valueEl = row.querySelector('.tc-expect-value');
+    const raw = valueEl ? valueEl.value : '';
+    let value = raw;
+    if (valueEl && valueEl.dataset.vtype === 'boolean') value = raw === 'true';
+    else if (valueEl && valueEl.dataset.vtype === 'number') value = raw === '' ? null : Number(raw);
+    else {
+      // Same rule as before the per-field editor: JSON if it parses (so
+      // true/5/["a"] mean what they look like), otherwise a plain string.
+      try { value = JSON.parse(raw); } catch { /* keep as a plain string */ }
+    }
+    checks.push({ field, op, value });
+  });
+  return checks.length ? checks : null;
+}
+
 function tcStepCardHtml(step, i) {
-  const expected = step.expected || {};
+  const expected = tcExpectedList(step);
   return `
     <div class="tc-step-card" data-index="${i}">
       <div class="tc-step-header">
@@ -511,19 +657,9 @@ function tcStepCardHtml(step, i) {
         </div>
 
         <label class="tc-step-expected-toggle-row">
-          <input type="checkbox" class="tc-step-expected-toggle" ${step.expected ? 'checked' : ''}> Expect a specific result
+          <input type="checkbox" class="tc-step-expected-toggle" ${expected.length ? 'checked' : ''}> Expect specific results
         </label>
-        <div class="tc-step-expected${step.expected ? '' : ' hidden'}">
-          <label>Result field (dot path; blank = whole result)</label>
-          <input type="text" class="field tc-step-expected-field" placeholder="e.g. connected" value="${expected.field || ''}">
-          <label>Operator</label>
-          <select class="field tc-step-expected-op">
-            ${TC_EXPECTED_OPS.map(op => `<option value="${op}" ${expected.op === op ? 'selected' : ''}>${op}</option>`).join('')}
-          </select>
-          <label>Value</label>
-          <input type="text" class="field tc-step-expected-value" placeholder="true / 5 / text (JSON-parsed if valid)"
-            value="${expected.value !== undefined && expected.value !== null ? JSON.stringify(expected.value) : ''}">
-        </div>
+        <div class="tc-step-expected${expected.length ? '' : ' hidden'}"></div>
       </div>
     </div>
   `;
@@ -534,14 +670,23 @@ function wireTcStepCard(i) {
   if (!card) return;
   const step = tcSteps[i];
   const paramsContainer = card.querySelector('.tc-step-params');
+  const expectedContainer = card.querySelector('.tc-step-expected');
   renderTcStepParamFields(paramsContainer, step);
+  renderTcStepExpectedFields(expectedContainer, step);
 
   // Live re-render of the params sub-section on action/target change - the
   // rest of a step's fields are only ever read back from the DOM at
   // save/reorder time (see syncTcStepsFromDom), since nothing else here
   // needs to react to them immediately.
   card.querySelector('.tc-step-action').addEventListener('change', (e) => {
-    renderTcStepParamFields(paramsContainer, { action: e.target.value, target: card.querySelector('.tc-step-target').value, params: {} });
+    const action = e.target.value;
+    renderTcStepParamFields(paramsContainer, { action, target: card.querySelector('.tc-step-target').value, params: {} });
+    // The expected section is per-action too (each action returns different
+    // fields), so it has to be rebuilt here as well. Whatever was ticked for
+    // the previous action is dropped deliberately: those fields don't exist
+    // on the new action's result, so carrying them over would silently
+    // assert on something that can never be there.
+    renderTcStepExpectedFields(expectedContainer, { action, expected: null });
   });
   card.querySelector('.tc-step-target').addEventListener('change', (e) => {
     const target = e.target.value;
@@ -581,18 +726,7 @@ function syncTcStepsFromDom() {
     step.repeat_count = Math.max(1, Number(card.querySelector('.tc-step-repeat').value) || 1);
     step.params = collectTcStepParams(card);
 
-    if (card.querySelector('.tc-step-expected-toggle').checked) {
-      const rawValue = card.querySelector('.tc-step-expected-value').value;
-      let value = rawValue;
-      try { value = JSON.parse(rawValue); } catch { /* keep as a plain string */ }
-      step.expected = {
-        field: card.querySelector('.tc-step-expected-field').value || null,
-        op: card.querySelector('.tc-step-expected-op').value,
-        value,
-      };
-    } else {
-      step.expected = null;
-    }
+    step.expected = collectTcStepExpected(card);
   });
 }
 
@@ -737,39 +871,138 @@ function tcStatusClass(status) {
   return 'pending';
 }
 
+// --- shared run renderer -------------------------------------------------
+// Used by this tab's live run view *and* by the Results tab (results-tab.js,
+// loaded after this file) - one renderer so a finished run looks exactly the
+// same wherever it's opened from.
+
+// Result values and log messages are pi-supplied strings (an SSID, a
+// command's raw output) rendered via innerHTML here - escaped so an angle
+// bracket in one can't break the markup. The result payload itself goes
+// through renderResultTable, which builds DOM and needs no escaping.
+function tcEsc(s) {
+  return String(s === undefined || s === null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function tcLogTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  return isNaN(d) ? ts : d.toLocaleTimeString('en-GB', { hour12: false });
+}
+
+function tcDuration(ms) {
+  if (ms === undefined || ms === null) return '';
+  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
+}
+
+// Step meta shown next to the action name: where it ran, which repeat it is,
+// and how long it took. Each piece is omitted when it has nothing to say, so
+// a plain single-shot step doesn't carry noise.
+function tcStepMetaText(r) {
+  const bits = [];
+  if (r.target) bits.push(r.target);
+  if (r.pass_index > 0) bits.push(`pass ${r.pass_index + 1}`);
+  if (r.iteration > 1) bits.push(`repeat ${r.iteration}`);
+  const d = tcDuration(r.duration_ms);
+  if (d) bits.push(d);
+  return bits.join(' · ');
+}
+
+function tcRunStepHtml(r, i) {
+  const log = r.log || [];
+  const entries = r.entries || [];
+  return `
+    <div class="cmd-entry tc-run-step" data-step="${i}">
+      <div class="hdr">
+        <span>Step ${r.step_index + 1}: ${actionLabel(r.action)}
+          <span class="tc-run-meta">${tcStepMetaText(r)}</span>
+        </span>
+        <span class="cmd-status ${tcStatusClass(r.status)}">${r.status}</span>
+      </div>
+      <div class="result">
+        ${entries.map((e, j) => `
+          <div class="tc-run-entry">
+            <div class="tc-run-entry-hdr">
+              <span class="tc-run-entry-pi">${e.pi_id || '(unresolved target)'}</span>
+              <span class="cmd-status ${tcStatusClass(e.status)}">${e.status}</span>
+              <span class="tc-run-meta">${[
+                e.command_status && e.command_status !== e.status ? `command ${e.command_status}` : '',
+                tcDuration(e.duration_ms),
+                e.command_id ? `cmd ${String(e.command_id).slice(0, 8)}` : '',
+              ].filter(Boolean).join(' · ')}</span>
+            </div>
+            ${(e.checks || []).length ? `
+              <div class="tc-run-checks">
+                ${e.checks.map(c => `
+                  <div class="tc-run-check ${c.passed ? 'ok' : 'fail'}">
+                    <span class="tc-run-check-mark">${c.passed ? '&#10003;' : '&#10007;'}</span>
+                    <span class="tc-run-check-expr">${tcEsc(c.field || '<result>')} ${tcEsc(c.op)}${c.op === 'exists' ? '' : ' ' + tcEsc(tcExpectedValueText(c.value))}</span>
+                    ${c.passed ? '' : `<span class="tc-run-check-actual">actual: ${tcEsc(tcExpectedValueText(c.actual))}</span>`}
+                  </div>
+                `).join('')}
+              </div>` : ''}
+            ${e.error ? `<div class="tc-run-reason">${tcEsc(e.error)}</div>` : ''}
+            <div class="tc-run-result" data-step="${i}" data-entry="${j}"></div>
+          </div>
+        `).join('') || '<div class="pi-log-empty">no targets</div>'}
+        ${log.length ? `
+          <div class="tc-run-log">
+            <button type="button" class="tc-log-toggle" data-step="${i}">Log (${log.length})</button>
+            <div class="tc-log-lines" data-step="${i}">
+              ${log.map(l => `
+                <div class="tc-log-line tc-log-${l.level || 'info'}">
+                  <span class="tc-log-ts">${tcLogTime(l.ts)}</span>
+                  <span class="tc-log-msg">${tcEsc(l.message)}</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        ` : ''}
+      </div>
+    </div>
+  `;
+}
+
+// container: where to render. run: a TestRunOut.
+function tcRenderRunSteps(container, run) {
+  const results = run.results || [];
+  if (!results.length) {
+    container.innerHTML = `<div class="pi-log-empty">${run.status === 'running' ? 'starting…' : 'no steps recorded'}</div>`;
+    return;
+  }
+  container.innerHTML = results.map((r, i) => tcRunStepHtml(r, i)).join('');
+
+  // Result payloads go through command-builder.js's renderResultTable - the
+  // same nested renderer the Action panel uses, so a testcase result reads
+  // identically to running that action by hand. It builds DOM (textContent,
+  // not innerHTML), which also keeps arbitrary result strings inert.
+  container.querySelectorAll('.tc-run-result').forEach(el => {
+    const r = results[Number(el.dataset.step)];
+    const entry = r && (r.entries || [])[Number(el.dataset.entry)];
+    if (entry && entry.result !== undefined && entry.result !== null) {
+      renderResultTable(el, entry.result);
+    }
+  });
+
+  container.querySelectorAll('.tc-log-toggle').forEach(btn => btn.addEventListener('click', () => {
+    const lines = container.querySelector(`.tc-log-lines[data-step="${btn.dataset.step}"]`);
+    if (lines) lines.classList.toggle('hidden');
+  }));
+
+  const planned = (run.steps || []).reduce((n, s) => n + Math.max(1, s.repeat_count || 1), 0)
+    * Math.max(1, run.repeat_count || 1);
+  if (run.status === 'running' && results.length < planned) {
+    container.insertAdjacentHTML('beforeend', '<div class="pi-log-empty">running…</div>');
+  }
+}
+
 function renderTcRunView(run) {
   document.getElementById('tcRunTitle').textContent = `Run: ${run.testcase_name}`;
   const statusEl = document.getElementById('tcRunStatus');
   statusEl.textContent = run.status;
   statusEl.className = `cmd-status ${tcStatusClass(run.status)}`;
-
-  const stepsEl = document.getElementById('tcRunSteps');
-  const totalPlanned = run.steps.reduce((n, s) => n + Math.max(1, s.repeat_count || 1), 0) * Math.max(1, run.repeat_count);
-
-  stepsEl.innerHTML = run.results.length
-    ? run.results.map(r => `
-        <div class="cmd-entry">
-          <div class="hdr">
-            <span>Step ${r.step_index + 1}: ${actionLabel(r.action)}</span>
-            <span class="cmd-status ${tcStatusClass(r.status)}">${r.status}</span>
-          </div>
-          <div class="result">
-            <table class="result-table">
-              ${r.entries.map(e => `
-                <tr>
-                  <td class="result-key">${e.pi_id || '(unresolved target)'}</td>
-                  <td class="result-value">${e.status}${e.reason ? ' — ' + e.reason : ''}${e.error ? ' — ' + e.error : ''}</td>
-                </tr>
-              `).join('')}
-            </table>
-          </div>
-        </div>
-      `).join('')
-    : '<div class="pi-log-empty">starting…</div>';
-
-  if (run.status === 'running' && run.results.length < totalPlanned) {
-    stepsEl.insertAdjacentHTML('beforeend', '<div class="pi-log-empty">running…</div>');
-  }
+  tcRenderRunSteps(document.getElementById('tcRunSteps'), run);
 }
 
 async function loadTcRunHistory() {
@@ -834,18 +1067,18 @@ document.getElementById('tcBulkTagOverlay').addEventListener('click', (e) => {
 
 // Reset to the list view (discarding any in-progress run view) whenever
 // this tab actually becomes the visible one - a click, a reload landing
-// directly on #testcases, or Back/Forward navigating into it (see
+// directly on #packages, or Back/Forward navigating into it (see
 // showTabView in detail-page.js), not just a literal click on the tab
 // button, which would miss the other two and leave the list empty.
 //
-// The editor popup lives outside #testcases (see #tcEditorOverlay in
+// The editor popup lives outside #packages (see #tcEditorOverlay in
 // index.html) so it stays visible across a tab switch unless explicitly
 // closed here - navigating to any other tab while it's open should close
 // it rather than leave it floating over unrelated content. Navigating to
 // the Pi detail page (which bypasses showTabView/this event entirely) is
 // handled separately, in showPiDetail (detail-page.js).
 document.addEventListener('tabshown', (e) => {
-  if (e.detail.viewId === 'testcases') showTcListView();
+  if (e.detail.viewId === 'packages') showTcListView();
   else {
     closeTcEditorModal();
     closeTcBulkTagModal();

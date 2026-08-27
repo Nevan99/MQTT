@@ -44,7 +44,8 @@
   #fleet.active { display: grid; }
   #captures.active { display: flex; flex-direction: column; }
   #interfaces.active { display: flex; flex-direction: column; }
-  #testcases.active { display: flex; flex-direction: column; }
+  #packages.active { display: flex; flex-direction: column; }
+  #results.active { display: flex; flex-direction: column; }
   #history.active { display: flex; flex-direction: column; }
   .history-detail-row.hidden { display: none; }
   .history-detail-row td { background: #141414; padding: 0.5rem 0.75rem; }
@@ -336,7 +337,7 @@
   .wifi-hotspot-detail-modal .wifi-info-modal-body { max-height: 70vh; }
 
   /* Testcases tab: list / run / run-history sub-views, only one shown at a
-     time within #testcases (see testcases-tab.js's tcHideAllViews). The
+     time within #packages (see testcases-tab.js's tcHideAllViews). The
      editor (new/edit testcase) is a separate popup, not one of these - see
      .tc-editor-overlay below. #tcListView itself holds two side-by-side
      panels (testcases, then testsuites - see .tc-list-panel/.ts-list-panel
@@ -377,6 +378,56 @@
   .tc-pager button.tc-pager-current { border-color: #4a7ab8; color: #cfe1f7; }
   .tc-pager-size { font-size: 0.78rem; padding: 0.15rem 0.3rem; }
 
+  /* Run detail: per-step entries and the action log, shared by the Packages
+     tab's live run view and the Results tab (see tcRenderRunSteps). */
+  .tc-run-meta { color: #777; font-size: 0.75rem; font-weight: normal; margin-left: 0.4rem; }
+  .tc-run-entry { border-top: 1px solid #222; padding: 0.4rem 0 0.2rem; }
+  .tc-run-entry:first-child { border-top: none; }
+  .tc-run-entry-hdr { display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: #ddd; flex-wrap: wrap; }
+  .tc-run-entry-pi { font-weight: 600; }
+  .tc-run-reason { font-size: 0.78rem; color: #e0a25c; margin: 0.25rem 0; }
+  .tc-run-result { margin-top: 0.3rem; }
+  .tc-run-result:empty { display: none; }
+
+  .tc-run-log { margin-top: 0.5rem; border-top: 1px solid #222; padding-top: 0.4rem; }
+  .tc-log-toggle { font-size: 0.72rem; padding: 0.15rem 0.5rem; color: #999; }
+  .tc-log-lines { margin-top: 0.35rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; background: #121212; border: 1px solid #222; border-radius: 4px; padding: 0.35rem 0.5rem; max-height: 260px; overflow: auto; }
+  .tc-log-lines.hidden { display: none; }
+  .tc-log-line { display: flex; gap: 0.5rem; padding: 0.08rem 0; white-space: pre-wrap; word-break: break-word; }
+  .tc-log-ts { color: #666; flex: 0 0 auto; }
+  .tc-log-msg { flex: 1 1 auto; }
+  .tc-log-info .tc-log-msg { color: #cfcfcf; }
+  .tc-log-debug .tc-log-msg { color: #8a8a8a; }
+  .tc-log-error .tc-log-msg { color: #e06c6c; }
+
+  #resListView.hidden, #resDetailView.hidden { display: none; }
+  .res-open-tc-run { font-size: 0.78rem; padding: 0.2rem 0.6rem; }
+
+  /* Expected-result editor: one row per result field the chosen action
+     returns (see ACTION_RESULT_FIELDS / renderTcStepExpectedFields). The
+     checkbox+name column is fixed so the operator and value columns line up
+     down the list rather than stepping in and out with field-name length. */
+  .tc-expect-hint { margin: 0.3rem 0 0.4rem; }
+  .tc-expect-rows { display: flex; flex-direction: column; gap: 0.25rem; }
+  .tc-expect-row { display: grid; grid-template-columns: 13rem 7rem 1fr; gap: 0.4rem; align-items: center; }
+  .tc-expect-row.tc-expect-off { opacity: 0.45; }
+  .tc-step-body .tc-expect-check { display: flex; align-items: center; gap: 0.35rem; margin: 0; font-size: 0.78rem; color: #ccc; min-width: 0; cursor: pointer; }
+  .tc-expect-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tc-expect-row .field { padding: 0.25rem 0.4rem; font-size: 0.78rem; width: 100%; min-width: 0; }
+  .tc-expect-value-wrap { min-width: 0; }
+  .tc-expect-value-wrap.hidden { visibility: hidden; }
+  .tc-expect-custom .tc-expect-field { flex: 1 1 auto; }
+
+  /* Per-field check outcomes on a run's entry. */
+  .tc-run-checks { margin: 0.3rem 0; display: flex; flex-direction: column; gap: 0.15rem; }
+  .tc-run-check { display: flex; gap: 0.4rem; align-items: baseline; font-size: 0.76rem; flex-wrap: wrap; }
+  .tc-run-check-mark { flex: 0 0 auto; }
+  .tc-run-check.ok .tc-run-check-mark { color: #6cc06c; }
+  .tc-run-check.fail .tc-run-check-mark { color: #e06c6c; }
+  .tc-run-check-expr { color: #bbb; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .tc-run-check.fail .tc-run-check-expr { color: #ddd; }
+  .tc-run-check-actual { color: #e0a25c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
   /* Testsuites: no tab/section of its own - the list is a permanent panel
      inside the Testcases tab (.ts-list-panel above); editor/run/run-history
      are all popups reusing .tc-editor-overlay/-modal directly (see
@@ -403,6 +454,13 @@
   .tc-step-body label:first-child { margin-top: 0; }
   .tc-step-multicast-list { display: flex; flex-wrap: wrap; gap: 0.3rem 0.75rem; margin-top: 0.3rem; }
   .tc-step-multicast-list.hidden { display: none; }
-  .tc-step-multicast-item { font-size: 0.8rem; display: flex; align-items: center; gap: 0.3rem; color: #ccc; }
+  /* These two are <label>s inside .tc-step-body, so they have to out-specify
+     the `.tc-step-body label` rule above (0-1-1) - as bare single-class
+     selectors they lost it, and its `display: block` silently dropped their
+     own align-items/gap, leaving each checkbox on the text baseline with no
+     spacing instead of centred beside its name. Its margin-top has to be
+     undone here too: on the wrapping multicast row it pushed items out of
+     line with each other. */
+  .tc-step-body .tc-step-multicast-item { font-size: 0.8rem; display: flex; align-items: center; gap: 0.3rem; margin-top: 0; color: #ccc; }
   .tc-step-expected.hidden { display: none; }
-  .tc-step-expected-toggle-row { display: flex; align-items: center; gap: 0.35rem; margin-top: 0.6rem; font-size: 0.8rem; color: #ccc; }
+  .tc-step-body .tc-step-expected-toggle-row { display: flex; align-items: center; gap: 0.35rem; margin-top: 0.6rem; font-size: 0.8rem; color: #ccc; }
