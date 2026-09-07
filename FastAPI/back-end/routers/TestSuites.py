@@ -156,6 +156,13 @@ def delete_testsuite(testsuite_id: int, session: Session = Depends(get_session))
 # testcase's run finishes, so calling it directly here (rather than firing
 # each testcase's own /run endpoint and polling it separately) gets
 # sequencing and stop-on-failure for free.
+#
+# results_json carries one entry per testcase in the suite from the start -
+# seeded "pending" before anything runs, flipped to "running" (with the
+# TestRun id to drill into) the moment that testcase starts, then to its
+# final status. Polling GET /testsuites/runs/{id} therefore shows the whole
+# plan and where the suite currently is, rather than an empty list until the
+# first testcase happens to finish.
 
 def _run_testsuite(suite_run_id: int):
     with get_session_direct() as session:
@@ -165,21 +172,39 @@ def _run_testsuite(suite_run_id: int):
         testcase_ids = json.loads(suite_run.testcase_ids_json)
         stop_on_failure = suite_run.stop_on_failure
 
-    results = []
-    overall_passed = True
+    with get_session_direct() as session:
+        names = {
+            t.id: t.name
+            for t in session.exec(select(TestCase).where(TestCase.id.in_(testcase_ids)))
+        } if testcase_ids else {}
 
-    for tc_id in testcase_ids:
+    results = [
+        {"testcase_id": tc_id, "testcase_name": names.get(tc_id), "run_id": None, "status": "pending"}
+        for tc_id in testcase_ids
+    ]
+
+    def save_results():
+        with get_session_direct() as session:
+            r = session.get(TestSuiteRun, suite_run_id)
+            r.results_json = json.dumps(results)
+            session.add(r)
+            session.commit()
+
+    save_results()
+
+    overall_passed = True
+    stopped_at = None
+
+    for i, tc_id in enumerate(testcase_ids):
         with get_session_direct() as session:
             testcase = session.get(TestCase, tc_id)
             if testcase is None:
                 # Referenced testcase was deleted after this suite was
                 # saved/launched - record it as a failed entry (no run to
                 # point at) rather than crashing the whole suite run.
-                results.append({
-                    "testcase_id": tc_id, "testcase_name": None, "run_id": None,
-                    "status": "failed", "error": "testcase no longer exists",
-                })
+                results[i].update({"status": "failed", "error": "testcase no longer exists"})
                 overall_passed = False
+<<<<<<< HEAD
                 with get_session_direct() as s2:
                     r = s2.get(TestSuiteRun, suite_run_id)
                     if r is None:
@@ -187,7 +212,11 @@ def _run_testsuite(suite_run_id: int):
                     r.results_json = json.dumps(results)
                     s2.add(r)
                     s2.commit()
+=======
+                save_results()
+>>>>>>> 089b72e452011768b940d1453c50a67ddeddeb7b
                 if stop_on_failure:
+                    stopped_at = i
                     break
                 continue
 
@@ -201,6 +230,7 @@ def _run_testsuite(suite_run_id: int):
             session.refresh(run)
             run_id, testcase_name = run.id, testcase.name
 
+<<<<<<< HEAD
         # Recorded as "running" with its run_id already known *before*
         # _run_testcase is called, not just once it finishes - this is what
         # lets the live view (testsuites-tab.js/results-tab.js) drill into
@@ -215,6 +245,12 @@ def _run_testsuite(suite_run_id: int):
             r.results_json = json.dumps(results)
             session.add(r)
             session.commit()
+=======
+        # Published before the (blocking) run starts, so the UI can open this
+        # testcase's own run and follow its steps while they happen.
+        results[i].update({"testcase_name": testcase_name, "run_id": run_id, "status": "running"})
+        save_results()
+>>>>>>> 089b72e452011768b940d1453c50a67ddeddeb7b
 
         _run_testcase(run_id)
 
@@ -225,6 +261,7 @@ def _run_testsuite(suite_run_id: int):
             # deleted testcase is above, rather than crash on a None status.
             status = finished.status if finished is not None else "failed"
 
+<<<<<<< HEAD
         entry["status"] = status
         if status != "passed":
             overall_passed = False
@@ -236,9 +273,23 @@ def _run_testsuite(suite_run_id: int):
             r.results_json = json.dumps(results)
             session.add(r)
             session.commit()
+=======
+        results[i]["status"] = status
+        if status != "passed":
+            overall_passed = False
+        save_results()
+>>>>>>> 089b72e452011768b940d1453c50a67ddeddeb7b
 
         if status != "passed" and stop_on_failure:
+            stopped_at = i
             break
+
+    if stopped_at is not None:
+        # Everything after the stop never ran - said outright instead of
+        # being left sitting on "pending" forever.
+        for entry in results[stopped_at + 1:]:
+            entry["status"] = "skipped"
+        save_results()
 
     with get_session_direct() as session:
         r = session.get(TestSuiteRun, suite_run_id)

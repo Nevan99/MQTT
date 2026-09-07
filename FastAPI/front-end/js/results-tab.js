@@ -381,11 +381,18 @@ function resSuiteRowState(run, index) {
 // view doesn't sit blank on "running" with nothing to show for it.
 function renderResSuiteDetail(run) {
   const results = run.results || [];
+<<<<<<< HEAD
   const rows = (run.testcase_ids || []).map((_, i) => resSuiteRowState(run, i));
+=======
+  // Entries are seeded pending for the whole suite up front (see
+  // routers/TestSuites._run_testsuite), so "run" here means started - one
+  // that has its own TestRun to point at - not merely listed.
+  const started = results.filter(r => r.run_id).length;
+>>>>>>> 089b72e452011768b940d1453c50a67ddeddeb7b
   resSetDetailHeader(`Testsuite run: ${run.testsuite_name}`, run.status, [
     `started ${formatVnDateTime(run.started_at)}`,
     run.completed_at ? `completed ${formatVnDateTime(run.completed_at)}` : null,
-    `${results.length} of ${(run.testcase_ids || []).length} testcase(s) run`,
+    `${started} of ${(run.testcase_ids || []).length} testcase(s) run`,
     run.stop_on_failure ? 'stop on failure' : 'continue on failure',
   ]);
 
@@ -402,12 +409,28 @@ function renderResSuiteDetail(run) {
             ${r.status === 'running' ? '<div class="res-suite-running-steps"></div>' : ''}
             ${r.run_id && r.status !== 'running'
               ? `<button type="button" class="res-open-tc-run" data-id="${r.run_id}">Open step detail &rarr;</button>`
+<<<<<<< HEAD
               : (r.finished && !r.run_id ? '<div class="hint">no run to open - the testcase was gone when the suite reached it</div>' : '')}
+=======
+              : `<div class="hint">${r.status === 'pending' ? 'not started yet'
+                  : r.status === 'skipped' ? 'never ran - the suite stopped before reaching it'
+                  : 'no run to open - the testcase was gone when the suite reached it'}</div>`}
+>>>>>>> 089b72e452011768b940d1453c50a67ddeddeb7b
           </div>
         </div>
       `).join('')
     : `<div class="pi-log-empty">${run.status === 'running' ? 'starting…' : 'no testcases ran'}</div>`;
 
+<<<<<<< HEAD
+=======
+  // Only for runs recorded before the backend seeded every testcase up front -
+  // a seeded run already shows the not-yet-reached ones as their own pending
+  // rows, so a trailing "running…" would just be repeating itself.
+  if (run.status === 'running' && !results.some(r => r.status === 'pending' || r.status === 'running')) {
+    body.insertAdjacentHTML('beforeend', '<div class="pi-log-empty">running…</div>');
+  }
+
+>>>>>>> 089b72e452011768b940d1453c50a67ddeddeb7b
   body.querySelectorAll('.res-open-tc-run').forEach(btn => btn.addEventListener('click', () => {
     openResDetail('testcase', Number(btn.dataset.id));
   }));
