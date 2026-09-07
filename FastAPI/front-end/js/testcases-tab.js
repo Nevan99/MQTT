@@ -538,37 +538,118 @@ function tcTargetPis(step) {
   return pis;
 }
 
-function tcPiInterfaces(p) {
-  return (p.metadata && Array.isArray(p.metadata.interfaces)) ? p.metadata.interfaces : [];
+// Which values should read as checked when a target picker is (re)built for
+// this step: "all" alone for a broadcast step, one pi_id for a single-Pi
+// step, or the full multicast list.
+function tcTargetSelection(step) {
+  if (!step.target || step.target === 'all') return ['all'];
+  if (step.target === 'multicast') return step.target_pi_ids || [];
+  return [step.target];
 }
 
-// Whether the param is on "all" or an explicit selection. '*' is all;
-// everything else (map, list, bare string) is a selection.
-function tcIfaceMode(saved) {
-  return saved === TC_ALL_INTERFACES || saved === undefined || saved === null ? 'all' : 'select';
+// Builds the target picker (an .iface-dropdown, same widget the interface
+// pickers use) into `container` and wires its checkboxes. "All Pis" is
+// mutually exclusive with picking specific Pis - it means broadcast (target
+// "all"), not "every Pi currently in the fleet" (which is what ticking every
+// individual Pi means, and resolves to "multicast" like any other 2+
+// selection - see tcTargetShapeFromDropdown). `onChange` fires whenever the
+// selection changes, so the caller can re-render the per-Pi interface
+// pickers below it.
+function renderTcTargetPicker(container, step, onChange) {
+  container.innerHTML = '';
+  const box = buildIfaceDropdown();
+  container.appendChild(box);
+
+  const panel = box.querySelector('.iface-dropdown-panel');
+  const selected = new Set(tcTargetSelection(step));
+  panel.innerHTML = `
+    <label class="iface-row iface-row-all">
+      <input type="checkbox" class="tc-target-all" value="all">All Pis (broadcast)
+    </label>
+  ` + (pis.length
+    ? pis.map(p => `<label class="iface-row"><input type="checkbox" value="${p.pi_id}">${p.pi_id}</label>`).join('')
+    : '<div class="pi-log-empty">no Pis registered</div>');
+
+  const allCb = panel.querySelector('.tc-target-all');
+  const piCbs = [...panel.querySelectorAll('input[type="checkbox"]:not(.tc-target-all)')];
+  allCb.checked = selected.has('all');
+  piCbs.forEach(cb => { cb.checked = selected.has(cb.value); });
+
+  const label = () => {
+    if (allCb.checked || !piCbs.some(cb => cb.checked)) return 'All Pis (broadcast)';
+    const chosen = piCbs.filter(cb => cb.checked).map(cb => cb.value);
+    return chosen.length > 1 ? `${chosen.length} Pis: ${chosen.join(', ')}` : chosen[0];
+  };
+  const updateLabel = () => { box.querySelector('.iface-dropdown-toggle').textContent = label(); };
+
+  allCb.onchange = () => {
+    if (allCb.checked) piCbs.forEach(cb => { cb.checked = false; });
+    updateLabel();
+    if (onChange) onChange();
+  };
+  piCbs.forEach(cb => {
+    cb.onchange = () => {
+      if (cb.checked) allCb.checked = false;
+      // Nothing left ticked falls back to broadcast rather than a dead-end
+      // "no target" state.
+      if (!piCbs.some(c => c.checked)) allCb.checked = true;
+      updateLabel();
+      if (onChange) onChange();
+    };
+  });
+  updateLabel();
+  return box;
+}
+
+// The step's {target, target_pi_ids} as currently ticked in a target picker
+// built by renderTcTargetPicker. 2+ specific Pis (including every Pi in the
+// fleet, ticked one by one) is "multicast" - only the explicit "All Pis"
+// checkbox means broadcast.
+function tcTargetShapeFromDropdown(box) {
+  const panel = box.querySelector('.iface-dropdown-panel');
+  const allCb = panel.querySelector('.tc-target-all');
+  if (!allCb || allCb.checked) return { target: 'all', target_pi_ids: [] };
+  const chosen = [...panel.querySelectorAll('input[type="checkbox"]:checked:not(.tc-target-all)')].map(cb => cb.value);
+  if (chosen.length === 1) return { target: chosen[0], target_pi_ids: [] };
+  if (chosen.length > 1) return { target: 'multicast', target_pi_ids: chosen };
+  return { target: 'all', target_pi_ids: [] };
+}
+
+// wl* radios only - eth* is never a valid step target, so it's filtered out
+// here rather than merely hidden, keeping it out of both the picker and
+// anything derived from "own interfaces" (default selection, validation).
+function tcPiInterfaces(p) {
+  const all = (p.metadata && Array.isArray(p.metadata.interfaces)) ? p.metadata.interfaces : [];
+  return all.filter(i => i.startsWith('wl'));
 }
 
 // What's selected for one specific Pi, from whichever shape the value has.
-// A flat list or bare string predates per-Pi selection and meant "these names
-// on every Pi", so it pre-ticks here on any Pi that actually has them - which
-// is what it was doing at run time anyway, minus the impossible ones.
+// Unset/null/the old '*' sentinel (a testcase saved before this picker
+// dropped the "all interfaces" mode) all default to every wl* radio this Pi
+// has - "all interfaces" is now just what a fresh step starts pre-ticked
+// with, not a separate stored mode. A flat list or bare string predates
+// per-Pi selection and meant "these names on every Pi", so it pre-ticks here
+// on any Pi that actually has them - which is what it was doing at run time
+// anyway, minus the impossible ones.
 function tcIfaceSelectedForPi(saved, pi) {
   const own = tcPiInterfaces(pi);
+  if (saved === undefined || saved === null || saved === TC_ALL_INTERFACES) return own.slice();
   if (Array.isArray(saved)) return saved.filter(i => own.includes(i));
   if (saved && typeof saved === 'object') return (saved[pi.pi_id] || []).filter(i => own.includes(i));
-  if (typeof saved === 'string' && saved && saved !== TC_ALL_INTERFACES) {
-    return own.includes(saved) ? [saved] : [];
-  }
+  if (typeof saved === 'string' && saved) return own.includes(saved) ? [saved] : [];
   return [];
 }
 
 // Flattened selection, for the single-Pi case where a plain list is stored.
-function tcIfaceFlatSelection(saved) {
+// `own` is that Pi's own wl* radios, for the same unset/'*' -> "everything"
+// default as tcIfaceSelectedForPi.
+function tcIfaceFlatSelection(saved, own) {
+  if (saved === undefined || saved === null || saved === TC_ALL_INTERFACES) return own.slice();
   if (Array.isArray(saved)) return saved;
   if (saved && typeof saved === 'object') {
     return [...new Set(Object.values(saved).flat())];
   }
-  if (typeof saved === 'string' && saved && saved !== TC_ALL_INTERFACES) return [saved];
+  if (typeof saved === 'string' && saved) return [saved];
   return [];
 }
 
@@ -578,18 +659,14 @@ function renderTcStepParamFields(container, step) {
   container.innerHTML = fields.map(f => {
     const saved = step.params[f.name];
     if (f.type === 'interface') {
-      const mode = tcIfaceMode(saved);
-      const allLabel = targetPis.length === 1
-        ? `All interfaces on ${targetPis[0].pi_id}`
-        : 'All interfaces on each target Pi';
+      // No separate "all interfaces" mode to pick - a fresh step already
+      // starts with every wl* radio ticked (see tcIfaceSelectedForPi/
+      // tcIfaceFlatSelection), and this picker is just where that gets
+      // narrowed down.
       return `
         <label>${f.label}</label>
         <div class="tc-iface-param" data-param="${f.name}">
-          <select class="field tc-iface-mode">
-            <option value="all" ${mode === 'all' ? 'selected' : ''}>${allLabel}</option>
-            <option value="select" ${mode === 'select' ? 'selected' : ''}>Selected interfaces…</option>
-          </select>
-          <div class="tc-iface-pick${mode === 'all' ? ' hidden' : ''}"></div>
+          <div class="tc-iface-pick"></div>
         </div>
       `;
     }
@@ -625,8 +702,9 @@ function renderTcStepParamFields(container, step) {
       // all" row), listing exactly that Pi's radios. Stored as a plain list -
       // no need to name the Pi when there's only one, and a flat list stays
       // correct if the target is later pointed at a different Pi.
+      const own = tcPiInterfaces(targetPis[0]);
       const box = buildIfaceDropdown();
-      setDropdownOptions(box, tcPiInterfaces(targetPis[0]), tcIfaceFlatSelection(saved));
+      setDropdownOptions(box, own, tcIfaceFlatSelection(saved, own));
       pick.appendChild(box);
     } else {
       // Several Pis: one section each, listing only that Pi's own radios, so
@@ -639,12 +717,17 @@ function renderTcStepParamFields(container, step) {
             const sel = tcIfaceSelectedForPi(saved, p);
             return `
               <div class="tc-iface-pi" data-pi="${p.pi_id}">
-                <label class="tc-iface-pi-hdr">
-                  <input type="checkbox" class="tc-iface-pi-all">
+                <div class="tc-iface-pi-hdr">
+                  <button type="button" class="icon-btn tc-iface-pi-toggle" title="Show/hide interfaces">${chevronIconSvg('right')}</button>
                   <span class="tc-iface-pi-name">${p.pi_id}</span>
                   <span class="hint">${own.length ? `${own.length} interface(s)` : 'none reported'}</span>
-                </label>
-                <div class="tc-iface-pi-list">
+                </div>
+                <div class="tc-iface-pi-list hidden">
+                  ${own.length ? `
+                    <label class="iface-row iface-row-all">
+                      <input type="checkbox" class="tc-iface-pi-all">Select all
+                    </label>
+                  ` : ''}
                   ${own.map(i => `
                     <label class="iface-row">
                       <input type="checkbox" value="${i}" ${sel.includes(i) ? 'checked' : ''}>${i}
@@ -657,7 +740,8 @@ function renderTcStepParamFields(container, step) {
 
       pick.querySelectorAll('.tc-iface-pi').forEach(section => {
         const all = section.querySelector('.tc-iface-pi-all');
-        const items = [...section.querySelectorAll('.tc-iface-pi-list input[type="checkbox"]')];
+        if (!all) return;
+        const items = [...section.querySelectorAll('.tc-iface-pi-list input[type="checkbox"]:not(.tc-iface-pi-all)')];
         const sync = () => {
           const n = items.filter(cb => cb.checked).length;
           all.checked = items.length > 0 && n === items.length;
@@ -669,13 +753,19 @@ function renderTcStepParamFields(container, step) {
           all.indeterminate = false;
         });
         sync();
+
+        // Collapsed/expanded state is display-only - it never touches which
+        // interfaces are selected, just whether this Pi's list is taking up
+        // space on screen. Starts collapsed (toggled up) so a multi-Pi step
+        // opens compact rather than every Pi's full radio list expanded.
+        const toggleBtn = section.querySelector('.tc-iface-pi-toggle');
+        const list = section.querySelector('.tc-iface-pi-list');
+        toggleBtn.addEventListener('click', () => {
+          const collapsed = list.classList.toggle('hidden');
+          toggleBtn.innerHTML = chevronIconSvg(collapsed ? 'right' : 'down');
+        });
       });
     }
-
-    const modeSel = wrap.querySelector('.tc-iface-mode');
-    modeSel.addEventListener('change', () => {
-      pick.classList.toggle('hidden', modeSel.value === 'all');
-    });
   });
 }
 
@@ -684,11 +774,12 @@ function renderTcStepParamFields(container, step) {
 // matters as much as target here: the interface picker is per-Pi, so
 // "multicast" alone doesn't say which Pis to show.
 function tcStepShapeFromCard(card, overrides = {}) {
+  const targetBox = card.querySelector('.tc-step-target-param .iface-dropdown');
+  const targetShape = targetBox ? tcTargetShapeFromDropdown(targetBox) : { target: 'all', target_pi_ids: [] };
   return {
     action: card.querySelector('.tc-step-action').value,
-    target: card.querySelector('.tc-step-target').value,
-    target_pi_ids: [...card.querySelectorAll('.tc-step-multicast-list input[type="checkbox"]:checked')]
-      .map(cb => cb.value),
+    target: targetShape.target,
+    target_pi_ids: targetShape.target_pi_ids,
     params: collectTcStepParams(card),
     ...overrides,
   };
@@ -703,11 +794,6 @@ function collectTcStepParams(card) {
   });
   card.querySelectorAll('.tc-iface-param').forEach(wrap => {
     const name = wrap.dataset.param;
-    if (wrap.querySelector('.tc-iface-mode').value === 'all') {
-      params[name] = TC_ALL_INTERFACES;
-      return;
-    }
-
     const sections = [...wrap.querySelectorAll('.tc-iface-pi')];
     if (sections.length) {
       // Per-Pi map. Pis with nothing ticked are left out entirely rather than
@@ -715,7 +801,7 @@ function collectTcStepParams(card) {
       // them instead of failing the step (see _selection_omits_pi).
       const map = {};
       sections.forEach(section => {
-        const chosen = [...section.querySelectorAll('.tc-iface-pi-list input[type="checkbox"]:checked')]
+        const chosen = [...section.querySelectorAll('.tc-iface-pi-list input[type="checkbox"]:checked:not(.tc-iface-pi-all)')]
           .map(cb => cb.value);
         if (chosen.length) map[section.dataset.pi] = chosen;
       });
@@ -763,8 +849,11 @@ function tcExpectedValueInputHtml(field, check) {
         <option value="false" ${value === false ? 'selected' : ''}>false</option>
       </select>`;
   }
-  const inputType = field.type === 'number' ? 'number' : 'text';
-  return `<input type="${inputType}" class="field tc-expect-value" data-vtype="${field.type || 'text'}"
+  // Plain text input even for numbers - type="number" only offers a
+  // spin-button up/down instead of letting the value just be typed in.
+  // data-vtype (not the HTML input type) is what drives the eq/gt/lt etc.
+  // comparison on the backend, so this doesn't affect how the value is used.
+  return `<input type="text" class="field tc-expect-value" data-vtype="${field.type || 'text'}"
     placeholder="expected value" value="${tcExpectedValueText(value)}">`;
 }
 
@@ -886,42 +975,24 @@ function tcStepCardHtml(step, i) {
       <div class="tc-step-header">
         <span class="tc-step-num">#${i + 1}</span>
         ${step.loop_group ? `<span class="tc-step-loop-badge" title="Repeats with loop ${step.loop_group}">${step.loop_group} &times;${step.loop_count}</span>` : ''}
-        <select class="field tc-step-action">
-          ${TC_ACTIONS.map(a => `<option value="${a}" ${a === step.action ? 'selected' : ''}>${actionLabel(a)}</option>`).join('')}
-        </select>
         <span class="tc-step-controls">
-          <button type="button" class="icon-btn tc-step-up" title="Move up">&#8593;</button>
-          <button type="button" class="icon-btn tc-step-down" title="Move down">&#8595;</button>
           <button type="button" class="icon-btn tc-step-remove" title="Remove step">&#128465;</button>
         </span>
       </div>
       <div class="tc-step-body">
-        <label>Target</label>
-        <select class="field tc-step-target">
-          <option value="all" ${step.target === 'all' ? 'selected' : ''}>all (broadcast)</option>
-          <option value="multicast" ${step.target === 'multicast' ? 'selected' : ''}>multicast (choose Pis)</option>
-          ${pis.map(p => `<option value="${p.pi_id}" ${step.target === p.pi_id ? 'selected' : ''}>${p.pi_id}</option>`).join('')}
+        <label>Action</label>
+        <select class="field tc-step-action">
+          ${TC_ACTIONS.map(a => `<option value="${a}" ${a === step.action ? 'selected' : ''}>${actionLabel(a)}</option>`).join('')}
         </select>
-        <div class="tc-step-multicast-list${step.target === 'multicast' ? '' : ' hidden'}">
-          ${pis.map(p => `
-            <label class="tc-step-multicast-item">
-              <input type="checkbox" value="${p.pi_id}" ${step.target_pi_ids.includes(p.pi_id) ? 'checked' : ''}> ${p.pi_id}
-            </label>
-          `).join('') || '<div class="hint">no Pis registered</div>'}
-        </div>
+        <label>Target</label>
+        <div class="tc-step-target-param"></div>
 
         <div class="tc-step-params"></div>
 
-        <div class="row">
-          <div>
-            <label>Delay before (s)</label>
-            <input type="number" class="field tc-step-delay" min="0" step="0.5" value="${step.delay_before_seconds}">
-          </div>
-          <div>
-            <label>Repeat this step</label>
-            <input type="number" class="field tc-step-repeat" min="1" value="${step.repeat_count}">
-          </div>
-        </div>
+        <label>Delay before (s)</label>
+        <input type="number" class="field tc-step-delay" min="0" step="0.5" value="${step.delay_before_seconds}">
+        <label>Repeat this step</label>
+        <input type="number" class="field tc-step-repeat" min="1" value="${step.repeat_count}">
 
         <label class="tc-step-expected-toggle-row">
           <input type="checkbox" class="tc-step-expected-toggle" ${expected.length ? 'checked' : ''}> Expect specific results
@@ -956,24 +1027,15 @@ function wireTcStepCard(i) {
     renderTcStepExpectedFields(expectedContainer, { action, expected: null });
   });
   // The interface picker is built from the step's *resolved target Pis*, so
-  // it has to be rebuilt whenever the target changes - including when the
-  // multicast checkboxes change, which alter which Pis are targeted without
-  // touching the target select itself.
+  // it has to be rebuilt whenever the target selection changes.
   const rerenderParams = () => {
     renderTcStepParamFields(paramsContainer, tcStepShapeFromCard(card));
   };
-  card.querySelector('.tc-step-target').addEventListener('change', (e) => {
-    card.querySelector('.tc-step-multicast-list').classList.toggle('hidden', e.target.value !== 'multicast');
-    rerenderParams();
-  });
-  card.querySelectorAll('.tc-step-multicast-list input[type="checkbox"]')
-    .forEach(cb => cb.addEventListener('change', rerenderParams));
+  renderTcTargetPicker(card.querySelector('.tc-step-target-param'), step, rerenderParams);
   card.querySelector('.tc-step-expected-toggle').addEventListener('change', (e) => {
     card.querySelector('.tc-step-expected').classList.toggle('hidden', !e.target.checked);
   });
 
-  card.querySelector('.tc-step-up').addEventListener('click', () => moveTcStep(i, -1));
-  card.querySelector('.tc-step-down').addEventListener('click', () => moveTcStep(i, 1));
   card.querySelector('.tc-step-remove').addEventListener('click', () => removeTcStep(i));
 }
 
@@ -995,8 +1057,10 @@ function syncTcStepsFromDom() {
     const step = tcSteps[i];
     if (!step) return;
     step.action = card.querySelector('.tc-step-action').value;
-    step.target = card.querySelector('.tc-step-target').value;
-    step.target_pi_ids = [...card.querySelectorAll('.tc-step-multicast-list input[type="checkbox"]:checked')].map(cb => cb.value);
+    const targetBox = card.querySelector('.tc-step-target-param .iface-dropdown');
+    const targetShape = targetBox ? tcTargetShapeFromDropdown(targetBox) : { target: 'all', target_pi_ids: [] };
+    step.target = targetShape.target;
+    step.target_pi_ids = targetShape.target_pi_ids;
     step.delay_before_seconds = Number(card.querySelector('.tc-step-delay').value) || 0;
     step.repeat_count = Math.max(1, Number(card.querySelector('.tc-step-repeat').value) || 1);
     step.params = collectTcStepParams(card);
@@ -1027,14 +1091,6 @@ function addTcStep() {
 function removeTcStep(i) {
   syncTcStepsFromDom();
   tcSteps.splice(i, 1);
-  tcAfterStepsChanged();
-}
-
-function moveTcStep(i, dir) {
-  syncTcStepsFromDom();
-  const j = i + dir;
-  if (j < 0 || j >= tcSteps.length) return;
-  [tcSteps[i], tcSteps[j]] = [tcSteps[j], tcSteps[i]];
   tcAfterStepsChanged();
 }
 
@@ -1210,16 +1266,18 @@ function tcRunStepHtml(r, i) {
   const entries = r.entries || [];
   return `
     <div class="cmd-entry tc-run-step" data-step="${i}">
-      <div class="hdr">
-        <span>Step ${r.step_index + 1}: ${actionLabel(r.action)}
+      <div class="hdr tc-run-step-toggle" data-step="${i}">
+        <button type="button" class="icon-btn tc-run-toggle-chevron" title="Show/hide step detail">${chevronIconSvg('right')}</button>
+        <span class="tc-run-step-label">Step ${r.step_index + 1}: ${actionLabel(r.action)}
           <span class="tc-run-meta">${tcStepMetaText(r)}</span>
         </span>
         <span class="cmd-status ${tcStatusClass(r.status)}">${r.status}</span>
       </div>
-      <div class="result">
+      <div class="result" data-step-result="${i}">
         ${entries.map((e, j) => `
           <div class="tc-run-entry">
-            <div class="tc-run-entry-hdr">
+            <div class="tc-run-entry-hdr tc-run-entry-toggle" data-step="${i}" data-entry="${j}">
+              <button type="button" class="icon-btn tc-run-toggle-chevron" title="Show/hide Pi detail">${chevronIconSvg('right')}</button>
               <span class="tc-run-entry-pi">${e.pi_id || '(unresolved target)'}</span>
               <span class="cmd-status ${tcStatusClass(e.status)}">${e.status}</span>
               <span class="tc-run-meta">${[
@@ -1228,18 +1286,20 @@ function tcRunStepHtml(r, i) {
                 e.command_id ? `cmd ${String(e.command_id).slice(0, 8)}` : '',
               ].filter(Boolean).join(' · ')}</span>
             </div>
-            ${(e.checks || []).length ? `
-              <div class="tc-run-checks">
-                ${e.checks.map(c => `
-                  <div class="tc-run-check ${c.passed ? 'ok' : 'fail'}">
-                    <span class="tc-run-check-mark">${c.passed ? '&#10003;' : '&#10007;'}</span>
-                    <span class="tc-run-check-expr">${tcEsc(c.field || '<result>')} ${tcEsc(c.op)}${c.op === 'exists' ? '' : ' ' + tcEsc(tcExpectedValueText(c.value))}</span>
-                    ${c.passed ? '' : `<span class="tc-run-check-actual">actual: ${tcEsc(tcExpectedValueText(c.actual))}</span>`}
-                  </div>
-                `).join('')}
-              </div>` : ''}
-            ${e.error ? `<div class="tc-run-reason">${tcEsc(e.error)}</div>` : ''}
-            <div class="tc-run-result" data-step="${i}" data-entry="${j}"></div>
+            <div class="tc-run-entry-body" data-step="${i}" data-entry="${j}">
+              ${(e.checks || []).length ? `
+                <div class="tc-run-checks">
+                  ${e.checks.map(c => `
+                    <div class="tc-run-check ${c.passed ? 'ok' : 'fail'}">
+                      <span class="tc-run-check-mark">${c.passed ? '&#10003;' : '&#10007;'}</span>
+                      <span class="tc-run-check-expr">${tcEsc(c.field || '<result>')} ${tcEsc(c.op)}${c.op === 'exists' ? '' : ' ' + tcEsc(tcExpectedValueText(c.value))}</span>
+                      ${c.passed ? '' : `<span class="tc-run-check-actual">actual: ${tcEsc(tcExpectedValueText(c.actual))}</span>`}
+                    </div>
+                  `).join('')}
+                </div>` : ''}
+              ${e.error ? `<div class="tc-run-reason">${tcEsc(e.error)}</div>` : ''}
+              <div class="tc-run-result" data-step="${i}" data-entry="${j}"></div>
+            </div>
           </div>
         `).join('') || '<div class="pi-log-empty">no targets</div>'}
         ${log.length ? `
@@ -1260,8 +1320,37 @@ function tcRunStepHtml(r, i) {
   `;
 }
 
+// Steps/entries the user has manually toggled *away* from the run's current
+// default state (see tcRunDefaultExpanded) - not "which are expanded"
+// directly, so that flipping the default when a run finishes doesn't
+// require rewriting every entry in the set. Keyed by run id so switching to
+// a different run's view starts fresh instead of carrying over an unrelated
+// run's toggles. A running testcase's view re-renders on every poll tick
+// (see refreshTcRun/refreshResDetail), so this has to live outside
+// tcRenderRunSteps to survive that - otherwise every 1.5s would silently
+// undo anything the user just clicked.
+let tcRunCollapseRunId = null;
+let tcRunToggledSteps = new Set();
+let tcRunToggledEntries = new Set();
+
+// While a testcase is actively running, its steps/Pi entries default to
+// expanded - that's the whole point of watching a live run, seeing each
+// step's state as it happens rather than clicking every one open by hand.
+// Once it's finished, new views of that same run default back to collapsed
+// (a completed run is something you scan for the failure, not read start to
+// end), matching the Results tab's own default.
+function tcRunDefaultExpanded(run) {
+  return run.status === 'running';
+}
+
 // container: where to render. run: a TestRunOut.
 function tcRenderRunSteps(container, run) {
+  if (tcRunCollapseRunId !== run.id) {
+    tcRunCollapseRunId = run.id;
+    tcRunToggledSteps = new Set();
+    tcRunToggledEntries = new Set();
+  }
+  const defaultExpanded = tcRunDefaultExpanded(run);
   const results = run.results || [];
   if (!results.length) {
     container.innerHTML = `<div class="pi-log-empty">${run.status === 'running' ? 'starting…' : 'no steps recorded'}</div>`;
@@ -1285,6 +1374,46 @@ function tcRenderRunSteps(container, run) {
     const lines = container.querySelector(`.tc-log-lines[data-step="${btn.dataset.step}"]`);
     if (lines) lines.classList.toggle('hidden');
   }));
+
+  // Step-level and per-Pi collapse/expand - display-only, defaults per
+  // tcRunDefaultExpanded (expanded while running, collapsed once finished)
+  // unless the user has manually toggled that particular step/entry away
+  // from the current default (tcRunToggledSteps/tcRunToggledEntries above),
+  // restored on every render so it survives the live view's poll-driven
+  // re-renders.
+  container.querySelectorAll('.tc-run-step-toggle').forEach(hdr => {
+    const step = hdr.dataset.step;
+    const body = container.querySelector(`.result[data-step-result="${step}"]`);
+    const chevron = hdr.querySelector('.tc-run-toggle-chevron');
+    const applyState = () => {
+      const expanded = tcRunToggledSteps.has(step) ? !defaultExpanded : defaultExpanded;
+      body.classList.toggle('hidden', !expanded);
+      chevron.innerHTML = chevronIconSvg(expanded ? 'down' : 'right');
+    };
+    applyState();
+    hdr.addEventListener('click', () => {
+      if (tcRunToggledSteps.has(step)) tcRunToggledSteps.delete(step);
+      else tcRunToggledSteps.add(step);
+      applyState();
+    });
+  });
+  container.querySelectorAll('.tc-run-entry-toggle').forEach(hdr => {
+    const key = `${hdr.dataset.step}:${hdr.dataset.entry}`;
+    const body = container.querySelector(
+      `.tc-run-entry-body[data-step="${hdr.dataset.step}"][data-entry="${hdr.dataset.entry}"]`);
+    const chevron = hdr.querySelector('.tc-run-toggle-chevron');
+    const applyState = () => {
+      const expanded = tcRunToggledEntries.has(key) ? !defaultExpanded : defaultExpanded;
+      body.classList.toggle('hidden', !expanded);
+      chevron.innerHTML = chevronIconSvg(expanded ? 'down' : 'right');
+    };
+    applyState();
+    hdr.addEventListener('click', () => {
+      if (tcRunToggledEntries.has(key)) tcRunToggledEntries.delete(key);
+      else tcRunToggledEntries.add(key);
+      applyState();
+    });
+  });
 
   const planned = (run.steps || []).reduce((n, s) => n + Math.max(1, s.repeat_count || 1), 0)
     * Math.max(1, run.repeat_count || 1);

@@ -39,7 +39,7 @@ def _run_to_out(r: TestRun) -> TestRunOut:
         id=r.id, testcase_id=r.testcase_id, testcase_name=r.testcase_name,
         stop_on_failure=r.stop_on_failure, repeat_count=r.repeat_count,
         steps=json.loads(r.steps_json), status=r.status, results=json.loads(r.results_json),
-        started_at=r.started_at, completed_at=r.completed_at,
+        suite_run_id=r.suite_run_id, started_at=r.started_at, completed_at=r.completed_at,
     )
 
 
@@ -94,10 +94,20 @@ def create_testcase(req: TestCaseRequest, session: Session = Depends(get_session
 # literal testcase id - same reasoning as routers/Pis.get_all_interface_status.
 
 @router.get("/runs", response_model=list[TestRunOut])
-def list_runs(limit: int = 50, session: Session = Depends(get_session)):
+def list_runs(limit: int = 50, include_suite_children: bool = False, session: Session = Depends(get_session)):
     """Run history across every testcase, newest first - the Testcases tab's
-    History view."""
-    runs = session.exec(select(TestRun).order_by(TestRun.started_at.desc()).limit(limit)).all()
+    History view and the Results tab's flat list.
+
+    Excludes runs launched as one step of a testsuite run by default
+    (suite_run_id set - see routers/TestSuites._run_testsuite): the owning
+    TestSuiteRun already lists each one nested under itself (drill-down via
+    GET /testsuites/runs/{id} -> its results[].run_id), so including them
+    here too would show the same run twice. Pass include_suite_children=true
+    to get the unfiltered list back."""
+    query = select(TestRun).order_by(TestRun.started_at.desc())
+    if not include_suite_children:
+        query = query.where(TestRun.suite_run_id.is_(None))
+    runs = session.exec(query.limit(limit)).all()
     return [_run_to_out(r) for r in runs]
 
 
@@ -107,6 +117,20 @@ def get_run(run_id: int, session: Session = Depends(get_session)):
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
     return _run_to_out(run)
+
+
+@router.delete("/runs/{run_id}")
+def delete_run(run_id: int, session: Session = Depends(get_session)):
+    """Deletes one run's history. A run still in progress can be deleted too
+    - the background thread (_run_testcase) only touches this row through
+    get_session_direct() lookups by id, which just come back None afterward
+    and the thread quietly stops updating it."""
+    run = session.get(TestRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    session.delete(run)
+    session.commit()
+    return {"deleted": run_id}
 
 
 # --- bulk actions --------------------------------------------------------
@@ -794,6 +818,12 @@ def _run_testcase(run_id: int):
                 # per-step progress instead of only the final result.
                 with get_session_direct() as session:
                     run = session.get(TestRun, run_id)
+                    # Deleted (see DELETE /testcases/runs/{run_id}) while this
+                    # was still running - nothing left to write progress to,
+                    # and the commands already dispatched can't be recalled,
+                    # so just stop updating rather than crash the thread.
+                    if run is None:
+                        return
                     run.results_json = json.dumps(results)
                     session.add(run)
                     session.commit()
@@ -803,6 +833,8 @@ def _run_testcase(run_id: int):
 
     with get_session_direct() as session:
         run = session.get(TestRun, run_id)
+        if run is None:
+            return
         run.status = "passed" if overall_passed else "failed"
         run.completed_at = datetime.now(timezone.utc)
         session.add(run)

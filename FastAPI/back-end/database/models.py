@@ -171,6 +171,12 @@ class TestRun(SQLModel, table=True):
     steps_json: str = "[]"
     status: str = "running"              # running | passed | failed
     results_json: str = "[]"
+    # Set when this run was launched as one step of a testsuite run (see
+    # routers/TestSuites._run_testsuite), None for a standalone run. Lets
+    # GET /testcases/runs (the Results tab's flat list) exclude these - the
+    # owning TestSuiteRun already shows each one nested under itself, so
+    # listing them again at the top level would just be the same run twice.
+    suite_run_id: Optional[int] = None
     started_at: datetime = Field(default_factory=utcnow)
     completed_at: Optional[datetime] = None
 

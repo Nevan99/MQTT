@@ -147,9 +147,19 @@
       <input type="text" id="resSearchInput" class="field" placeholder="Search name…" style="flex: 1 1 auto;">
       <button type="button" id="resRefreshBtn" style="flex: 0 0 auto;">Refresh</button>
     </div>
+    <!-- Bulk toolbar: acts on the checkbox column below, same pattern as the
+         Testcases table's (see tc-bulk-bar). Always present so the table
+         doesn't shift when a row is ticked. -->
+    <div class="tc-bulk-bar">
+      <span id="resBulkCount" class="tc-bulk-count">none selected</span>
+      <button type="button" id="resBulkDeleteBtn" class="tc-bulk-danger" disabled>Delete&hellip;</button>
+    </div>
     <table>
       <thead>
-        <tr><th>Type</th><th>Name</th><th>Status</th><th>Started</th><th>Completed</th><th>Duration</th><th></th></tr>
+        <tr>
+          <th class="tc-check-col"><input type="checkbox" id="resSelectAll" title="Select all on this page"></th>
+          <th>Type</th><th>Name</th><th>Status</th><th>Started</th><th>Completed</th><th>Duration</th><th></th>
+        </tr>
       </thead>
       <tbody id="resTableBody"></tbody>
     </table>
@@ -160,6 +170,8 @@
       <button type="button" id="resDetailBackBtn" style="flex: 0 0 auto;">&larr; Back</button>
       <h2 id="resDetailTitle" style="margin: 0 0 0 0.25rem; font-size: 1rem; flex: 1 1 auto;"></h2>
       <span id="resDetailStatus" class="cmd-status pending"></span>
+      <button type="button" id="resDetailRerunBtn" style="flex: 0 0 auto;">Rerun</button>
+      <button type="button" id="resDetailDeleteBtn" class="tc-bulk-danger" style="flex: 0 0 auto;">Delete</button>
     </div>
     <div id="resDetailMeta" class="hint" style="margin-bottom: 0.6rem;"></div>
     <div id="resDetailBody"></div>
@@ -294,13 +306,15 @@
 
       <div class="row" style="justify-content: space-between; align-items: center; margin: 1rem 0 0.5rem;">
         <h3 style="margin: 0;">Steps</h3>
-        <button type="button" id="tcAddStepBtn">+ Add step</button>
       </div>
       <div id="tcStepsList"></div>
+      <div class="row" style="justify-content: flex-end; align-items: center; margin: 0.5rem 0 0;">
+        <button type="button" id="tcAddStepBtn" style="flex: 0 0 auto; padding: 0.25rem 0.6rem; font-size: 0.8rem;">+ Add step</button>
+      </div>
 
       <div class="row" style="justify-content: space-between; align-items: center; margin: 1rem 0 0.3rem;">
         <h3 style="margin: 0;">Loops</h3>
-        <button type="button" id="tcAddLoopBtn">+ Add loop</button>
+        <button type="button" id="tcAddLoopBtn" style="flex: 0 0 auto; padding: 0.25rem 0.6rem; font-size: 0.8rem;">+ Add loop</button>
       </div>
       <div class="hint" style="margin-bottom: 0.4rem;">
         Repeat a contiguous block of steps. A step's own &quot;Repeat this step&quot; still applies
@@ -519,11 +533,16 @@
 <script src="js/captures.js"></script>
 <script src="js/history.js"></script>
 <script src="js/command-builder.js"></script>
-<script src="js/testcases-tab.js"></script>
-<script src="js/testsuites-tab.js"></script>
+<!-- ?v= busts the browser's cache on each edit - these three change often
+     during active development and have no other cache-busting (StaticFiles
+     serves them with only Last-Modified/ETag, which Chrome's heuristic
+     cache treats as "reuse without revalidating" for a warm tab), so a
+     plain reload can otherwise keep serving a stale copy indefinitely. -->
+<script src="js/testcases-tab.js?v=3"></script>
+<script src="js/testsuites-tab.js?v=3"></script>
 <!-- After testcases-tab.js: reuses its tcRenderRunSteps/tcStatusClass so a
      run's step detail renders identically in both places. -->
-<script src="js/results-tab.js"></script>
+<script src="js/results-tab.js?v=3"></script>
 <script src="js/wifi-scan.js"></script>
 <script src="js/wifi-info-modal.js"></script>
 <script src="js/log-rendering.js"></script>

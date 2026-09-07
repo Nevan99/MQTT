@@ -48,6 +48,11 @@ def _add_missing_columns():
             conn.execute(text("UPDATE wifiscanhistory SET last_result_json = '{}' WHERE last_result_json IS NULL"))
             conn.commit()
 
+        testrun_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(testrun)"))}
+        if testrun_cols and "suite_run_id" not in testrun_cols:
+            conn.execute(text("ALTER TABLE testrun ADD COLUMN suite_run_id INTEGER"))
+            conn.commit()
+
 
 def get_session():
     with Session(engine) as session:

@@ -98,6 +98,13 @@ const DUPLICATE_ICON_SVG = `<svg viewBox="0 0 24 24" width="15" height="15" fill
   <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
 </svg>`;
 
+// Rerun button icon (Results tab) - a circular arrow, the standard "redo/
+// retry" glyph.
+const RERUN_ICON_SVG = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M21 12a9 9 0 1 1-3-6.7"/>
+  <polyline points="21 3 21 9 15 9"/>
+</svg>`;
+
 document.addEventListener('click', (e) => {
   const btn = e.target.closest('.password-toggle');
   if (!btn) return;

@@ -235,6 +235,7 @@
   .cmd-delete:hover { color: #f66; background: #2a2a2a; }
   .capture-actions { display: flex; gap: 0.2rem; white-space: nowrap; }
   .capture-actions .capture-delete:hover { color: #f66; }
+  .res-delete-btn:hover { color: #f66; }
   .cmd-entry.collapsed .result { display: none; }
   .result { margin-top: 0.4rem; }
   table.result-table { width: 100%; border-collapse: collapse; font-family: ui-monospace, monospace; font-size: 0.78rem; }
@@ -389,6 +390,23 @@
   .tc-run-result { margin-top: 0.3rem; }
   .tc-run-result:empty { display: none; }
 
+  /* Step- and per-Pi-level collapse/expand in a run's result view (Packages
+     tab live run + Results tab detail - both go through tcRenderRunSteps).
+     Display-only, state kept in tcRunExpandedSteps/tcRunExpandedEntries so
+     it survives the live view's poll-driven re-renders. */
+  .tc-run-toggle-chevron { flex: 0 0 auto; width: 1.2rem; height: 1.2rem; padding: 0.1rem; color: #888; background: transparent; border: none; }
+  .tc-run-toggle-chevron:hover { color: #eee; background: transparent; }
+  /* Out-specifies `.cmd-entry .hdr`'s space-between (0-2-0 vs this rule's
+     0-1-1): that would otherwise spread the chevron, step text and status
+     badge apart evenly instead of holding the chevron and text together on
+     the left with just the status pushed to the right. */
+  .cmd-entry .tc-run-step-toggle { display: flex; align-items: center; gap: 0.4rem; justify-content: flex-start; cursor: pointer; user-select: none; }
+  .tc-run-step-toggle .tc-run-step-label { font-weight: 600; text-align: left; }
+  .tc-run-step-toggle .cmd-status { margin-left: auto; }
+  .cmd-entry .result.hidden { display: none; }
+  .tc-run-entry-toggle { cursor: pointer; user-select: none; }
+  .tc-run-entry-body.hidden { display: none; }
+
   .tc-run-log { margin-top: 0.5rem; border-top: 1px solid #222; padding-top: 0.4rem; }
   .tc-log-toggle { font-size: 0.72rem; padding: 0.15rem 0.5rem; color: #999; }
   .tc-log-lines { margin-top: 0.35rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; background: #121212; border: 1px solid #222; border-radius: 4px; padding: 0.35rem 0.5rem; max-height: 260px; overflow: auto; }
@@ -418,21 +436,30 @@
   .tc-expect-value-wrap.hidden { visibility: hidden; }
   .tc-expect-custom .tc-expect-field { flex: 1 1 auto; }
 
-  /* Interface param in a testcase step: an all/selected mode picker plus the
-     Action panel's own multi-select dropdown (.iface-dropdown, mounted by
-     renderTcStepParamFields) when "Selected" is chosen. */
+  /* Interface param in a testcase step: starts pre-ticked to every wl* radio
+     on the target Pi(s) (see tcIfaceSelectedForPi/tcIfaceFlatSelection) -
+     this is just where that gets narrowed down, either the Action panel's
+     own multi-select dropdown (.iface-dropdown, single Pi) or one checklist
+     per Pi (multiple Pis). */
   .tc-iface-param { display: flex; flex-direction: column; gap: 0.3rem; }
-  .tc-iface-pick.hidden { display: none; }
   .tc-iface-param .iface-dropdown { width: 100%; }
 
   /* Multi-Pi target: one section per Pi, each listing only that Pi's own
      radios, so same-named interfaces on different Pis stay separately
      checkable. */
   .tc-iface-pi { border: 1px solid #262626; border-radius: 4px; background: #141414; margin-bottom: 0.35rem; }
-  .tc-step-body .tc-iface-pi-hdr { display: flex; align-items: center; gap: 0.4rem; margin: 0; padding: 0.3rem 0.5rem; border-bottom: 1px solid #222; font-size: 0.8rem; color: #ddd; cursor: pointer; }
+  .tc-step-body .tc-iface-pi-hdr { display: flex; align-items: center; gap: 0.4rem; margin: 0; padding: 0.3rem 0.5rem; border-bottom: 1px solid #222; font-size: 0.8rem; color: #ddd; }
+  .tc-iface-pi-toggle { flex: 0 0 auto; width: 1.2rem; height: 1.2rem; padding: 0.1rem; color: #888; background: transparent; border: none; }
+  .tc-iface-pi-toggle:hover { color: #eee; background: transparent; }
   .tc-iface-pi-name { font-weight: 600; }
   .tc-iface-pi-hdr .hint { margin: 0 0 0 auto; font-size: 0.72rem; }
+  /* "Select all" lives as an ordinary row inside the interface list itself
+     now, not a separate checkbox up in the header - styled like the
+     iface-dropdown panel's own select-all row, just underlined to set it
+     apart from the actual interface names below it. */
+  .tc-iface-pi-list label.iface-row-all { border-bottom: 1px solid #262626; padding-bottom: 0.25rem; margin-bottom: 0.1rem; width: 100%; }
   .tc-iface-pi-list { display: flex; flex-wrap: wrap; gap: 0.2rem 0.75rem; padding: 0.35rem 0.5rem; }
+  .tc-iface-pi-list.hidden { display: none; }
   .tc-step-body .tc-iface-pi-list label.iface-row { display: flex; align-items: center; gap: 0.3rem; margin: 0; font-size: 0.78rem; color: #ccc; cursor: pointer; }
 
   /* Loops: contiguous step ranges repeated as a block. */
@@ -470,24 +497,31 @@
   .ts-picker-name { flex: 1 1 auto; color: #ddd; }
   .ts-picker-controls { display: flex; gap: 0.1rem; flex: 0 0 auto; }
   .ts-run-toggle { cursor: pointer; }
+  /* A "running"/"pending" row in the live suite view has no run yet to
+     drill into - looks the same otherwise, just not clickable. */
+  .ts-run-toggle.ts-run-no-toggle { cursor: default; }
 
   .tc-step-card { border: 1px solid #262626; border-radius: 4px; padding: 0.6rem 0.75rem; margin-bottom: 0.6rem; background: #161616; }
   .tc-step-header { display: flex; align-items: center; gap: 0.5rem; }
-  .tc-step-header .tc-step-action { flex: 1 1 auto; }
   .tc-step-num { color: #888; font-size: 0.8rem; flex: 0 0 auto; }
-  .tc-step-controls { display: flex; gap: 0.1rem; flex: 0 0 auto; }
+  .tc-step-controls { display: flex; gap: 0.1rem; flex: 0 0 auto; margin-left: auto; }
   .tc-step-body { margin-top: 0.5rem; }
+  /* Action/target dropdowns sized the same as the short number fields below
+     (Delay/Repeat) rather than fitting their own option text - lines every
+     "pick one value" control in the step up at the same width. */
+  .tc-step-body select.field,
+  .tc-step-target-param .iface-dropdown { width: auto; min-width: 8rem; max-width: 14rem; display: inline-block; }
+  .tc-step-target-param .iface-dropdown-toggle { width: auto; max-width: 100%; }
+  /* Number fields (a count, a channel, delay/repeat) only need enough room
+     for a few digits. */
+  .tc-step-body input.tc-step-param[type="number"],
+  .tc-step-body input.tc-step-delay,
+  .tc-step-body input.tc-step-repeat { width: auto; min-width: 8rem; max-width: 14rem; }
+  /* Free-text fields (SSID, an IP/hostname, ...) can run long and are worth
+     seeing in full while typing, so they get the full step-box width rather
+     than the number fields' narrow cap. */
+  .tc-step-body input.tc-step-param[type="text"] { width: 100%; max-width: 100%; }
   .tc-step-body label { display: block; margin-top: 0.5rem; font-size: 0.78rem; color: #aaa; }
   .tc-step-body label:first-child { margin-top: 0; }
-  .tc-step-multicast-list { display: flex; flex-wrap: wrap; gap: 0.3rem 0.75rem; margin-top: 0.3rem; }
-  .tc-step-multicast-list.hidden { display: none; }
-  /* These two are <label>s inside .tc-step-body, so they have to out-specify
-     the `.tc-step-body label` rule above (0-1-1) - as bare single-class
-     selectors they lost it, and its `display: block` silently dropped their
-     own align-items/gap, leaving each checkbox on the text baseline with no
-     spacing instead of centred beside its name. Its margin-top has to be
-     undone here too: on the wrapping multicast row it pushed items out of
-     line with each other. */
-  .tc-step-body .tc-step-multicast-item { font-size: 0.8rem; display: flex; align-items: center; gap: 0.3rem; margin-top: 0; color: #ccc; }
   .tc-step-expected.hidden { display: none; }
   .tc-step-body .tc-step-expected-toggle-row { display: flex; align-items: center; gap: 0.35rem; margin-top: 0.6rem; font-size: 0.8rem; color: #ccc; }

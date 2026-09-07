@@ -139,6 +139,7 @@ class TestRunOut(BaseModel):
     steps: list[dict] = []
     status: str
     results: list[dict] = []
+    suite_run_id: Optional[int] = None
     started_at: datetime
     completed_at: Optional[datetime] = None
 

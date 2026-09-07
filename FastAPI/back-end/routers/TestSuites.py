@@ -83,6 +83,20 @@ def get_suite_run(run_id: int, session: Session = Depends(get_session)):
     return _suite_run_to_out(run)
 
 
+@router.delete("/runs/{run_id}")
+def delete_suite_run(run_id: int, session: Session = Depends(get_session)):
+    """Deletes the suite run's own record only - the individual TestRun rows
+    it launched (each results entry's run_id) are left in place, same as
+    they'd be if the testcases had been run standalone; delete those
+    separately via DELETE /testcases/runs/{run_id} if wanted."""
+    run = session.get(TestSuiteRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    session.delete(run)
+    session.commit()
+    return {"deleted": run_id}
+
+
 @router.get("/{testsuite_id}", response_model=TestSuiteOut)
 def get_testsuite(testsuite_id: int, session: Session = Depends(get_session)):
     suite = session.get(TestSuite, testsuite_id)
@@ -168,6 +182,8 @@ def _run_testsuite(suite_run_id: int):
                 overall_passed = False
                 with get_session_direct() as s2:
                     r = s2.get(TestSuiteRun, suite_run_id)
+                    if r is None:
+                        return
                     r.results_json = json.dumps(results)
                     s2.add(r)
                     s2.commit()
@@ -178,25 +194,45 @@ def _run_testsuite(suite_run_id: int):
             run = TestRun(
                 testcase_id=testcase.id, testcase_name=testcase.name,
                 stop_on_failure=testcase.stop_on_failure, repeat_count=testcase.repeat_count,
-                steps_json=testcase.steps_json,
+                steps_json=testcase.steps_json, suite_run_id=suite_run_id,
             )
             session.add(run)
             session.commit()
             session.refresh(run)
             run_id, testcase_name = run.id, testcase.name
 
+        # Recorded as "running" with its run_id already known *before*
+        # _run_testcase is called, not just once it finishes - this is what
+        # lets the live view (testsuites-tab.js/results-tab.js) drill into
+        # the currently-executing testcase's own step-by-step progress
+        # instead of only ever showing testcases that have already finished.
+        entry = {"testcase_id": tc_id, "testcase_name": testcase_name, "run_id": run_id, "status": "running"}
+        results.append(entry)
+        with get_session_direct() as session:
+            r = session.get(TestSuiteRun, suite_run_id)
+            if r is None:
+                return
+            r.results_json = json.dumps(results)
+            session.add(r)
+            session.commit()
+
         _run_testcase(run_id)
 
         with get_session_direct() as session:
             finished = session.get(TestRun, run_id)
-            status = finished.status
+            # That testcase run was deleted mid-suite (see DELETE
+            # /testcases/runs/{run_id}) - record it the same way a since-
+            # deleted testcase is above, rather than crash on a None status.
+            status = finished.status if finished is not None else "failed"
 
-        results.append({"testcase_id": tc_id, "testcase_name": testcase_name, "run_id": run_id, "status": status})
+        entry["status"] = status
         if status != "passed":
             overall_passed = False
 
         with get_session_direct() as session:
             r = session.get(TestSuiteRun, suite_run_id)
+            if r is None:
+                return
             r.results_json = json.dumps(results)
             session.add(r)
             session.commit()
@@ -206,6 +242,8 @@ def _run_testsuite(suite_run_id: int):
 
     with get_session_direct() as session:
         r = session.get(TestSuiteRun, suite_run_id)
+        if r is None:
+            return
         r.status = "passed" if overall_passed else "failed"
         r.completed_at = datetime.now(timezone.utc)
         session.add(r)
