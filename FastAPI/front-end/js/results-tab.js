@@ -170,10 +170,14 @@ function renderResTestcaseDetail(run) {
 // run rather than inlining every step of every testcase at once.
 function renderResSuiteDetail(run) {
   const results = run.results || [];
+  // Entries are seeded pending for the whole suite up front (see
+  // routers/TestSuites._run_testsuite), so "run" here means started - one
+  // that has its own TestRun to point at - not merely listed.
+  const started = results.filter(r => r.run_id).length;
   resSetDetailHeader(`Testsuite run: ${run.testsuite_name}`, run.status, [
     `started ${formatVnDateTime(run.started_at)}`,
     run.completed_at ? `completed ${formatVnDateTime(run.completed_at)}` : null,
-    `${results.length} of ${(run.testcase_ids || []).length} testcase(s) run`,
+    `${started} of ${(run.testcase_ids || []).length} testcase(s) run`,
     run.stop_on_failure ? 'stop on failure' : 'continue on failure',
   ]);
 
@@ -189,13 +193,18 @@ function renderResSuiteDetail(run) {
             ${r.error ? `<div class="tc-run-reason">${r.error}</div>` : ''}
             ${r.run_id
               ? `<button type="button" class="res-open-tc-run" data-id="${r.run_id}">Open step detail &rarr;</button>`
-              : '<div class="hint">no run to open - the testcase was gone when the suite reached it</div>'}
+              : `<div class="hint">${r.status === 'pending' ? 'not started yet'
+                  : r.status === 'skipped' ? 'never ran - the suite stopped before reaching it'
+                  : 'no run to open - the testcase was gone when the suite reached it'}</div>`}
           </div>
         </div>
       `).join('')
     : `<div class="pi-log-empty">${run.status === 'running' ? 'starting…' : 'no testcases ran'}</div>`;
 
-  if (run.status === 'running') {
+  // Only for runs recorded before the backend seeded every testcase up front -
+  // a seeded run already shows the not-yet-reached ones as their own pending
+  // rows, so a trailing "running…" would just be repeating itself.
+  if (run.status === 'running' && !results.some(r => r.status === 'pending' || r.status === 'running')) {
     body.insertAdjacentHTML('beforeend', '<div class="pi-log-empty">running…</div>');
   }
 

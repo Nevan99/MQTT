@@ -322,6 +322,7 @@ async function runTestsuiteById(id) {
 async function openTsRunView(runId) {
   tsActiveRunId = runId;
   tsLastRunRenderSignature = null;
+  tsResetRunDetailState();
   openTsRunModal();
   await refreshTsRun();
   stopTsRunPolling();
@@ -341,44 +342,82 @@ async function refreshTsRun() {
   }
 }
 
-// One testcase's step-level detail, fetched lazily the first time its row
-// is expanded (reuses GET /testcases/runs/{run_id} - the same data the
-// Testcases tab's own run view renders) rather than eagerly for every
-// testcase in the suite up front.
+// One testcase's step-level detail, rendered inside its row when expanded.
+// Reuses GET /testcases/runs/{run_id} and tcRenderRunSteps (testcases-tab.js)
+// - the exact renderer the Testcases tab's own run view uses - so a suite run
+// shows the same per-step targets, checks, logs and timings, live, instead of
+// a stripped-down summary.
+//
+// Refetched on every poll tick while that testcase is still running (the old
+// version loaded once and cached, which is why an expanded row sat on
+// "starting…" for the whole run); a finished one is fetched once more to pick
+// up its final state and then left alone (tsFinishedDetailRunIds).
+const tsExpandedRunIds = new Set();       // testcase run_ids whose detail is open
+const tsAutoExpandedRunIds = new Set();   // ones this view opened by itself
+const tsFinishedDetailRunIds = new Set(); // detail is final - stop refetching
+const tsDetailSignatures = new Map();     // run_id -> last rendered step signature
+
+function tsResetRunDetailState() {
+  tsExpandedRunIds.clear();
+  tsAutoExpandedRunIds.clear();
+  tsFinishedDetailRunIds.clear();
+  tsDetailSignatures.clear();
+}
+
 async function tsLoadTestcaseRunDetail(resultEl, runId) {
-  if (resultEl.dataset.loaded) return;
-  resultEl.innerHTML = '<div class="pi-log-empty">loading…</div>';
+  // A tick can fire again while the previous fetch is still in flight; one
+  // request per row at a time keeps them from rendering out of order.
+  if (resultEl.dataset.loading === '1') return;
+  if (!resultEl.dataset.rendered) resultEl.innerHTML = '<div class="pi-log-empty">loading…</div>';
+  resultEl.dataset.loading = '1';
   try {
     const res = await apiFetch(`${API}/testcases/runs/${runId}`);
     if (!res.ok) {
-      resultEl.innerHTML = '<div class="pi-log-empty">failed to load</div>';
+      if (!resultEl.dataset.rendered) resultEl.innerHTML = '<div class="pi-log-empty">failed to load</div>';
       return;
     }
     const tcRun = await res.json();
-    resultEl.innerHTML = tcRun.results.length
-      ? tcRun.results.map(sr => `
-          <div class="cmd-entry">
-            <div class="hdr">
-              <span>Step ${sr.step_index + 1}: ${actionLabel(sr.action)}</span>
-              <span class="cmd-status ${tcStatusClass(sr.status)}">${sr.status}</span>
-            </div>
-            <div class="result">
-              <table class="result-table">
-                ${sr.entries.map(e => `
-                  <tr>
-                    <td class="result-key">${e.pi_id || '(unresolved target)'}</td>
-                    <td class="result-value">${e.status}${e.reason ? ' — ' + e.reason : ''}${e.error ? ' — ' + e.error : ''}</td>
-                  </tr>
-                `).join('')}
-              </table>
-            </div>
-          </div>
-        `).join('')
-      : '<div class="pi-log-empty">no steps run yet</div>';
-    resultEl.dataset.loaded = '1';
+    // Same reasoning as the suite-level signature below: re-rendering
+    // identical steps every 1.5s would close any log block just opened.
+    const signature = JSON.stringify({
+      status: tcRun.status,
+      results: (tcRun.results || []).map(r => [r.step_index, r.status, (r.entries || []).length, (r.log || []).length]),
+    });
+    if (tsDetailSignatures.get(runId) !== signature) {
+      tsDetailSignatures.set(runId, signature);
+      tcRenderRunSteps(resultEl, tcRun);
+    }
+    resultEl.dataset.rendered = '1';
+    if (tcRun.status !== 'running') tsFinishedDetailRunIds.add(runId);
   } catch (err) {
-    resultEl.innerHTML = `<div class="pi-log-empty">failed to load: ${err.message}</div>`;
+    if (!resultEl.dataset.rendered) resultEl.innerHTML = `<div class="pi-log-empty">failed to load: ${err.message}</div>`;
+  } finally {
+    delete resultEl.dataset.loading;
   }
+}
+
+// Every open row that still has something new to show, refreshed on each
+// poll tick - run separately from the row rendering below so a tick that
+// changes nothing at the suite level still advances the open testcase.
+function tsRefreshExpandedDetails() {
+  document.querySelectorAll('#tsRunTestcases .cmd-entry[data-run-id]').forEach(entry => {
+    const runId = Number(entry.dataset.runId);
+    if (!tsExpandedRunIds.has(runId) || tsFinishedDetailRunIds.has(runId)) return;
+    tsLoadTestcaseRunDetail(entry.querySelector('.result'), runId);
+  });
+}
+
+function tsRunTestcaseRowHtml(r, i, expanded) {
+  const name = r.testcase_name || `#${r.testcase_id} (deleted)`;
+  return `
+    <div class="cmd-entry"${r.run_id ? ` data-run-id="${r.run_id}"` : ''}>
+      <div class="hdr ts-run-toggle">
+        <span><span class="toggle">${expanded ? '&#9660;' : '&#9654;'}</span>Testcase ${i + 1}: ${name}</span>
+        <span class="cmd-status ${tcStatusClass(r.status)}">${r.status}</span>
+      </div>
+      <div class="result${expanded ? '' : ' hidden'}"></div>
+    </div>
+  `;
 }
 
 function renderTsRunView(run) {
@@ -387,26 +426,46 @@ function renderTsRunView(run) {
   statusEl.textContent = run.status;
   statusEl.className = `cmd-status ${tcStatusClass(run.status)}`;
 
-  // Skipped once nothing's actually changed since the last render - the 1.5s
-  // poll would otherwise rebuild every row from scratch each tick, collapsing
-  // any testcase detail the user just expanded (see the click handler below).
-  const signature = JSON.stringify({ status: run.status, results: run.results.map(r => r.status) });
-  if (signature === tsLastRunRenderSignature) return;
-  tsLastRunRenderSignature = signature;
+  // The testcase the suite is on right now opens by itself, so the steps are
+  // visible without a click - once per run_id, so collapsing it by hand isn't
+  // undone by the next tick.
+  const active = run.results.find(r => r.status === 'running' && r.run_id);
+  if (active && !tsAutoExpandedRunIds.has(active.run_id)) {
+    tsAutoExpandedRunIds.add(active.run_id);
+    tsExpandedRunIds.add(active.run_id);
+  }
 
+  // Rows are rebuilt only when something about them actually changed - the
+  // 1.5s poll would otherwise wipe every open row's detail each tick. Step
+  // detail inside an open row refreshes on its own, below, either way.
+  // Expanding/collapsing by hand isn't part of this - the click already
+  // updated the DOM, and a rebuild triggered by anything else restores every
+  // open row from tsExpandedRunIds anyway.
+  const signature = JSON.stringify({
+    status: run.status,
+    results: run.results.map(r => [r.status, r.run_id]),
+  });
+  if (signature !== tsLastRunRenderSignature) {
+    tsLastRunRenderSignature = signature;
+    tsRenderRunTestcaseRows(run);
+  }
+
+  tsRefreshExpandedDetails();
+}
+
+function tsRenderRunTestcaseRows(run) {
   const container = document.getElementById('tsRunTestcases');
+  // Rebuilding throws away whatever was rendered inside each open row, so the
+  // per-row caches go with it - otherwise an unchanged testcase would be
+  // skipped as "already rendered" and its row left blank.
+  tsDetailSignatures.clear();
+  tsFinishedDetailRunIds.clear();
   container.innerHTML = run.results.length
-    ? run.results.map((r, i) => `
-        <div class="cmd-entry">
-          <div class="hdr ts-run-toggle">
-            <span><span class="toggle">&#9654;</span>Testcase ${i + 1}: ${r.testcase_name || `#${r.testcase_id} (deleted)`}</span>
-            <span class="cmd-status ${tcStatusClass(r.status)}">${r.status}</span>
-          </div>
-          <div class="result hidden"></div>
-        </div>
-      `).join('')
-    : '<div class="pi-log-empty">starting…</div>';
+    ? run.results.map((r, i) => tsRunTestcaseRowHtml(r, i, !!r.run_id && tsExpandedRunIds.has(r.run_id))).join('')
+    : `<div class="pi-log-empty">${run.status === 'running' ? 'starting…' : 'no testcases ran'}</div>`;
 
+  // Older suite runs (and any run recorded before the backend seeded every
+  // testcase up front) only carry entries for what already finished.
   if (run.status === 'running' && run.results.length < run.testcase_ids.length) {
     container.insertAdjacentHTML('beforeend', '<div class="pi-log-empty">running…</div>');
   }
@@ -420,7 +479,16 @@ function renderTsRunView(run) {
       const expanding = resultEl.classList.contains('hidden');
       resultEl.classList.toggle('hidden');
       entry.querySelector('.toggle').innerHTML = expanding ? '&#9660;' : '&#9654;';
-      if (expanding && r.run_id) tsLoadTestcaseRunDetail(resultEl, r.run_id);
+      if (!r.run_id) {
+        if (expanding) resultEl.innerHTML = `<div class="pi-log-empty">${r.error || 'not run yet'}</div>`;
+        return;
+      }
+      if (expanding) {
+        tsExpandedRunIds.add(r.run_id);
+        tsLoadTestcaseRunDetail(resultEl, r.run_id);
+      } else {
+        tsExpandedRunIds.delete(r.run_id);
+      }
     });
   });
 }
