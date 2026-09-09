@@ -30,6 +30,16 @@ const ACTION_PARAMS = {
     { name: 'password', label: 'Password (optional)', type: 'password' },
     { name: 'channel', label: 'Channel (optional - pins band+channel, ignored with BSSID)', type: 'number' },
     { name: 'interface', label: 'Interface', type: 'interface', required: true },
+    {
+      name: 'max_standard', label: 'Max 802.11 standard (optional)', type: 'select',
+      options: [
+        { value: '', label: 'auto (radio default)' },
+        { value: 'ax', label: '802.11ax (Wi-Fi 6) max' },
+        { value: 'ac', label: '802.11ac (Wi-Fi 5) max' },
+        { value: 'n', label: '802.11n (Wi-Fi 4) max' },
+        { value: 'legacy', label: '802.11a/g max' },
+      ],
+    },
   ],
   disconnect_wifi: [{ name: 'interface', label: 'Interface', type: 'interface', required: true }],
   list_interfaces: [],
@@ -48,6 +58,16 @@ const ACTION_PARAMS = {
     { name: 'password', label: 'Password (optional)', type: 'password' },
     { name: 'channel', label: 'Channel (optional - ignored with BSSID)', type: 'number' },
     { name: 'interfaces', label: 'Interfaces', type: 'interface', required: true },
+    {
+      name: 'max_standard', label: 'Max 802.11 standard (optional)', type: 'select',
+      options: [
+        { value: '', label: 'auto (radio default)' },
+        { value: 'ax', label: '802.11ax (Wi-Fi 6) max' },
+        { value: 'ac', label: '802.11ac (Wi-Fi 5) max' },
+        { value: 'n', label: '802.11n (Wi-Fi 4) max' },
+        { value: 'legacy', label: '802.11a/g max' },
+      ],
+    },
   ],
   // Monitor-mode's own channel setter (via iw, not nmcli - see
   // pi_agent.set_monitor_channel) - no band field, since iw's "set channel"
@@ -121,6 +141,7 @@ const ACTION_RESULT_FIELDS = {
     { name: 'signal_dbm', type: 'number' },
     { name: 'frequency_mhz', type: 'number' },
     { name: 'band', type: 'text' },
+    { name: 'radio_type', type: 'text' },
     { name: 'rx_bitrate_mbps', type: 'number' },
     { name: 'tx_bitrate_mbps', type: 'number' },
     { name: 'gateway', type: 'text' },
@@ -163,6 +184,7 @@ const ACTION_RESULT_FIELDS = {
     { name: 'bssid', type: 'text' },
     { name: 'channel', type: 'number' },
     { name: 'interface', type: 'text' },
+    { name: 'max_standard', type: 'text' },
     { name: 'failure_reason', type: 'text' },
     { name: 'output', type: 'text' },
   ],
@@ -575,6 +597,13 @@ function renderHotspotConnectCard(piId, net) {
     ).join('')}</table>
     <div class="wifi-connect-row">
       ${open ? '' : wifiPasswordFieldHtml(net)}
+      <select class="field wifi-max-standard" title="Cap the 802.11 standard these radios negotiate at">
+        <option value="">max standard: auto</option>
+        <option value="ax">802.11ax (Wi-Fi 6) max</option>
+        <option value="ac">802.11ac (Wi-Fi 5) max</option>
+        <option value="n">802.11n (Wi-Fi 4) max</option>
+        <option value="legacy">802.11a/g max</option>
+      </select>
       <button type="button" class="wifi-connect-btn" ${targets.length ? '' : 'disabled'}>Connect${targets.length > 1 ? ` (${targets.length} interfaces)` : ''}</button>
     </div>
     <div class="wifi-connect-status hint"></div>
@@ -590,6 +619,8 @@ function renderHotspotConnectCard(piId, net) {
   const statusEl = body.querySelector('.wifi-connect-status');
   const passwordInput = body.querySelector('.wifi-connect-password');
   if (passwordInput) passwordInput.addEventListener('click', stop);
+  const maxStandardInput = body.querySelector('.wifi-max-standard');
+  if (maxStandardInput) maxStandardInput.addEventListener('click', stop);
   const rememberCheckbox = body.querySelector('.wifi-remember-checkbox');
   if (rememberCheckbox) rememberCheckbox.addEventListener('click', stop);
 
@@ -600,6 +631,7 @@ function renderHotspotConnectCard(piId, net) {
     connectBtn.disabled = true;
     statusEl.textContent = `Connecting on ${targets.length} interface(s)…`;
     const password = passwordInput && passwordInput.value ? passwordInput.value : undefined;
+    const max_standard = maxStandardInput && maxStandardInput.value ? maxStandardInput.value : undefined;
     try {
       const result = await sendCommandAwaitResult(piId, 'connect_hotspot', {
         ssid: net.ssid || undefined,
@@ -607,6 +639,7 @@ function renderHotspotConnectCard(piId, net) {
         password,
         channel: net.channel || undefined,
         interfaces: targets,
+        max_standard,
       });
       const okCount = (result && result.connected_interfaces) ? result.connected_interfaces.length : 0;
       statusEl.textContent = result && result.connected

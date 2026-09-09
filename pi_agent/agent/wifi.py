@@ -69,8 +69,45 @@ class WifiMixin:
             "raw_output": out.strip(),
         }
         result.update(await self._wpa_link_extras(interface))
+        result["radio_type"] = self._radio_type(result.get("wifi_generation"), out, result.get("band"))
         self._cache_link_info(interface, result)
         return result
+
+    # wpa_supplicant's `wifi_generation` status field (recent wpa_supplicant
+    # + driver support only) is the most direct source: it names the PHY
+    # generation actually negotiated, not just what the radio is capable of.
+    # 7/8 aren't standardized yet as of this writing but are mapped for
+    # forward compat rather than falling through to the raw-output guess.
+    WIFI_GENERATION_STANDARD = {
+        "4": "802.11n", "5": "802.11ac", "6": "802.11ax", "7": "802.11be", "8": "802.11bn",
+    }
+
+    @staticmethod
+    def _radio_type(wifi_generation, link_out, band):
+        """Best-effort label for the 802.11 standard actually in use on this
+        association - not the radio's own maximum capability. Prefers
+        wpa_supplicant's own `wifi_generation` status field when the driver
+        reports it; otherwise falls back to the HE-MCS/VHT-MCS/MCS tag that
+        `iw dev <if> link` prints on its rx/tx bitrate lines (present only
+        when that generation's rate is actually the one in use), and as a
+        last resort assumes a legacy (non-HT) rate means 802.11a on 5/6GHz
+        or 802.11g on 2.4GHz - correct for effectively every AP still seen
+        in the wild, though a genuine 802.11b-only association would be
+        mislabeled since bitrate alone can't tell the two apart."""
+        standard = WifiMixin.WIFI_GENERATION_STANDARD.get(wifi_generation)
+        if standard:
+            return standard
+        if re.search(r'\bHE-MCS\b', link_out):
+            return "802.11ax"
+        if re.search(r'\bVHT-MCS\b', link_out):
+            return "802.11ac"
+        if re.search(r'\bMCS\b', link_out):
+            return "802.11n"
+        if band in ("5GHz", "6GHz"):
+            return "802.11a"
+        if band == "2.4GHz":
+            return "802.11g"
+        return None
 
     async def _wpa_link_extras(self, interface):
         """Fields `iw dev link` doesn't carry, pulled from wpa_supplicant
@@ -91,6 +128,7 @@ class WifiMixin:
             extras["wpa_state"] = status.get("wpa_state")
             extras["ip_address"] = status.get("ip_address")
             extras["address"] = status.get("address")
+            extras["wifi_generation"] = status.get("wifi_generation")
 
         signal_ret = await self._wpa_cli(interface, "signal_poll")
         if signal_ret.returncode == 0:
@@ -540,7 +578,24 @@ class WifiMixin:
             None,
         )
 
-    async def connect_wifi(self, ssid, password=None, interface=None, bssid=None, channel=None):
+    # max_standard -> wpa_supplicant network-block flags that cap which
+    # 802.11 PHY the association is allowed to negotiate at. wpa_supplicant
+    # has no single "use at most 802.11n" knob - each newer amendment is
+    # disabled independently (disable_he blocks 802.11ax, disable_vht also
+    # blocks 802.11ax since HE needs VHT capabilities advertised, disable_ht
+    # additionally blocks 802.11n, leaving 802.11a/g). So each tier disables
+    # everything above it. "legacy" is the ceiling below 802.11n (a/g only,
+    # no 11n/ac/ax) - there is no separate a-vs-g knob here since that's a
+    # band choice (see channel/scan_freq), not a PHY standard one.
+    MAX_STANDARD_NETWORK_FLAGS = {
+        "ax": {},
+        "ac": {"disable_he": "1"},
+        "n": {"disable_he": "1", "disable_vht": "1"},
+        "legacy": {"disable_he": "1", "disable_vht": "1", "disable_ht": "1"},
+    }
+
+    async def connect_wifi(self, ssid, password=None, interface=None, bssid=None, channel=None,
+                            max_standard=None):
         """Connect to a wifi hotspot via wpa_supplicant + dhcpcd - see the
         module-level comment above for why NetworkManager is never involved.
 
@@ -550,6 +605,15 @@ class WifiMixin:
         given, the connection is pinned to that channel's frequency
         (scan_freq) - useful when the same SSID is broadcast on multiple
         bands/channels and a specific one needs to be tested.
+
+        max_standard optionally caps the 802.11 PHY standard the association
+        is allowed to negotiate at - one of "ax", "ac", "n", "legacy" (a/g
+        only) - via wpa_supplicant's disable_he/disable_vht/disable_ht
+        network flags (see MAX_STANDARD_NETWORK_FLAGS). Useful for testing
+        an AP/CPE's behavior with a client artificially limited to an older
+        standard (e.g. confirming it still serves 802.11n-only stations
+        correctly). None/omitted keeps wpa_supplicant's own default (highest
+        the radio+driver support).
 
         The actual work (from _ensure_wpa_supplicant_running onward) runs
         under _wifi_connect_semaphore, capping how many interfaces can be
@@ -565,6 +629,8 @@ class WifiMixin:
             return {"error": "interface is required"}
         if not ssid and not bssid:
             return {"error": "ssid is required"}
+        if max_standard is not None and max_standard not in self.MAX_STANDARD_NETWORK_FLAGS:
+            return {"error": f"max_standard must be one of {sorted(self.MAX_STANDARD_NETWORK_FLAGS)}"}
 
         if bssid and not ssid:
             # Cache first (milliseconds, no radio), falling back to a real
@@ -629,6 +695,8 @@ class WifiMixin:
                     interface, "set_network", net_id, "scan_freq",
                     str(self._freq_for_channel(channel)),
                 )).stdout.strip())
+            for flag, value in self.MAX_STANDARD_NETWORK_FLAGS.get(max_standard, {}).items():
+                outputs.append((await self._wpa_cli(interface, "set_network", net_id, flag, value)).stdout.strip())
 
             await self._wpa_cli(interface, "enable_network", net_id)
             await self._wpa_cli(interface, "select_network", net_id)
@@ -667,6 +735,7 @@ class WifiMixin:
             "bssid": bssid,
             "interface": interface,
             "channel": channel,
+            "max_standard": max_standard,
             "connected": connected,
             "ip_address": ip_address,
             # Populated from the control socket when association was
@@ -917,7 +986,7 @@ class WifiMixin:
     CONNECT_HOTSPOT_STAGGER_SECONDS = 0.4
 
     async def connect_hotspot(self, ssid=None, password=None, bssid=None,
-                              channel=None, interfaces=None):
+                              channel=None, interfaces=None, max_standard=None):
         """Join one hotspot on several of this Pi's radios at once.
 
         The fleet use case this exists for is "put these four radios on that
@@ -969,7 +1038,7 @@ class WifiMixin:
                 await asyncio.sleep(delay)
             async with self._wifi_pending_command(interface):
                 async with self._wifi_lock_for(interface):
-                    return await self.connect_wifi(ssid, password, interface, bssid, channel)
+                    return await self.connect_wifi(ssid, password, interface, bssid, channel, max_standard)
 
         outcomes = await asyncio.gather(
             *(one(i, idx * self.CONNECT_HOTSPOT_STAGGER_SECONDS) for idx, i in enumerate(present)),

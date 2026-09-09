@@ -326,6 +326,7 @@ function renderDetailIfaceBody(body, name) {
     if (link.bssid) rows.push(['BSSID', link.bssid]);
     if (link.frequency_mhz != null) rows.push(['Frequency', `${link.frequency_mhz} MHz`]);
     if (link.band) rows.push(['Band', link.band]);
+    if (link.radio_type) rows.push(['Radio type', link.radio_type]);
     if (link.signal_dbm != null) rows.push(['Signal', `${link.signal_dbm} dBm`]);
     if (link.rx_bitrate_mbps != null) rows.push(['RX bitrate', `${link.rx_bitrate_mbps} Mbps`]);
     if (link.tx_bitrate_mbps != null) rows.push(['TX bitrate', `${link.tx_bitrate_mbps} Mbps`]);
@@ -582,6 +583,13 @@ function renderWifiNetworkCard(piId, iface, net, connectedBssid) {
       ${isConnected
         ? `<button type="button" class="wifi-disconnect-btn">Disconnect</button>`
         : `${open ? '' : wifiPasswordFieldHtml(net)}
+          <select class="field wifi-max-standard" title="Cap the 802.11 standard this radio negotiates at">
+            <option value="">max standard: auto</option>
+            <option value="ax">802.11ax (Wi-Fi 6) max</option>
+            <option value="ac">802.11ac (Wi-Fi 5) max</option>
+            <option value="n">802.11n (Wi-Fi 4) max</option>
+            <option value="legacy">802.11a/g max</option>
+          </select>
           <button type="button" class="wifi-connect-btn">Connect</button>`
       }
     </div>
@@ -603,6 +611,8 @@ function renderWifiNetworkCard(piId, iface, net, connectedBssid) {
       stop(e);
       const passwordInput = body.querySelector('.wifi-connect-password');
       const password = passwordInput && passwordInput.value ? passwordInput.value : undefined;
+      const maxStandardInput = body.querySelector('.wifi-max-standard');
+      const max_standard = maxStandardInput && maxStandardInput.value ? maxStandardInput.value : undefined;
       connectBtn.disabled = true;
       statusEl.textContent = 'Connecting…';
       try {
@@ -611,6 +621,7 @@ function renderWifiNetworkCard(piId, iface, net, connectedBssid) {
           bssid: net.bssid || undefined,
           password,
           interface: iface,
+          max_standard,
         });
         statusEl.textContent = result && result.connected ? 'Connected.' : `Failed to connect${wifiFailureDetail(result) ? ': ' + wifiFailureDetail(result) : ''}`;
         if (result && result.connected) applyWifiPasswordMemory(body, net, password);
@@ -633,6 +644,8 @@ function renderWifiNetworkCard(piId, iface, net, connectedBssid) {
   }
   const passwordInput = body.querySelector('.wifi-connect-password');
   if (passwordInput) passwordInput.addEventListener('click', stop);
+  const maxStandardInput = body.querySelector('.wifi-max-standard');
+  if (maxStandardInput) maxStandardInput.addEventListener('click', stop);
   const rememberCheckbox = body.querySelector('.wifi-remember-checkbox');
   if (rememberCheckbox) rememberCheckbox.addEventListener('click', stop);
 

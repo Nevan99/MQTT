@@ -59,6 +59,13 @@ function renderMergedWifiNetworkCard(targets, net) {
     ).join('')}</table>
     <div class="wifi-connect-row">
       ${open ? '' : wifiPasswordFieldHtml(net)}
+      <select class="field wifi-max-standard" title="Cap the 802.11 standard these radios negotiate at">
+        <option value="">max standard: auto</option>
+        <option value="ax">802.11ax (Wi-Fi 6) max</option>
+        <option value="ac">802.11ac (Wi-Fi 5) max</option>
+        <option value="n">802.11n (Wi-Fi 4) max</option>
+        <option value="legacy">802.11a/g max</option>
+      </select>
       <button type="button" class="wifi-connect-btn">Connect (${targets.length} interface${targets.length === 1 ? '' : 's'})</button>
     </div>
     <div class="wifi-connect-status hint"></div>
@@ -74,6 +81,8 @@ function renderMergedWifiNetworkCard(targets, net) {
   const statusEl = body.querySelector('.wifi-connect-status');
   const passwordInput = body.querySelector('.wifi-connect-password');
   if (passwordInput) passwordInput.addEventListener('click', stop);
+  const maxStandardInput = body.querySelector('.wifi-max-standard');
+  if (maxStandardInput) maxStandardInput.addEventListener('click', stop);
   const rememberCheckbox = body.querySelector('.wifi-remember-checkbox');
   if (rememberCheckbox) rememberCheckbox.addEventListener('click', stop);
 
@@ -83,6 +92,7 @@ function renderMergedWifiNetworkCard(targets, net) {
     btn.disabled = true;
     statusEl.textContent = `Connecting on ${targets.length} interface(s)…`;
     const password = passwordInput && passwordInput.value ? passwordInput.value : undefined;
+    const max_standard = maxStandardInput && maxStandardInput.value ? maxStandardInput.value : undefined;
     // Staggered start, same reasoning as PiAgent.CONNECT_HOTSPOT_STAGGER_SECONDS -
     // several radios (often across several Pis here) all starting their
     // association at the same instant is what actually trips up a single
@@ -97,6 +107,7 @@ function renderMergedWifiNetworkCard(targets, net) {
         bssid: net.bssid || undefined,
         password,
         interface: iface,
+        max_standard,
       });
       if (!(result && result.connected)) {
         throw new Error(`${piId}/${iface}: failed${wifiFailureDetail(result) ? ' - ' + wifiFailureDetail(result) : ''}`);
