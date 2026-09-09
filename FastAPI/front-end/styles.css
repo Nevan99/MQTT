@@ -136,6 +136,22 @@
   table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
   th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid #262626; }
   th { color: #999; font-weight: 600; }
+  /* A long testsuite/testcase name otherwise just keeps growing the Name
+     column (and the whole table) sideways past the panel, forcing a
+     horizontal scroll to read anything else in the row - wraps onto further
+     lines within the column instead, same as every other cell. Width is
+     user-adjustable by dragging the column's own right border (see
+     #tsNameColResize/#tcNameColResize and layout.js's setupNameColResize) -
+     a CSS var each table sets on itself, so every cell in the column,
+     header included, tracks one value. */
+  .ts-name-cell, .tc-name-cell { width: var(--name-col-w, 200px); max-width: var(--name-col-w, 200px); white-space: normal; overflow-wrap: anywhere; }
+  th.ts-name-cell, th.tc-name-cell { position: relative; }
+  /* Straddles the header cell's own right border - same "thin bar, drag to
+     resize" affordance as .gutter elsewhere in the app, just sized to sit
+     directly on a table column border instead of between two flex panels. */
+  .col-resize-handle { position: absolute; top: 0; right: -3px; bottom: 0; width: 6px; cursor: col-resize; z-index: 1; }
+  .col-resize-handle::after { content: ''; position: absolute; top: 0; bottom: 0; left: 2px; width: 2px; background: #333; }
+  .col-resize-handle:hover::after, .col-resize-handle.active::after { background: #6ab0ff; }
   tr.pi-row { cursor: pointer; }
   tr.pi-row:hover { background: #222; }
   tr.pi-row.selected { background: #263a2a; }
@@ -341,12 +357,14 @@
      time within #packages (see testcases-tab.js's tcHideAllViews). The
      editor (new/edit testcase) is a separate popup, not one of these - see
      .tc-editor-overlay below. #tcListView itself holds two side-by-side
-     panels (testcases, then testsuites - see .tc-list-panel/.ts-list-panel
-     below), not a .panel itself. */
+     panels (testsuites, then testcases - see .ts-list-panel/.tc-list-panel
+     below) split by a draggable .gutter (see #tcListGutter in
+     layout.js's setupTcListGutter), not a .panel itself. */
   #tcListView.hidden, #tcRunView.hidden, #tcRunHistoryView.hidden { display: none; }
-  #tcListView { display: flex; flex-direction: row; gap: 1rem; min-height: 0; }
-  .tc-list-panel { flex: 1 1 0; min-width: 0; overflow-y: auto; }
-  .ts-list-panel { flex: 0 0 320px; min-width: 0; overflow-y: auto; }
+  #tcListView { display: grid; grid-template-columns: 320px 6px 1fr; gap: 1rem; min-height: 0; }
+  #tcListView.dragging { user-select: none; cursor: col-resize; }
+  .tc-list-panel { min-width: 0; overflow-y: auto; }
+  .ts-list-panel { min-width: 0; overflow-y: auto; }
 
   /* New/edit testcase popup - wider and taller than the hotspot detail
      modal (.wifi-hotspot-detail-modal above) since it holds a full form
@@ -382,6 +400,10 @@
   /* Run detail: per-step entries and the action log, shared by the Packages
      tab's live run view and the Results tab (see tcRenderRunSteps). */
   .tc-run-meta { color: #777; font-size: 0.75rem; font-weight: normal; margin-left: 0.4rem; }
+  /* A Pi's result nests under its step - indented (with a rule to carry the
+     eye down) rather than sitting flush with the step's own header, so the
+     step/Pi hierarchy reads visually, not just via font-weight. */
+  .tc-run-step .result[data-step-result] { padding-left: 1rem; border-left: 1px solid #222; margin-left: 0.35rem; }
   .tc-run-entry { border-top: 1px solid #222; padding: 0.4rem 0 0.2rem; }
   .tc-run-entry:first-child { border-top: none; }
   .tc-run-entry-hdr { display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: #ddd; flex-wrap: wrap; }
@@ -419,7 +441,11 @@
   .tc-log-error .tc-log-msg { color: #e06c6c; }
 
   #resListView.hidden, #resDetailView.hidden { display: none; }
-  .res-open-tc-run { font-size: 0.78rem; padding: 0.2rem 0.6rem; }
+  /* Each testcase row in a suite run's detail view toggles its own step
+     detail open inline (see renderResSuiteDetail) rather than navigating
+     away - same header-is-the-toggle pattern as .cmd-entry .tc-run-step-toggle. */
+  .res-suite-tc-toggle { display: flex; align-items: center; gap: 0.4rem; cursor: pointer; user-select: none; }
+  .res-suite-tc-toggle .cmd-status { margin-left: auto; }
 
   /* Expected-result editor: one row per result field the chosen action
      returns (see ACTION_RESULT_FIELDS / renderTcStepExpectedFields). The
@@ -503,9 +529,13 @@
 
   .tc-step-card { border: 1px solid #262626; border-radius: 4px; padding: 0.6rem 0.75rem; margin-bottom: 0.6rem; background: #161616; }
   .tc-step-header { display: flex; align-items: center; gap: 0.5rem; }
+  .tc-step-toggle { cursor: pointer; user-select: none; }
+  .tc-step-toggle-chevron { flex: 0 0 auto; color: #888; }
   .tc-step-num { color: #888; font-size: 0.8rem; flex: 0 0 auto; }
+  .tc-step-summary { color: #ccc; font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .tc-step-controls { display: flex; gap: 0.1rem; flex: 0 0 auto; margin-left: auto; }
   .tc-step-body { margin-top: 0.5rem; }
+  .tc-step-body.hidden { display: none; }
   /* Action/target dropdowns sized the same as the short number fields below
      (Delay/Repeat) rather than fitting their own option text - lines every
      "pick one value" control in the step up at the same width. */

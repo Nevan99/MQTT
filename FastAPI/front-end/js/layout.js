@@ -39,6 +39,99 @@
   });
 })();
 
+// --- Testcases tab: resizable split between the Testsuites and Testcases
+// panels (#tcListView - see .ts-list-panel/.tc-list-panel in styles.css) ---
+
+(function setupTcListGutter() {
+  const container = document.getElementById('tcListView');
+  const gutter = document.getElementById('tcListGutter');
+  if (!container || !gutter) return;
+  const MIN_LEFT = 220;
+  const MAX_LEFT = 640;
+
+  function applyLeftWidth(px) {
+    container.style.gridTemplateColumns = `${px}px 6px 1fr`;
+  }
+
+  const saved = parseInt(localStorage.getItem('tcListLeftWidth'), 10);
+  if (saved && saved >= MIN_LEFT && saved <= MAX_LEFT) applyLeftWidth(saved);
+
+  gutter.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    container.classList.add('dragging');
+    gutter.classList.add('active');
+
+    function onMove(moveEvent) {
+      const rect = container.getBoundingClientRect();
+      let leftWidth = moveEvent.clientX - rect.left;
+      leftWidth = Math.max(MIN_LEFT, Math.min(MAX_LEFT, leftWidth));
+      applyLeftWidth(leftWidth);
+    }
+
+    function onUp() {
+      container.classList.remove('dragging');
+      gutter.classList.remove('active');
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      const currentLeft = container.style.gridTemplateColumns.split(' ')[0];
+      if (currentLeft) localStorage.setItem('tcListLeftWidth', parseInt(currentLeft, 10));
+    }
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+})();
+
+// --- Testsuites/Testcases tables: resizable Name column --------------------
+// Drag handle sits directly on the Name column's own right border (see
+// .col-resize-handle in styles.css); dragging it sets a CSS var on the
+// <table> itself, which .ts-name-cell/.tc-name-cell read for their width -
+// every cell in the column, header included, tracks one value instead of
+// each row being sized independently.
+
+function setupNameColResize(tableId, handleId, storageKey) {
+  const table = document.getElementById(tableId);
+  const handle = document.getElementById(handleId);
+  if (!table || !handle) return;
+  const MIN = 100;
+  const MAX = 480;
+
+  function apply(px) {
+    table.style.setProperty('--name-col-w', `${px}px`);
+  }
+
+  let width = parseInt(localStorage.getItem(storageKey), 10);
+  if (width >= MIN && width <= MAX) apply(width);
+
+  handle.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    // Without this, the mousedown also starts the browser's own text
+    // selection on the header label next to it.
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startWidth = handle.closest('th').getBoundingClientRect().width;
+    handle.classList.add('active');
+
+    function onMove(moveEvent) {
+      width = Math.max(MIN, Math.min(MAX, startWidth + (moveEvent.clientX - startX)));
+      apply(width);
+    }
+
+    function onUp() {
+      handle.classList.remove('active');
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      localStorage.setItem(storageKey, width);
+    }
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+
+setupNameColResize('tsTable', 'tsNameColResize', 'tsNameColWidth');
+setupNameColResize('tcTable', 'tcNameColResize', 'tcNameColWidth');
+
 // --- Pi detail page: resizable 3-column split (info / logs / actions) -----
 
 (function setupPiDetailGutters() {

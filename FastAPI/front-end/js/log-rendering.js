@@ -33,29 +33,8 @@ function buildLineElement(payload) {
   }
   return div;
 }
-
-// A busy tcpdump/syslog stream can push many messages per second; appending
-// and re-measuring scroll position (a forced synchronous reflow) on every
-// single one causes layout thrashing bad enough to stall the main thread and
-// make unrelated UI (button clicks) feel like they hung. Instead, lines are
-// queued and flushed together at most once per animation frame, so a burst
-// of N messages costs one DOM batch + one layout read instead of N of each.
 const linePanelQueues = new WeakMap();
-
-// "Pinned" tracks whether the panel should keep following new lines: true
-// while the user is sitting at the bottom, flipped to false the moment
-// they scroll away (to the top, or anywhere in between) so old lines stay
-// put under them instead of being yanked away by the next batch. Scrolling
-// back down to the bottom re-pins it - same lock-at-bottom/lock-wherever-
-// you-scrolled-to behavior the wireshark tcpdump table already has via its
-// pause/resume banner (see setupWiresharkTable's scrollEl.onscroll).
 const PIN_THRESHOLD_PX = 20;
-
-// Shared cap for both the plain-text log panel and the tcpdump packet
-// table - how many rows/lines a live stream keeps in the DOM before
-// trimming the oldest off the top. Higher means more scrollback history
-// but more DOM nodes and a heavier per-keystroke scan in the tcpdump
-// filter input (it re-checks every row, undebounced).
 const LOG_ROW_CAP = 10000;
 
 function appendLineTo(container, payload) {

@@ -13,6 +13,14 @@ let tcSteps = [];
 let tcActiveRunId = null;
 let tcRunPollTimer = null;
 
+// Which step *cards* (by object identity, not index - an index would point
+// at the wrong step once one above it is removed) currently show their full
+// edit body rather than just the one-line summary. A WeakSet rather than a
+// property on the step object itself: it's pure UI state, and tcSteps is
+// sent to the backend as-is (see collectTestcaseFromForm's `steps: tcSteps`),
+// so anything added here must never end up inside steps_json.
+let tcExpandedSteps = new WeakSet();
+
 // Pagination is server-side (GET /testcases?offset=&limit=, total in the
 // X-Total-Count header) - tcList only ever holds the page on screen, so
 // nothing here may assume it contains every testcase.
@@ -192,13 +200,46 @@ function openTcEditorModal() {
   document.addEventListener('keydown', tcEditorModalKeydown);
 }
 
+// The form state right after opening (new or loaded for edit), or right
+// after the last successful save - compared against on every close attempt
+// (see tcEditorIsDirty) so closing with real changes pending prompts instead
+// of just discarding them (see tcRequestCloseEditor). null while the editor
+// isn't open, so a stray dirty-check before it's ever populated reads clean
+// rather than comparing against nothing.
+let tcEditorSnapshot = null;
+
+function tcCaptureEditorSnapshot() {
+  tcEditorSnapshot = JSON.stringify(collectTestcaseFromForm());
+}
+
+function tcEditorIsDirty() {
+  return tcEditorSnapshot !== null && JSON.stringify(collectTestcaseFromForm()) !== tcEditorSnapshot;
+}
+
+// The actual close - always discards whatever's on screen without asking.
+// Used directly right after a successful save (nothing left to lose) and by
+// tcRequestCloseEditor below once the user has confirmed (or there was
+// nothing to confirm).
 function closeTcEditorModal() {
   document.getElementById('tcEditorOverlay').classList.add('hidden');
   document.removeEventListener('keydown', tcEditorModalKeydown);
+  tcEditorSnapshot = null;
+}
+
+// What the X button, clicking outside, and Escape all actually call - closes
+// straight away if nothing changed, otherwise asks first (see
+// #tcUnsavedOverlay) rather than silently dropping the draft.
+function tcRequestCloseEditor() {
+  if (tcEditorIsDirty()) document.getElementById('tcUnsavedOverlay').classList.remove('hidden');
+  else closeTcEditorModal();
+}
+
+function closeTcUnsavedModal() {
+  document.getElementById('tcUnsavedOverlay').classList.add('hidden');
 }
 
 function tcEditorModalKeydown(e) {
-  if (e.key === 'Escape') closeTcEditorModal();
+  if (e.key === 'Escape') tcRequestCloseEditor();
 }
 
 function showTcRunView() {
@@ -267,7 +308,7 @@ function renderTcTable() {
   body.innerHTML = tcList.map(t => `
     <tr class="${tcSelected.has(t.id) ? 'tc-row-selected' : ''}" data-id="${t.id}">
       <td class="tc-check-col"><input type="checkbox" class="tc-row-check" data-id="${t.id}" ${tcSelected.has(t.id) ? 'checked' : ''}></td>
-      <td>${t.name}</td>
+      <td class="tc-name-cell">${t.name}</td>
       <td>${(t.tags || []).join(', ')}</td>
       <td>${t.status}</td>
       <td>${t.steps.length}</td>
@@ -317,7 +358,7 @@ function tcRenderBulkBar() {
   const n = tcSelected.size;
   document.getElementById('tcBulkCount').textContent =
     n ? `${n} selected` : 'none selected';
-  ['tcBulkRunBtn', 'tcBulkDuplicateBtn', 'tcBulkTagBtn', 'tcBulkExportBtn', 'tcBulkDeleteBtn']
+  ['tcBulkRunBtn', 'tcBulkDuplicateBtn', 'tcBulkTagBtn', 'tcBulkAddToSuiteBtn', 'tcBulkExportBtn', 'tcBulkDeleteBtn']
     .forEach(id => { document.getElementById(id).disabled = n === 0; });
 }
 
@@ -487,6 +528,97 @@ async function applyTcBulkTag() {
     await loadTestcases();
   } catch (err) {
     alert(err.message);
+  }
+}
+
+// --- bulk: add to testsuite ----------------------------------------------
+// Adds every selected testcase to a testsuite - either an existing one
+// (appended, skipping ids it already has) or a brand new one created on the
+// spot. No dedicated backend endpoint: a testsuite is just
+// {..., testcase_ids} (see schemas.TestSuiteRequest), so this reads the
+// current one (if any), merges ids client-side, and POSTs/PUTs it back
+// through the same endpoints the Testsuites editor itself uses.
+
+async function openTcAddToSuiteModal() {
+  if (!tcSelected.size) return;
+  const n = tcSelected.size;
+  document.getElementById('tcAddToSuiteTarget').textContent =
+    `${n} testcase${n === 1 ? '' : 's'} selected`;
+  document.getElementById('tcAddToSuiteModeExisting').checked = true;
+  document.getElementById('tcAddToSuiteNewName').value = '';
+  document.getElementById('tcAddToSuiteNewName').disabled = true;
+  const select = document.getElementById('tcAddToSuiteExistingSelect');
+  select.disabled = false;
+  select.innerHTML = '<div class="pi-log-empty">loading…</div>';
+  try {
+    const res = await apiFetch(`${API}/testsuites`);
+    const suites = res.ok ? await res.json() : [];
+    select.innerHTML = suites.length
+      ? suites.map(s => `<option value="${s.id}">${tcEsc(s.name)} (${s.testcase_ids.length})</option>`).join('')
+      : '<option value="" disabled selected>no testsuites yet - create one instead</option>';
+    if (!suites.length) document.getElementById('tcAddToSuiteModeNew').checked = true;
+  } catch {
+    select.innerHTML = '<option value="" disabled selected>failed to load testsuites</option>';
+  }
+  tcSyncAddToSuiteMode();
+  document.getElementById('tcAddToSuiteOverlay').classList.remove('hidden');
+}
+
+function closeTcAddToSuiteModal() {
+  document.getElementById('tcAddToSuiteOverlay').classList.add('hidden');
+}
+
+// Keeps exactly one of the select/input pair enabled, matching whichever
+// radio is picked - so a value left over in the disabled field is never
+// mistaken for the intended target in applyTcAddToSuite below.
+function tcSyncAddToSuiteMode() {
+  const isNew = document.getElementById('tcAddToSuiteModeNew').checked;
+  document.getElementById('tcAddToSuiteExistingSelect').disabled = isNew;
+  document.getElementById('tcAddToSuiteNewName').disabled = !isNew;
+}
+
+async function applyTcAddToSuite() {
+  const ids = tcSelectedIds();
+  if (!ids.length) return;
+  const isNew = document.getElementById('tcAddToSuiteModeNew').checked;
+  try {
+    if (isNew) {
+      const name = document.getElementById('tcAddToSuiteNewName').value.trim();
+      if (!name) { alert('Enter a name for the new testsuite.'); return; }
+      const res = await apiFetch(`${API}/testsuites`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, testcase_ids: ids }),
+      });
+      if (!res.ok) { alert(`Failed to create testsuite: ${res.status} ${await res.text()}`); return; }
+    } else {
+      const suiteId = document.getElementById('tcAddToSuiteExistingSelect').value;
+      if (!suiteId) { alert('Choose a testsuite.'); return; }
+      const getRes = await apiFetch(`${API}/testsuites/${suiteId}`);
+      if (!getRes.ok) { alert(`Failed to load testsuite: ${getRes.status} ${await getRes.text()}`); return; }
+      const suite = await getRes.json();
+      // Appended in selection order, skipping ones already in the suite -
+      // same "no duplicates, otherwise unchanged" contract as the Testsuites
+      // editor's own picker (renderTsAvailableList only offers ids not
+      // already in tsSelectedIds).
+      const merged = [...suite.testcase_ids, ...ids.filter(id => !suite.testcase_ids.includes(id))];
+      const putRes = await apiFetch(`${API}/testsuites/${suiteId}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: suite.name, description: suite.description, tags: suite.tags,
+          author: suite.author, stop_on_failure: suite.stop_on_failure,
+          testcase_ids: merged,
+        }),
+      });
+      if (!putRes.ok) { alert(`Failed to update testsuite: ${putRes.status} ${await putRes.text()}`); return; }
+    }
+    closeTcAddToSuiteModal();
+    tcClearSelection();
+    // Defined in testsuites-tab.js, loaded after this file - refreshes its
+    // table if the Testsuites panel has already loaded once; harmless no-op
+    // otherwise since it'll fetch fresh next time that panel opens anyway.
+    if (typeof loadTestsuites === 'function') loadTestsuites();
+  } catch (err) {
+    alert(`Failed to add to testsuite: ${err.message}`);
   }
 }
 
@@ -968,18 +1100,35 @@ function collectTcStepExpected(card) {
   return checks.length ? checks : null;
 }
 
+// One line of "what this step is" - action, target, and anything set away
+// from its default (delay/repeat/expectations) - so a collapsed card still
+// says something useful instead of just a number.
+function tcStepSummaryText(step) {
+  const bits = [actionLabel(step.action)];
+  if (step.target === 'multicast') bits.push(`${(step.target_pi_ids || []).length} Pi(s)`);
+  else if (step.target === 'all') bits.push('all Pis');
+  else bits.push(step.target);
+  if (step.delay_before_seconds) bits.push(`delay ${step.delay_before_seconds}s`);
+  if (step.repeat_count > 1) bits.push(`repeat ×${step.repeat_count}`);
+  if (tcExpectedList(step).length) bits.push('expects results');
+  return bits.join(' · ');
+}
+
 function tcStepCardHtml(step, i) {
   const expected = tcExpectedList(step);
+  const expanded = tcExpandedSteps.has(step);
   return `
     <div class="tc-step-card" data-index="${i}">
-      <div class="tc-step-header">
+      <div class="tc-step-header tc-step-toggle">
+        <button type="button" class="icon-btn tc-step-toggle-chevron" title="Show/hide step detail">${chevronIconSvg(expanded ? 'down' : 'right')}</button>
         <span class="tc-step-num">#${i + 1}</span>
         ${step.loop_group ? `<span class="tc-step-loop-badge" title="Repeats with loop ${step.loop_group}">${step.loop_group} &times;${step.loop_count}</span>` : ''}
+        <span class="tc-step-summary">${tcEsc(tcStepSummaryText(step))}</span>
         <span class="tc-step-controls">
           <button type="button" class="icon-btn tc-step-remove" title="Remove step">&#128465;</button>
         </span>
       </div>
-      <div class="tc-step-body">
+      <div class="tc-step-body${expanded ? '' : ' hidden'}">
         <label>Action</label>
         <select class="field tc-step-action">
           ${TC_ACTIONS.map(a => `<option value="${a}" ${a === step.action ? 'selected' : ''}>${actionLabel(a)}</option>`).join('')}
@@ -1036,7 +1185,23 @@ function wireTcStepCard(i) {
     card.querySelector('.tc-step-expected').classList.toggle('hidden', !e.target.checked);
   });
 
-  card.querySelector('.tc-step-remove').addEventListener('click', () => removeTcStep(i));
+  card.querySelector('.tc-step-remove').addEventListener('click', (e) => {
+    e.stopPropagation();
+    removeTcStep(i);
+  });
+
+  // Collapsed by default (see tcExpandedSteps) so a card only ever shows
+  // its one-line summary until asked to show the full edit body - clicking
+  // anywhere on the header toggles it, except the remove button above,
+  // which stops the click from reaching here.
+  card.querySelector('.tc-step-toggle').addEventListener('click', () => {
+    const body = card.querySelector('.tc-step-body');
+    const expanding = body.classList.contains('hidden');
+    body.classList.toggle('hidden', !expanding);
+    card.querySelector('.tc-step-toggle-chevron').innerHTML = chevronIconSvg(expanding ? 'down' : 'right');
+    if (expanding) tcExpandedSteps.add(step);
+    else tcExpandedSteps.delete(step);
+  });
 }
 
 function renderTcSteps() {
@@ -1084,7 +1249,11 @@ function tcAfterStepsChanged() {
 
 function addTcStep() {
   syncTcStepsFromDom();
-  tcSteps.push(newTcStep());
+  const step = newTcStep();
+  // Expanded by default - it was just added specifically to be filled in,
+  // unlike every already-configured step around it.
+  tcExpandedSteps.add(step);
+  tcSteps.push(step);
   tcAfterStepsChanged();
 }
 
@@ -1110,6 +1279,7 @@ function openNewTestcase() {
   renderTcSteps();
   renderTcLoops();
   openTcEditorModal();
+  tcCaptureEditorSnapshot();
 }
 
 async function openEditTestcase(id) {
@@ -1132,6 +1302,7 @@ async function openEditTestcase(id) {
     renderTcSteps();
     renderTcLoops();
     openTcEditorModal();
+    tcCaptureEditorSnapshot();
   } catch (err) {
     alert(`Failed to load testcase: ${err.message}`);
   }
@@ -1343,14 +1514,17 @@ function tcRunDefaultExpanded(run) {
   return run.status === 'running';
 }
 
-// container: where to render. run: a TestRunOut.
-function tcRenderRunSteps(container, run) {
+// container: where to render. run: a TestRunOut. forceCollapsed: when true,
+// every step/Pi entry defaults collapsed regardless of tcRunDefaultExpanded
+// (the Results tab's own default - see resSuiteTestcaseStepsHtml/
+// renderResTestcaseDetail - rather than auto-opening while still running).
+function tcRenderRunSteps(container, run, forceCollapsed = false) {
   if (tcRunCollapseRunId !== run.id) {
     tcRunCollapseRunId = run.id;
     tcRunToggledSteps = new Set();
     tcRunToggledEntries = new Set();
   }
-  const defaultExpanded = tcRunDefaultExpanded(run);
+  const defaultExpanded = !forceCollapsed && tcRunDefaultExpanded(run);
   const results = run.results || [];
   if (!results.length) {
     container.innerHTML = `<div class="pi-log-empty">${run.status === 'running' ? 'starting…' : 'no steps recorded'}</div>`;
@@ -1458,9 +1632,21 @@ async function loadTcRunHistory() {
 // --- wiring -------------------------------------------------------------
 
 document.getElementById('tcNewBtn').addEventListener('click', openNewTestcase);
-document.getElementById('tcEditorCloseBtn').addEventListener('click', closeTcEditorModal);
+document.getElementById('tcEditorCloseBtn').addEventListener('click', tcRequestCloseEditor);
 document.getElementById('tcEditorOverlay').addEventListener('click', (e) => {
-  if (e.target.id === 'tcEditorOverlay') closeTcEditorModal();
+  if (e.target.id === 'tcEditorOverlay') tcRequestCloseEditor();
+});
+document.getElementById('tcUnsavedSaveBtn').addEventListener('click', () => {
+  closeTcUnsavedModal();
+  saveTestcase('draft', false);
+});
+document.getElementById('tcUnsavedDiscardBtn').addEventListener('click', () => {
+  closeTcUnsavedModal();
+  closeTcEditorModal();
+});
+document.getElementById('tcUnsavedCancelBtn').addEventListener('click', closeTcUnsavedModal);
+document.getElementById('tcUnsavedOverlay').addEventListener('click', (e) => {
+  if (e.target.id === 'tcUnsavedOverlay') closeTcUnsavedModal();
 });
 document.getElementById('tcRunBackBtn').addEventListener('click', showTcListView);
 document.getElementById('tcRunHistoryBtn').addEventListener('click', showTcRunHistoryView);
@@ -1490,6 +1676,15 @@ document.getElementById('tcBulkTagCloseBtn').addEventListener('click', closeTcBu
 document.getElementById('tcBulkTagOverlay').addEventListener('click', (e) => {
   if (e.target.id === 'tcBulkTagOverlay') closeTcBulkTagModal();
 });
+document.getElementById('tcBulkAddToSuiteBtn').addEventListener('click', openTcAddToSuiteModal);
+document.getElementById('tcAddToSuiteApplyBtn').addEventListener('click', applyTcAddToSuite);
+document.getElementById('tcAddToSuiteCancelBtn').addEventListener('click', closeTcAddToSuiteModal);
+document.getElementById('tcAddToSuiteCloseBtn').addEventListener('click', closeTcAddToSuiteModal);
+document.getElementById('tcAddToSuiteOverlay').addEventListener('click', (e) => {
+  if (e.target.id === 'tcAddToSuiteOverlay') closeTcAddToSuiteModal();
+});
+document.getElementById('tcAddToSuiteModeExisting').addEventListener('change', tcSyncAddToSuiteMode);
+document.getElementById('tcAddToSuiteModeNew').addEventListener('change', tcSyncAddToSuiteMode);
 
 // Reset to the list view (discarding any in-progress run view) whenever
 // this tab actually becomes the visible one - a click, a reload landing

@@ -8,9 +8,10 @@
 // into one row shape here (see resNormalise*) rather than the table having to
 // branch per row.
 //
-// A testsuite run drills down twice: suite -> its testcase runs -> that
-// testcase's steps. The step view is tcRenderRunSteps from testcases-tab.js,
-// which is why this file is loaded after it.
+// A testsuite run drills down into each testcase's own step detail inline
+// (see renderResSuiteDetail) via tcRenderRunSteps from testcases-tab.js,
+// which is why this file is loaded after it (and after testsuites-tab.js,
+// whose openTsRunConfirmModal backs the testsuite Rerun path below).
 
 let resRuns = [];
 let resDetailPollTimer = null;
@@ -21,6 +22,15 @@ let resDetailPollTimer = null;
 // instead of just "#<id>". Reset whenever a different run is opened (see
 // openResDetail).
 let resSuiteTestcaseNames = {};
+// testcase_id -> steps (its own definition, not a run), fetched alongside
+// the names above - lets a not-yet-reached testcase still show its planned
+// step list. Reset alongside resSuiteTestcaseNames.
+let resSuiteTestcaseSteps = {};
+// testcase_ids whose row in the currently-open suite detail is expanded to
+// show its step-by-step detail inline - keyed by testcase_id (stable across
+// pending -> running -> finished) rather than run_id (which doesn't exist
+// yet for a pending row). Reset alongside the caches above.
+let resExpandedSuiteTcIds = new Set();
 
 // Selected rows, keyed "kind:id" since a testcase run and a testsuite run
 // can share the same numeric id - the composite key is what the checkbox
@@ -131,7 +141,7 @@ function renderResTable() {
       <td>${r.completed_at ? formatVnDateTime(r.completed_at) : ''}</td>
       <td>${resDurationText(r)}</td>
       <td class="capture-actions">
-        <button class="icon-btn res-view-btn" data-kind="${r.kind}" data-id="${r.id}" title="View">&#9654;</button>
+        <button class="icon-btn res-view-btn" data-kind="${r.kind}" data-id="${r.id}" title="View">${chevronIconSvg('right')}</button>
         <button class="icon-btn res-rerun-btn" data-kind="${r.kind}" data-id="${r.id}" title="Rerun">${RERUN_ICON_SVG}</button>
         <button class="icon-btn res-delete-btn" data-kind="${r.kind}" data-id="${r.id}" title="Delete">&#128465;</button>
       </td>
@@ -164,14 +174,24 @@ function renderResTable() {
 // Packages tab's own Run button hits), then opens the new run in the detail
 // view so its progress is immediately visible, same as starting it from
 // there would.
+//
+// A testsuite goes through openTsRunConfirmModal (testsuites-tab.js) first -
+// the suite may have been edited (testcases added/removed/reordered, or
+// stop_on_failure flipped) since the run being repeated, so "rerun" here
+// means "run its *current* configuration", not literally repeat what ran
+// before. Worth confirming rather than assuming. A lone testcase has no such
+// editable membership to drift, so it still runs immediately.
 async function rerunResRun(kind, id) {
   const run = resRuns.find(r => r.kind === kind && r.id === id);
   if (!run) return;
   const sourceId = kind === 'testsuite' ? run.raw.testsuite_id : run.raw.testcase_id;
   if (sourceId === undefined || sourceId === null) return;
-  const path = kind === 'testsuite' ? `${API}/testsuites/${sourceId}/run` : `${API}/testcases/${sourceId}/run`;
+  if (kind === 'testsuite') {
+    openTsRunConfirmModal(sourceId, (confirmedId) => resStartTestsuiteRun(confirmedId));
+    return;
+  }
   try {
-    const res = await apiFetch(path, { method: 'POST' });
+    const res = await apiFetch(`${API}/testcases/${sourceId}/run`, { method: 'POST' });
     if (!res.ok) {
       alert(`Failed to start run: ${res.status} ${await res.text()}`);
       return;
@@ -179,6 +199,23 @@ async function rerunResRun(kind, id) {
     const newRun = await res.json();
     await loadResults();
     openResDetail(kind, newRun.id);
+  } catch (err) {
+    alert(`Failed to start run: ${err.message}`);
+  }
+}
+
+// Same as the testcase branch above, split out so it can be passed as
+// openTsRunConfirmModal's onConfirm callback.
+async function resStartTestsuiteRun(id) {
+  try {
+    const res = await apiFetch(`${API}/testsuites/${id}/run`, { method: 'POST' });
+    if (!res.ok) {
+      alert(`Failed to start run: ${res.status} ${await res.text()}`);
+      return;
+    }
+    const newRun = await res.json();
+    await loadResults();
+    openResDetail('testsuite', newRun.id);
   } catch (err) {
     alert(`Failed to start run: ${err.message}`);
   }
@@ -286,6 +323,9 @@ let resDetailCurrent = null;
 async function openResDetail(kind, id) {
   resDetailCurrent = { kind, id };
   resSuiteTestcaseNames = {};
+  resSuiteTestcaseSteps = {};
+  resExpandedSuiteTcIds.clear();
+  resFinishedRunCache.clear();
   showResDetailView();
   await refreshResDetail(kind, id);
   resStopPolling();
@@ -304,13 +344,34 @@ async function resLoadSuiteTestcaseNames(ids) {
   const results = await Promise.all(ids.map(async (tcId) => {
     try {
       const res = await apiFetch(`${API}/testcases/${tcId}`);
-      if (res.ok) return [tcId, (await res.json()).name];
+      if (res.ok) {
+        const t = await res.json();
+        return [tcId, t.name, t.steps];
+      }
     } catch {
       // transient; this testcase's row just falls back to "#<id>" below
     }
-    return [tcId, null];
+    return [tcId, null, null];
   }));
-  results.forEach(([tcId, name]) => { if (name) resSuiteTestcaseNames[tcId] = name; });
+  results.forEach(([tcId, name, steps]) => {
+    if (name) resSuiteTestcaseNames[tcId] = name;
+    if (steps) resSuiteTestcaseSteps[tcId] = steps;
+  });
+}
+
+// A fake TestRunOut-shaped object for a testcase the suite hasn't reached
+// yet, built from its own step definitions (fetched above) rather than an
+// actual run - there is none yet - so tcRenderRunSteps can show the planned
+// step list, every one "pending", instead of nothing at all.
+function resPendingStepsRun(testcaseId) {
+  const steps = resSuiteTestcaseSteps[testcaseId] || [];
+  return {
+    id: `pending-${testcaseId}`, status: 'pending',
+    results: steps.map((s, i) => ({
+      action: s.action, target: s.target, status: 'pending', step_index: i,
+      pass_index: 0, iteration: 1,
+    })),
+  };
 }
 
 async function refreshResDetail(kind, id) {
@@ -350,8 +411,11 @@ function renderResTestcaseDetail(run) {
     run.repeat_count > 1 ? `repeat ×${run.repeat_count}` : null,
     run.stop_on_failure ? 'stop on failure' : 'continue on failure',
   ]);
-  // The same renderer the Packages tab's live run view uses.
-  tcRenderRunSteps(document.getElementById('resDetailBody'), run);
+  // The same renderer the Packages tab's live run view uses, but forced to
+  // start every step/Pi entry collapsed (see tcRenderRunSteps) - this tab is
+  // for scanning past runs, not watching one live, so nothing here should
+  // auto-expand just because a run happens to still be "running".
+  tcRenderRunSteps(document.getElementById('resDetailBody'), run, true);
 }
 
 // One row per testcase_id the run steps through - not just the ones with a
@@ -364,31 +428,93 @@ function renderResTestcaseDetail(run) {
 // to a "pending" placeholder for testcases the suite run hasn't reached yet.
 function resSuiteRowState(run, index) {
   const results = run.results || [];
+  const id = run.testcase_ids[index];
   if (index < results.length) {
     const r = results[index];
-    return { status: r.status, testcase_name: r.testcase_name, run_id: r.run_id, error: r.error, finished: true };
+    return {
+      status: r.status, testcase_name: r.testcase_name, testcase_id: id,
+      run_id: r.run_id, error: r.error,
+    };
   }
-  const id = run.testcase_ids[index];
   const name = resSuiteTestcaseNames[id] || `#${id}`;
-  return { status: 'pending', testcase_name: name, run_id: null, finished: false };
+  return { status: 'pending', testcase_name: name, testcase_id: id, run_id: null };
+}
+
+// Whether a row has anything to show if expanded - a run to poll/fetch
+// (running or finished), or at least its own planned step list cached (see
+// resLoadSuiteTestcaseNames) for one the suite hasn't reached yet. A row
+// with neither (its testcase was deleted before the suite got to it, and
+// nothing was ever cached for it) stays a plain non-toggling status line.
+function resSuiteRowTogglable(r) {
+  return !!r.run_id || (r.status === 'pending' && !!resSuiteTestcaseSteps[r.testcase_id]);
+}
+
+function resSuiteRowHtml(r, i, expanded) {
+  const togglable = resSuiteRowTogglable(r);
+  return `
+    <div class="cmd-entry">
+      <div class="hdr${togglable ? ' res-suite-tc-toggle' : ''}"${togglable ? ` data-testcase-id="${r.testcase_id}"` : ''}>
+        ${togglable ? `<button type="button" class="icon-btn tc-run-toggle-chevron" title="Show/hide step detail">${chevronIconSvg(expanded ? 'down' : 'right')}</button>` : ''}
+        <span>${i + 1}. ${r.testcase_name || `testcase #${r.testcase_id}`}</span>
+        <span class="cmd-status ${tcStatusClass(r.status)}">${r.status}</span>
+      </div>
+      <div class="result${togglable && !expanded ? ' hidden' : ''}" data-testcase-id="${r.testcase_id}">
+        ${r.error ? `<div class="tc-run-reason">${r.error}</div>` : ''}
+        ${togglable ? '' : `<div class="hint">${r.status === 'pending' ? 'not started yet'
+            : r.status === 'skipped' ? 'never ran - the suite stopped before reaching it'
+            : 'no run to open - the testcase was gone when the suite reached it'}</div>`}
+      </div>
+    </div>
+  `;
+}
+
+// run_id -> its TestRunOut, once finished - the whole suite view rebuilds
+// on every 1.5s poll tick while any testcase in it is still running (see
+// refreshResDetail), so without this an expanded *finished* row would
+// refetch its own (unchanging) run over and over for as long as the rest of
+// the suite keeps going.
+const resFinishedRunCache = new Map();
+
+// Fills one row's expanded step detail - a static planned-step preview for
+// one not yet started, or the real (possibly still live) run for one that
+// is. Called both right after expanding and, for a running testcase, on
+// every subsequent poll tick (see resRefreshRunningSuiteRow) - forceCollapsed
+// is passed through to tcRenderRunSteps either way, per this tab's own
+// default of every step/Pi entry starting collapsed (see
+// renderResTestcaseDetail above).
+async function resFillSuiteTcSteps(el, r) {
+  if (r.status === 'pending') {
+    tcRenderRunSteps(el, resPendingStepsRun(r.testcase_id), true);
+    return;
+  }
+  if (!r.run_id) return;
+  if (r.status !== 'running' && resFinishedRunCache.has(r.run_id)) {
+    tcRenderRunSteps(el, resFinishedRunCache.get(r.run_id), true);
+    return;
+  }
+  try {
+    const res = await apiFetch(`${API}/testcases/runs/${r.run_id}`);
+    if (!res.ok) return;
+    const tcRun = await res.json();
+    if (tcRun.status !== 'running') resFinishedRunCache.set(r.run_id, tcRun);
+    tcRenderRunSteps(el, tcRun, true);
+  } catch {
+    // transient; the next poll tick (if running) or a re-expand retries
+  }
 }
 
 // A suite run holds one entry per testcase it launched, each pointing at its
-// own TestRun via run_id. A finished testcase only gets a link to drill into
-// its full step detail elsewhere (rather than inlining every step of every
-// testcase at once) - but the one currently running gets its live step-by-
-// step progress shown right here (see resRefreshRunningSuiteRow), so the
-// view doesn't sit blank on "running" with nothing to show for it.
+// own TestRun via run_id. Every togglable row (started or not-yet-reached -
+// see resSuiteRowTogglable) expands inline to show that testcase's own step
+// detail, rather than navigating away to see it - collapsed by default
+// (see resExpandedSuiteTcIds), same as this tab's testcase-run view.
 function renderResSuiteDetail(run) {
   const results = run.results || [];
-<<<<<<< HEAD
   const rows = (run.testcase_ids || []).map((_, i) => resSuiteRowState(run, i));
-=======
   // Entries are seeded pending for the whole suite up front (see
   // routers/TestSuites._run_testsuite), so "run" here means started - one
   // that has its own TestRun to point at - not merely listed.
   const started = results.filter(r => r.run_id).length;
->>>>>>> 089b72e452011768b940d1453c50a67ddeddeb7b
   resSetDetailHeader(`Testsuite run: ${run.testsuite_name}`, run.status, [
     `started ${formatVnDateTime(run.started_at)}`,
     run.completed_at ? `completed ${formatVnDateTime(run.completed_at)}` : null,
@@ -398,31 +524,9 @@ function renderResSuiteDetail(run) {
 
   const body = document.getElementById('resDetailBody');
   body.innerHTML = rows.length
-    ? rows.map((r, i) => `
-        <div class="cmd-entry">
-          <div class="hdr">
-            <span>${i + 1}. ${r.testcase_name || `testcase #${run.testcase_ids[i]}`}</span>
-            <span class="cmd-status ${tcStatusClass(r.status)}">${r.status}</span>
-          </div>
-          <div class="result">
-            ${r.error ? `<div class="tc-run-reason">${r.error}</div>` : ''}
-            ${r.status === 'running' ? '<div class="res-suite-running-steps"></div>' : ''}
-            ${r.run_id && r.status !== 'running'
-              ? `<button type="button" class="res-open-tc-run" data-id="${r.run_id}">Open step detail &rarr;</button>`
-<<<<<<< HEAD
-              : (r.finished && !r.run_id ? '<div class="hint">no run to open - the testcase was gone when the suite reached it</div>' : '')}
-=======
-              : `<div class="hint">${r.status === 'pending' ? 'not started yet'
-                  : r.status === 'skipped' ? 'never ran - the suite stopped before reaching it'
-                  : 'no run to open - the testcase was gone when the suite reached it'}</div>`}
->>>>>>> 089b72e452011768b940d1453c50a67ddeddeb7b
-          </div>
-        </div>
-      `).join('')
+    ? rows.map((r, i) => resSuiteRowHtml(r, i, resExpandedSuiteTcIds.has(r.testcase_id))).join('')
     : `<div class="pi-log-empty">${run.status === 'running' ? 'starting…' : 'no testcases ran'}</div>`;
 
-<<<<<<< HEAD
-=======
   // Only for runs recorded before the backend seeded every testcase up front -
   // a seeded run already shows the not-yet-reached ones as their own pending
   // rows, so a trailing "running…" would just be repeating itself.
@@ -430,29 +534,40 @@ function renderResSuiteDetail(run) {
     body.insertAdjacentHTML('beforeend', '<div class="pi-log-empty">running…</div>');
   }
 
->>>>>>> 089b72e452011768b940d1453c50a67ddeddeb7b
-  body.querySelectorAll('.res-open-tc-run').forEach(btn => btn.addEventListener('click', () => {
-    openResDetail('testcase', Number(btn.dataset.id));
-  }));
+  body.querySelectorAll('.cmd-entry').forEach((entry, i) => {
+    const r = rows[i];
+    const toggle = entry.querySelector('.res-suite-tc-toggle');
+    if (!toggle) return;
+    const resultEl = entry.querySelector('.result');
+    // Already expanded (surviving a poll-driven re-render) - re-fill rather
+    // than leave whatever was rendered before this tick's fetch/data.
+    if (resExpandedSuiteTcIds.has(r.testcase_id)) resFillSuiteTcSteps(resultEl, r);
+    toggle.addEventListener('click', () => {
+      const expanding = resultEl.classList.contains('hidden');
+      resultEl.classList.toggle('hidden', !expanding);
+      toggle.querySelector('.tc-run-toggle-chevron').innerHTML = chevronIconSvg(expanding ? 'down' : 'right');
+      if (expanding) {
+        resExpandedSuiteTcIds.add(r.testcase_id);
+        resFillSuiteTcSteps(resultEl, r);
+      } else {
+        resExpandedSuiteTcIds.delete(r.testcase_id);
+      }
+    });
+  });
 }
 
 // Keeps the currently-running testcase's step-by-step detail live, inline in
-// the suite detail view - called on every poll tick (see refreshResDetail).
+// the suite detail view, if its row happens to be expanded - called on every
+// poll tick (see refreshResDetail). A collapsed running row is left alone:
+// renderResSuiteDetail's own rebuild above already redraws its status text.
 async function resRefreshRunningSuiteRow(run) {
   const idx = (run.results || []).findIndex(r => r.status === 'running');
   if (idx === -1) return;
-  const runId = run.results[idx].run_id;
-  if (!runId) return;
-  const container = document.querySelectorAll('#resDetailBody .cmd-entry')[idx]
-    ?.querySelector('.res-suite-running-steps');
-  if (!container) return;
-  try {
-    const res = await apiFetch(`${API}/testcases/runs/${runId}`);
-    if (!res.ok) return;
-    tcRenderRunSteps(container, await res.json());
-  } catch {
-    // transient; the next tick retries
-  }
+  const r = run.results[idx];
+  if (!resExpandedSuiteTcIds.has(r.testcase_id)) return;
+  const el = document.querySelector(`#resDetailBody .result[data-testcase-id="${r.testcase_id}"]`);
+  if (!el) return;
+  await resFillSuiteTcSteps(el, r);
 }
 
 // --- wiring ---------------------------------------------------------------

@@ -758,6 +758,25 @@ def _expand_step_plan(steps: list) -> list:
     return plan
 
 
+def _plan_skeletons(plan: list, repeat_count: int) -> list:
+    """One pending placeholder per step execution the run will produce, in
+    the exact order _run_testcase's nested loops below will produce them -
+    including each step's own repeat_count. Seeded up front (same idea as
+    routers/TestSuites._run_testsuite's pending testcase entries) so a
+    client polling mid-run sees every step it's about to reach, not just the
+    ones that have already finished."""
+    skeletons = []
+    for pass_no in range(repeat_count):
+        for step, idx, loop_group, loop_pass in plan:
+            for rep in range(max(1, step.get("repeat_count", 1))):
+                skeletons.append({
+                    "action": step.get("action"), "target": step.get("target"),
+                    "status": "pending", "step_index": idx, "pass_index": pass_no,
+                    "loop_group": loop_group, "loop_pass": loop_pass, "iteration": rep + 1,
+                })
+    return skeletons
+
+
 def _run_testcase(run_id: int):
     with get_session_direct() as session:
         run = session.get(TestRun, run_id)
@@ -767,7 +786,6 @@ def _run_testcase(run_id: int):
         stop_on_failure = run.stop_on_failure
         repeat_count = max(1, run.repeat_count)
 
-    results = []
     overall_passed = True
     stopped = False
 
@@ -775,7 +793,22 @@ def _run_testcase(run_id: int):
     # the run loop below stays a straight walk and every step result can name
     # which loop pass produced it.
     plan = _expand_step_plan(steps)
+    results = _plan_skeletons(plan, repeat_count)
 
+    def save_results():
+        with get_session_direct() as session:
+            run = session.get(TestRun, run_id)
+            if run is None:
+                return False
+            run.results_json = json.dumps(results)
+            session.add(run)
+            session.commit()
+            return True
+
+    if not save_results():
+        return
+
+    pos = 0
     for pass_no in range(repeat_count):
         if stopped:
             break
@@ -783,6 +816,14 @@ def _run_testcase(run_id: int):
             if stopped:
                 break
             for rep in range(max(1, step.get("repeat_count", 1))):
+                # Flipped to "running" *before* dispatch (mirroring
+                # TestSuites._run_testsuite's per-testcase "running" entry),
+                # so a client polling mid-step sees it happening now rather
+                # than only "pending" right up until it completes.
+                results[pos].update({"status": "running"})
+                if not save_results():
+                    return
+
                 delay = step.get("delay_before_seconds") or 0
                 delay_log = []
                 if delay:
@@ -806,7 +847,7 @@ def _run_testcase(run_id: int):
                 step_result["loop_pass"] = loop_pass
                 if delay_log:
                     step_result["log"] = delay_log + step_result.get("log", [])
-                results.append(step_result)
+                results[pos] = step_result
 
                 if step_result["status"] == "failed":
                     overall_passed = False
@@ -816,20 +857,25 @@ def _run_testcase(run_id: int):
                 # Persisted after every step (not just at the end) so a
                 # client polling GET /testcases/runs/{run_id} sees live
                 # per-step progress instead of only the final result.
-                with get_session_direct() as session:
-                    run = session.get(TestRun, run_id)
+                if not save_results():
                     # Deleted (see DELETE /testcases/runs/{run_id}) while this
                     # was still running - nothing left to write progress to,
                     # and the commands already dispatched can't be recalled,
                     # so just stop updating rather than crash the thread.
-                    if run is None:
-                        return
-                    run.results_json = json.dumps(results)
-                    session.add(run)
-                    session.commit()
+                    return
 
+                pos += 1
                 if stopped:
                     break
+
+    # Steps stopped_on_failure never reached stay "pending" indefinitely
+    # otherwise - marked "skipped" instead, same as TestSuites._run_testsuite
+    # does for the testcases after the one that stopped it.
+    if stopped:
+        for entry in results[pos:]:
+            entry["status"] = "skipped"
+        if not save_results():
+            return
 
     with get_session_direct() as session:
         run = session.get(TestRun, run_id)

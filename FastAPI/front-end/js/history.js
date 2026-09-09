@@ -45,7 +45,7 @@ async function loadHistory() {
         <td><span class="cmd-status ${displayStatus}">${displayStatus}</span></td>
         <td>${formatVnDateTime(c.created_at)}</td>
         <td class="capture-actions">
-          <button class="icon-btn history-toggle" title="Show result">&#9654;</button>
+          <button class="icon-btn history-toggle" title="Show result">${chevronIconSvg('right')}</button>
           <button class="icon-btn history-delete" data-command-id="${c.command_id}" title="Delete">&#128465;</button>
         </td>
       </tr>

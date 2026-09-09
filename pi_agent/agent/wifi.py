@@ -68,8 +68,53 @@ class WifiMixin:
             "gateway": await self._default_gateway_for(interface),
             "raw_output": out.strip(),
         }
+        result.update(await self._wpa_link_extras(interface))
         self._cache_link_info(interface, result)
         return result
+
+    async def _wpa_link_extras(self, interface):
+        """Fields `iw dev link` doesn't carry, pulled from wpa_supplicant
+        instead: security/auth details from `wpa_cli status`, and
+        noise/link-speed/average-RSSI from `wpa_cli signal_poll` (driver-
+        dependent - fields wpa_supplicant couldn't get from the kernel come
+        back as "9999"/absent rather than as an error). Best-effort only:
+        if wpa_supplicant isn't the one managing this interface (or its
+        control socket isn't up), both calls just fail and callers still
+        get whatever `iw` found."""
+        extras = {}
+
+        status = await self._current_wpa_status(interface)
+        if status:
+            extras["key_mgmt"] = status.get("key_mgmt")
+            extras["pairwise_cipher"] = status.get("pairwise_cipher")
+            extras["group_cipher"] = status.get("group_cipher")
+            extras["wpa_state"] = status.get("wpa_state")
+            extras["ip_address"] = status.get("ip_address")
+            extras["address"] = status.get("address")
+
+        signal_ret = await self._wpa_cli(interface, "signal_poll")
+        if signal_ret.returncode == 0:
+            signal = {}
+            for line in signal_ret.stdout.splitlines():
+                key, sep, value = line.partition("=")
+                if sep:
+                    signal[key] = value
+
+            def _int_field(key):
+                value = signal.get(key)
+                if value is None or value == "9999":
+                    return None
+                try:
+                    return int(value)
+                except ValueError:
+                    return None
+
+            extras["noise_dbm"] = _int_field("NOISE")
+            extras["avg_signal_dbm"] = _int_field("AVG_RSSI")
+            extras["link_speed_mbps"] = _int_field("LINKSPEED")
+            extras["channel_width"] = signal.get("WIDTH")
+
+        return extras
 
     def _cache_link_info(self, interface, result):
         self._link_info_cache[interface] = (asyncio.get_running_loop().time(), result)

@@ -204,17 +204,7 @@ def _run_testsuite(suite_run_id: int):
                 # point at) rather than crashing the whole suite run.
                 results[i].update({"status": "failed", "error": "testcase no longer exists"})
                 overall_passed = False
-<<<<<<< HEAD
-                with get_session_direct() as s2:
-                    r = s2.get(TestSuiteRun, suite_run_id)
-                    if r is None:
-                        return
-                    r.results_json = json.dumps(results)
-                    s2.add(r)
-                    s2.commit()
-=======
                 save_results()
->>>>>>> 089b72e452011768b940d1453c50a67ddeddeb7b
                 if stop_on_failure:
                     stopped_at = i
                     break
@@ -230,27 +220,10 @@ def _run_testsuite(suite_run_id: int):
             session.refresh(run)
             run_id, testcase_name = run.id, testcase.name
 
-<<<<<<< HEAD
-        # Recorded as "running" with its run_id already known *before*
-        # _run_testcase is called, not just once it finishes - this is what
-        # lets the live view (testsuites-tab.js/results-tab.js) drill into
-        # the currently-executing testcase's own step-by-step progress
-        # instead of only ever showing testcases that have already finished.
-        entry = {"testcase_id": tc_id, "testcase_name": testcase_name, "run_id": run_id, "status": "running"}
-        results.append(entry)
-        with get_session_direct() as session:
-            r = session.get(TestSuiteRun, suite_run_id)
-            if r is None:
-                return
-            r.results_json = json.dumps(results)
-            session.add(r)
-            session.commit()
-=======
         # Published before the (blocking) run starts, so the UI can open this
         # testcase's own run and follow its steps while they happen.
         results[i].update({"testcase_name": testcase_name, "run_id": run_id, "status": "running"})
         save_results()
->>>>>>> 089b72e452011768b940d1453c50a67ddeddeb7b
 
         _run_testcase(run_id)
 
@@ -261,24 +234,10 @@ def _run_testsuite(suite_run_id: int):
             # deleted testcase is above, rather than crash on a None status.
             status = finished.status if finished is not None else "failed"
 
-<<<<<<< HEAD
-        entry["status"] = status
-        if status != "passed":
-            overall_passed = False
-
-        with get_session_direct() as session:
-            r = session.get(TestSuiteRun, suite_run_id)
-            if r is None:
-                return
-            r.results_json = json.dumps(results)
-            session.add(r)
-            session.commit()
-=======
         results[i]["status"] = status
         if status != "passed":
             overall_passed = False
         save_results()
->>>>>>> 089b72e452011768b940d1453c50a67ddeddeb7b
 
         if status != "passed" and stop_on_failure:
             stopped_at = i

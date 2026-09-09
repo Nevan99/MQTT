@@ -26,6 +26,10 @@ let tsLastRunRenderSignature = null;
 // ones that have reported a result yet - without an id-only placeholder for
 // whichever one is still pending or currently running.
 let tsRunTestcaseNames = {};
+// testcase_id -> steps (its own definition, not a run) - fetched alongside
+// the names above so a testcase the suite hasn't reached yet can still show
+// its planned step list (all "pending") instead of nothing at all.
+let tsRunTestcaseSteps = {};
 
 // --- popups -------------------------------------------------------------
 
@@ -116,7 +120,7 @@ function renderTsTable() {
     ].filter(Boolean).join(' · ');
     return `
     <tr>
-      <td title="${details}">${s.name}</td>
+      <td class="ts-name-cell" title="${details}">${s.name}</td>
       <td>${s.testcase_ids.length}</td>
       <td class="capture-actions">
         <button class="icon-btn ts-run-btn" data-id="${s.id}" title="Run">&#9654;</button>
@@ -128,7 +132,7 @@ function renderTsTable() {
   `;
   }).join('');
 
-  body.querySelectorAll('.ts-run-btn').forEach(btn => btn.addEventListener('click', () => runTestsuiteById(btn.dataset.id)));
+  body.querySelectorAll('.ts-run-btn').forEach(btn => btn.addEventListener('click', () => openTsRunConfirmModal(Number(btn.dataset.id))));
   body.querySelectorAll('.ts-edit-btn').forEach(btn => btn.addEventListener('click', () => openEditTestsuite(btn.dataset.id)));
   body.querySelectorAll('.ts-dup-btn').forEach(btn => btn.addEventListener('click', () => duplicateTestsuite(btn.dataset.id)));
   body.querySelectorAll('.ts-delete-btn').forEach(btn => btn.addEventListener('click', () => deleteTestsuite(btn.dataset.id)));
@@ -308,6 +312,64 @@ async function saveTestsuite(thenRun) {
   }
 }
 
+// --- run confirmation ------------------------------------------------------
+// A testsuite's own membership/config can drift after a run - testcases
+// added, removed, reordered, or stop_on_failure flipped - so before actually
+// dispatching anything, this shows exactly what will run: the suite's name,
+// stop_on_failure, and its *current* ordered testcase list (fetched fresh,
+// not whatever a stale row in some table remembers). Used by both the
+// Testsuites table's own Run button and the Results tab's Rerun action.
+
+let tsRunConfirmSuiteId = null;
+let tsRunConfirmOnConfirm = null;
+
+// onConfirm: (id) => void, called with the suite id if the user confirms.
+// Defaults to running it in this tab's own view (the Run button's case) -
+// results-tab.js passes its own callback so a rerun opens in the Results
+// tab's detail view instead.
+async function openTsRunConfirmModal(id, onConfirm) {
+  tsRunConfirmSuiteId = id;
+  tsRunConfirmOnConfirm = onConfirm || ((confirmedId) => runTestsuiteById(confirmedId));
+  const nameEl = document.getElementById('tsRunConfirmName');
+  const metaEl = document.getElementById('tsRunConfirmMeta');
+  const listEl = document.getElementById('tsRunConfirmList');
+  nameEl.textContent = 'Loading…';
+  metaEl.textContent = '';
+  listEl.innerHTML = '';
+  document.getElementById('tsRunConfirmOverlay').classList.remove('hidden');
+  try {
+    const res = await apiFetch(`${API}/testsuites/${id}`);
+    if (!res.ok) {
+      alert(`Failed to load testsuite: ${res.status} ${await res.text()}`);
+      closeTsRunConfirmModal();
+      return;
+    }
+    const suite = await res.json();
+    if (tsRunConfirmSuiteId !== id) return; // overtaken by a different open/close
+    await fetchAllTestcasesForPicker();
+    nameEl.textContent = suite.name;
+    metaEl.textContent = suite.stop_on_failure
+      ? 'Stops on the first failing testcase' : 'Continues through every testcase regardless of failures';
+    listEl.innerHTML = suite.testcase_ids.length
+      ? suite.testcase_ids.map((tcId, i) => `
+          <div class="ts-picker-row">
+            <span class="ts-picker-num">#${i + 1}</span>
+            <span class="ts-picker-name">${tcEsc(tsTestcaseName(tcId))}</span>
+          </div>
+        `).join('')
+      : '<div class="pi-log-empty">no testcases in this suite - running it will do nothing</div>';
+  } catch (err) {
+    alert(`Failed to load testsuite: ${err.message}`);
+    closeTsRunConfirmModal();
+  }
+}
+
+function closeTsRunConfirmModal() {
+  document.getElementById('tsRunConfirmOverlay').classList.add('hidden');
+  tsRunConfirmSuiteId = null;
+  tsRunConfirmOnConfirm = null;
+}
+
 // --- run + run history --------------------------------------------------
 
 async function runTestsuiteById(id) {
@@ -341,13 +403,34 @@ async function tsLoadRunTestcaseNames(ids) {
   const results = await Promise.all(ids.map(async (id) => {
     try {
       const res = await apiFetch(`${API}/testcases/${id}`);
-      if (res.ok) return [id, (await res.json()).name];
+      if (res.ok) {
+        const t = await res.json();
+        return [id, t.name, t.steps];
+      }
     } catch {
       // transient; this testcase's row just falls back to "#<id>" below
     }
-    return [id, null];
+    return [id, null, null];
   }));
-  results.forEach(([id, name]) => { if (name) tsRunTestcaseNames[id] = name; });
+  results.forEach(([id, name, steps]) => {
+    if (name) tsRunTestcaseNames[id] = name;
+    if (steps) tsRunTestcaseSteps[id] = steps;
+  });
+}
+
+// A fake TestRunOut-shaped object for a testcase the suite hasn't reached
+// yet, built from its own step definitions rather than an actual run (there
+// is none to fetch) - so tcRenderRunSteps can show the planned step list,
+// every one "pending", the same way it shows a real run's steps.
+function tsPendingStepsRun(testcaseId) {
+  const steps = tsRunTestcaseSteps[testcaseId] || [];
+  return {
+    id: `pending-${testcaseId}`, status: 'pending',
+    results: steps.map((s, i) => ({
+      action: s.action, target: s.target, status: 'pending', step_index: i,
+      pass_index: 0, iteration: 1,
+    })),
+  };
 }
 
 async function refreshTsRun() {
@@ -381,12 +464,16 @@ const tsExpandedRunIds = new Set();       // testcase run_ids whose detail is op
 const tsAutoExpandedRunIds = new Set();   // ones this view opened by itself
 const tsFinishedDetailRunIds = new Set(); // detail is final - stop refetching
 const tsDetailSignatures = new Map();     // run_id -> last rendered step signature
+// testcase_ids whose row is expanded while the suite hasn't reached them yet
+// (no run_id to key off, unlike tsExpandedRunIds above).
+const tsExpandedPendingIds = new Set();
 
 function tsResetRunDetailState() {
   tsExpandedRunIds.clear();
   tsAutoExpandedRunIds.clear();
   tsFinishedDetailRunIds.clear();
   tsDetailSignatures.clear();
+  tsExpandedPendingIds.clear();
 }
 
 async function tsLoadTestcaseRunDetail(resultEl, runId) {
@@ -486,7 +573,9 @@ function tsRenderRunTestcaseRows(run) {
   tsDetailSignatures.clear();
   tsFinishedDetailRunIds.clear();
   container.innerHTML = run.results.length
-    ? run.results.map((r, i) => tsRunTestcaseRowHtml(r, i, !!r.run_id && tsExpandedRunIds.has(r.run_id))).join('')
+    ? run.results.map((r, i) => tsRunTestcaseRowHtml(r, i, r.run_id
+        ? tsExpandedRunIds.has(r.run_id)
+        : tsExpandedPendingIds.has(r.testcase_id))).join('')
     : `<div class="pi-log-empty">${run.status === 'running' ? 'starting…' : 'no testcases ran'}</div>`;
 
   // Older suite runs (and any run recorded before the backend seeded every
@@ -496,17 +585,34 @@ function tsRenderRunTestcaseRows(run) {
   }
 
   container.querySelectorAll('.cmd-entry').forEach((entry, i) => {
-    const r = rows[i];
+    const r = run.results[i];
     const toggle = entry.querySelector('.ts-run-toggle');
-    // Nothing to drill into for a testcase that hasn't produced a run yet
-    // (not reached) - only a row with a run_id (running or finished) is
-    // expandable.
-    if (!toggle || !r.run_id) return;
+    if (!toggle) return;
+    // A testcase the suite hasn't reached yet has no run_id - nothing to
+    // poll - but its own step list is already known (fetched up front via
+    // tsLoadRunTestcaseNames), so it can still show every step as "pending"
+    // rather than nothing at all.
+    const pending = !r.run_id && tsRunTestcaseSteps[r.testcase_id];
     if (r.status === 'running') {
       // Loaded immediately (not lazily on click, like the finished-row path
       // below) - it starts expanded, and tsRefreshRunningStepDetail below
       // keeps it live on every subsequent poll tick.
       tcRenderRunSteps(entry.querySelector('.result'), { id: r.run_id, results: [], status: 'running', steps: [] });
+    } else if (pending) {
+      tcRenderRunSteps(entry.querySelector('.result'), tsPendingStepsRun(r.testcase_id));
+    }
+    // Nothing to drill into for a testcase that both hasn't run and has no
+    // step list to fall back on (e.g. it was deleted before the suite
+    // reached it) - only that case skips wiring the toggle at all.
+    if (!r.run_id && !pending) {
+      toggle.addEventListener('click', () => {
+        const resultEl = entry.querySelector('.result');
+        const expanding = resultEl.classList.contains('hidden');
+        resultEl.classList.toggle('hidden');
+        entry.querySelector('.toggle').innerHTML = expanding ? '&#9660;' : '&#9654;';
+        if (expanding) resultEl.innerHTML = `<div class="pi-log-empty">${r.error || 'not run yet'}</div>`;
+      });
+      return;
     }
     toggle.addEventListener('click', () => {
       const resultEl = entry.querySelector('.result');
@@ -514,7 +620,10 @@ function tsRenderRunTestcaseRows(run) {
       resultEl.classList.toggle('hidden');
       entry.querySelector('.toggle').innerHTML = expanding ? '&#9660;' : '&#9654;';
       if (!r.run_id) {
-        if (expanding) resultEl.innerHTML = `<div class="pi-log-empty">${r.error || 'not run yet'}</div>`;
+        // Pending: the step list is static (nothing to poll), so toggling
+        // just shows/hides what was already rendered above.
+        if (expanding) tsExpandedPendingIds.add(r.testcase_id);
+        else tsExpandedPendingIds.delete(r.testcase_id);
         return;
       }
       if (expanding) {
@@ -590,6 +699,17 @@ document.getElementById('tsRunHistoryBtn').addEventListener('click', openTsRunHi
 document.getElementById('tsRunHistoryCloseBtn').addEventListener('click', closeTsRunHistoryModal);
 document.getElementById('tsRunHistoryOverlay').addEventListener('click', (e) => {
   if (e.target.id === 'tsRunHistoryOverlay') closeTsRunHistoryModal();
+});
+document.getElementById('tsRunConfirmApplyBtn').addEventListener('click', () => {
+  const id = tsRunConfirmSuiteId;
+  const onConfirm = tsRunConfirmOnConfirm;
+  closeTsRunConfirmModal();
+  if (id !== null && onConfirm) onConfirm(id);
+});
+document.getElementById('tsRunConfirmCancelBtn').addEventListener('click', closeTsRunConfirmModal);
+document.getElementById('tsRunConfirmCloseBtn').addEventListener('click', closeTsRunConfirmModal);
+document.getElementById('tsRunConfirmOverlay').addEventListener('click', (e) => {
+  if (e.target.id === 'tsRunConfirmOverlay') closeTsRunConfirmModal();
 });
 document.getElementById('tsSaveBtn').addEventListener('click', () => saveTestsuite(false));
 document.getElementById('tsSaveRunBtn').addEventListener('click', () => saveTestsuite(true));
