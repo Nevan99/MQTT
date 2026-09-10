@@ -585,6 +585,7 @@ function renderWifiNetworkCard(piId, iface, net, connectedBssid) {
         : `${open ? '' : wifiPasswordFieldHtml(net)}
           <select class="field wifi-max-standard" title="Cap the 802.11 standard this radio negotiates at">
             <option value="">max standard: auto</option>
+            <option value="be">802.11be (Wi-Fi 7) max</option>
             <option value="ax">802.11ax (Wi-Fi 6) max</option>
             <option value="ac">802.11ac (Wi-Fi 5) max</option>
             <option value="n">802.11n (Wi-Fi 4) max</option>

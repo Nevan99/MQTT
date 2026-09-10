@@ -599,13 +599,13 @@
 
 <!-- Loaded in this exact order - plain global-scope scripts (no modules),
      later files call functions defined in earlier ones. -->
-<script src="js/auth.js"></script>
+<script src="js/auth.js?v=2"></script>
 <script src="js/layout.js"></script>
 <script src="js/fleet-table.js"></script>
 <script src="js/interfaces-tab.js"></script>
 <script src="js/captures.js"></script>
 <script src="js/history.js"></script>
-<script src="js/command-builder.js"></script>
+<script src="js/command-builder.js?v=2"></script>
 <!-- ?v= busts the browser's cache on each edit - these three change often
      during active development and have no other cache-busting (StaticFiles
      serves them with only Last-Modified/ETag, which Chrome's heuristic
@@ -616,10 +616,10 @@
 <!-- After testcases-tab.js: reuses its tcRenderRunSteps/tcStatusClass so a
      run's step detail renders identically in both places. -->
 <script src="js/results-tab.js?v=7"></script>
-<script src="js/wifi-scan.js"></script>
+<script src="js/wifi-scan.js?v=2"></script>
 <script src="js/wifi-info-modal.js"></script>
 <script src="js/log-rendering.js"></script>
 <script src="js/wireshark-table.js"></script>
-<script src="js/detail-page.js"></script>
+<script src="js/detail-page.js?v=2"></script>
 </body>
 </html>

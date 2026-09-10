@@ -97,6 +97,8 @@ class WifiMixin:
         standard = WifiMixin.WIFI_GENERATION_STANDARD.get(wifi_generation)
         if standard:
             return standard
+        if re.search(r'\bEHT-MCS\b', link_out):
+            return "802.11be"
         if re.search(r'\bHE-MCS\b', link_out):
             return "802.11ax"
         if re.search(r'\bVHT-MCS\b', link_out):
@@ -581,17 +583,23 @@ class WifiMixin:
     # max_standard -> wpa_supplicant network-block flags that cap which
     # 802.11 PHY the association is allowed to negotiate at. wpa_supplicant
     # has no single "use at most 802.11n" knob - each newer amendment is
-    # disabled independently (disable_he blocks 802.11ax, disable_vht also
-    # blocks 802.11ax since HE needs VHT capabilities advertised, disable_ht
-    # additionally blocks 802.11n, leaving 802.11a/g). So each tier disables
-    # everything above it. "legacy" is the ceiling below 802.11n (a/g only,
-    # no 11n/ac/ax) - there is no separate a-vs-g knob here since that's a
+    # disabled independently (disable_eht blocks 802.11be, disable_he also
+    # blocks 802.11ax, disable_vht also blocks 802.11ax since HE needs VHT
+    # capabilities advertised, disable_ht additionally blocks 802.11n,
+    # leaving 802.11a/g). So each tier disables everything above it. "be" is
+    # the current ceiling (no flags disabled - whatever the radio/driver
+    # itself supports); "legacy" is the floor below 802.11n (a/g only, no
+    # 11n/ac/ax/be) - there is no separate a-vs-g knob here since that's a
     # band choice (see channel/scan_freq), not a PHY standard one.
+    # disable_eht requires a wpa_supplicant build new enough to know the
+    # flag (2.11+) - on an older build it's just an unrecognized network
+    # param wpa_supplicant ignores, so "be"/"ax" behave the same there.
     MAX_STANDARD_NETWORK_FLAGS = {
-        "ax": {},
-        "ac": {"disable_he": "1"},
-        "n": {"disable_he": "1", "disable_vht": "1"},
-        "legacy": {"disable_he": "1", "disable_vht": "1", "disable_ht": "1"},
+        "be": {},
+        "ax": {"disable_eht": "1"},
+        "ac": {"disable_eht": "1", "disable_he": "1"},
+        "n": {"disable_eht": "1", "disable_he": "1", "disable_vht": "1"},
+        "legacy": {"disable_eht": "1", "disable_he": "1", "disable_vht": "1", "disable_ht": "1"},
     }
 
     async def connect_wifi(self, ssid, password=None, interface=None, bssid=None, channel=None,

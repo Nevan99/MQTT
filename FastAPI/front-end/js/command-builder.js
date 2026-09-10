@@ -8,7 +8,13 @@ const cmdResults = document.getElementById('cmdResults');
 const ACTION_PARAMS = {
   ping: [
     { name: 'interface', label: 'Interface (optional)', type: 'interface' },
-    { name: 'target', label: 'IP to ping', type: 'text', default: '8.8.8.8' },
+    // pingTargetPicker adds a "Pi radio to ping" quick-pick dropdown next to
+    // this field (see renderParamFields/populatePingTargetPicker) - fed from
+    // GET /pis/interface-status, so pinging another radio on this Pi (or a
+    // different Pi entirely) doesn't require knowing/copying its IP by hand.
+    // The plain text field is left in place for pinging an arbitrary
+    // non-Pi target (8.8.8.8, a LAN gateway, etc) - the picker just fills it.
+    { name: 'target', label: 'IP to ping', type: 'text', default: '8.8.8.8', pingTargetPicker: true },
     { name: 'count', label: 'Count', type: 'number', default: 5 },
   ],
   signal_stats: [],
@@ -34,6 +40,7 @@ const ACTION_PARAMS = {
       name: 'max_standard', label: 'Max 802.11 standard (optional)', type: 'select',
       options: [
         { value: '', label: 'auto (radio default)' },
+        { value: 'be', label: '802.11be (Wi-Fi 7) max' },
         { value: 'ax', label: '802.11ax (Wi-Fi 6) max' },
         { value: 'ac', label: '802.11ac (Wi-Fi 5) max' },
         { value: 'n', label: '802.11n (Wi-Fi 4) max' },
@@ -62,6 +69,7 @@ const ACTION_PARAMS = {
       name: 'max_standard', label: 'Max 802.11 standard (optional)', type: 'select',
       options: [
         { value: '', label: 'auto (radio default)' },
+        { value: 'be', label: '802.11be (Wi-Fi 7) max' },
         { value: 'ax', label: '802.11ax (Wi-Fi 6) max' },
         { value: 'ac', label: '802.11ac (Wi-Fi 5) max' },
         { value: 'n', label: '802.11n (Wi-Fi 4) max' },
@@ -280,6 +288,7 @@ function renderParamFields() {
     return `
       <label>${f.label}</label>
       <input class="field" data-param="${f.name}" type="${f.type}" ${f.default !== undefined ? `value="${f.default}"` : ''}>
+      ${f.pingTargetPicker ? `<select class="field ping-target-picker"><option value="">— or pick a Pi radio to ping —</option></select>` : ''}
     `;
   }).join('');
 
@@ -299,6 +308,38 @@ function renderParamFields() {
     box.dataset.param = mount.dataset.param;
     setDropdownOptions(box, interfaces, []);
     mount.replaceWith(box);
+  });
+
+  const pingPicker = paramFields.querySelector('.ping-target-picker');
+  if (pingPicker) populatePingTargetPicker(pingPicker);
+}
+
+// Fills the ping action's "pick a Pi radio to ping" dropdown from every
+// currently-known radio's live IP (GET /pis/interface-status, the same
+// fleet-wide buffered snapshot the Interfaces tab uses) - lets a ping be
+// aimed at another wlan on this same Pi, or a radio on a different Pi
+// entirely, without the user having to look up/copy that IP by hand.
+// Picking an entry just fills the plain `target` text field (still
+// editable/clearable for a non-Pi target like 8.8.8.8), it doesn't become
+// its own command param.
+async function populatePingTargetPicker(picker) {
+  let rows;
+  try {
+    const res = await apiFetch(`${API}/pis/interface-status`);
+    if (!res.ok) return;
+    rows = await res.json();
+  } catch {
+    return; // best-effort - the plain text field still works without this
+  }
+  const withIp = rows.filter(r => r.ip_address).sort((a, b) =>
+    a.pi_id === b.pi_id ? a.interface.localeCompare(b.interface) : a.pi_id.localeCompare(b.pi_id));
+  picker.innerHTML = '<option value="">— or pick a Pi radio to ping —</option>' + withIp.map(r =>
+    `<option value="${r.ip_address}">${r.pi_id} / ${r.interface} — ${r.ip_address}${r.ssid ? ` (${r.ssid})` : ''}</option>`
+  ).join('');
+  picker.addEventListener('change', () => {
+    if (!picker.value) return;
+    const targetInput = paramFields.querySelector('input[data-param="target"]');
+    if (targetInput) targetInput.value = picker.value;
   });
 }
 
@@ -599,6 +640,7 @@ function renderHotspotConnectCard(piId, net) {
       ${open ? '' : wifiPasswordFieldHtml(net)}
       <select class="field wifi-max-standard" title="Cap the 802.11 standard these radios negotiate at">
         <option value="">max standard: auto</option>
+        <option value="be">802.11be (Wi-Fi 7) max</option>
         <option value="ax">802.11ax (Wi-Fi 6) max</option>
         <option value="ac">802.11ac (Wi-Fi 5) max</option>
         <option value="n">802.11n (Wi-Fi 4) max</option>
