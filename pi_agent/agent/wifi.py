@@ -703,8 +703,21 @@ class WifiMixin:
                     interface, "set_network", net_id, "scan_freq",
                     str(self._freq_for_channel(channel)),
                 )).stdout.strip())
+            # wpa_cli rejects (FAIL, not an exception) a network param its
+            # build of wpa_supplicant doesn't know - disable_he/disable_eht
+            # are only understood by builds new enough to have HE/EHT
+            # support at all, so an older wpa_supplicant silently keeps
+            # negotiating whatever the driver/AP support instead of capping
+            # anything. Tracked separately from `outputs` (which still
+            # carries every raw response for debugging) so the caller can
+            # tell "capped as requested" apart from "connected anyway,
+            # cap never took" instead of both looking like a plain success.
+            max_standard_unsupported_flags = []
             for flag, value in self.MAX_STANDARD_NETWORK_FLAGS.get(max_standard, {}).items():
-                outputs.append((await self._wpa_cli(interface, "set_network", net_id, flag, value)).stdout.strip())
+                flag_ret = await self._wpa_cli(interface, "set_network", net_id, flag, value)
+                outputs.append(flag_ret.stdout.strip())
+                if flag_ret.stdout.strip() != "OK":
+                    max_standard_unsupported_flags.append(flag)
 
             await self._wpa_cli(interface, "enable_network", net_id)
             await self._wpa_cli(interface, "select_network", net_id)
@@ -744,6 +757,14 @@ class WifiMixin:
             "interface": interface,
             "channel": channel,
             "max_standard": max_standard,
+            # False (not None) specifically when max_standard was requested
+            # but at least one of its wpa_supplicant network flags came back
+            # FAIL - i.e. connected, but not actually capped as asked. None
+            # when max_standard wasn't requested at all, True when every
+            # flag for the requested tier was accepted.
+            "max_standard_applied": (
+                None if max_standard is None else not max_standard_unsupported_flags
+            ),
             "connected": connected,
             "ip_address": ip_address,
             # Populated from the control socket when association was

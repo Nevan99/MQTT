@@ -109,6 +109,14 @@ function wifiInfoConnectSectionHtml(net) {
   return `
     <div class="wifi-connect-row">
       ${open ? '' : wifiPasswordFieldHtml(net)}
+      <select class="field wifi-max-standard" title="Cap the 802.11 standard this radio negotiates at">
+        <option value="">max standard: auto</option>
+        <option value="be">802.11be (Wi-Fi 7) max</option>
+        <option value="ax">802.11ax (Wi-Fi 6) max</option>
+        <option value="ac">802.11ac (Wi-Fi 5) max</option>
+        <option value="n">802.11n (Wi-Fi 4) max</option>
+        <option value="legacy">802.11a/g max</option>
+      </select>
       <button type="button" class="wifi-connect-btn">Connect</button>
     </div>
     <div class="wifi-connect-status hint"></div>
@@ -122,6 +130,8 @@ function wireWifiInfoConnectSection(container, piId, iface, net) {
   connectBtn.addEventListener('click', async () => {
     const passwordInput = container.querySelector('.wifi-connect-password');
     const password = passwordInput && passwordInput.value ? passwordInput.value : undefined;
+    const maxStandardInput = container.querySelector('.wifi-max-standard');
+    const max_standard = maxStandardInput && maxStandardInput.value ? maxStandardInput.value : undefined;
     connectBtn.disabled = true;
     statusEl.textContent = 'Connecting…';
     try {
@@ -130,8 +140,11 @@ function wireWifiInfoConnectSection(container, piId, iface, net) {
         bssid: net.bssid || undefined,
         password,
         interface: iface,
+        max_standard,
       });
-      statusEl.textContent = result && result.connected ? 'Connected.' : `Failed to connect${wifiFailureDetail(result) ? ': ' + wifiFailureDetail(result) : ''}`;
+      statusEl.textContent = result && result.connected
+        ? `Connected.${result.max_standard_applied === false ? ' Note: this Pi\'s wpa_supplicant build doesn\'t support capping to ' + result.max_standard + ' - connected at the radio\'s normal max instead.' : ''}`
+        : `Failed to connect${wifiFailureDetail(result) ? ': ' + wifiFailureDetail(result) : ''}`;
       if (result && result.connected) {
         applyWifiPasswordMemory(container, net, password);
         wifiInfoRefreshWifiIcons(piId, iface);

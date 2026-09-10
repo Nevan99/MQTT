@@ -27,17 +27,32 @@ class StreamingMixin:
     async def run_iperf_server_test(self, duration=10, interface=None):
         """Runs the throughput test against the broker host. Without an
         interface, iperf3 goes out over whatever the OS routing table picks
-        for that destination - same as before. With one, `-B <local-ip>`
-        binds the client socket to that interface's own address, so the
-        test actually measures that interface's link instead of whichever
-        one happens to win the route (this Pi could have several, e.g. a
-        wired eth0 and several wifi radios all able to reach the broker)."""
+        for that destination - same as before. With one, `-B <local-ip>%
+        <interface>` both binds the client socket to that interface's own
+        address AND sets SO_BINDTODEVICE (the `%<interface>` suffix, Linux-
+        only, needs root - which this agent already runs as) on it.
+
+        The plain `-B <local-ip>` form (no `%<interface>`) only fixes the
+        socket's *source address* - it does not force the packet's physical
+        egress interface. On a Pi with several interfaces that can all
+        route to the broker (a wired eth0 plus several wifi radios, same as
+        the docstring above already warned about for the no-interface
+        case), the kernel's normal destination-based route lookup can still
+        pick a *different*, faster interface and just stamp the requested
+        address on as the source - so a throughput test "pinned" to a
+        wifi radio capped by connect_wifi's max_standard could silently
+        measure a completely different link's speed instead (confirmed via
+        `iw dev <if> link` staying at the radio's real, capped rate for the
+        whole test while iperf reported several times that rate). The
+        %<interface> suffix closes that gap by actually binding the socket
+        to the device, not just its address.
+        """
         cmd = ["iperf3", "-c", self.broker_host, "-t", str(duration), "-J"]
         if interface:
             bind_ip = await self.get_interface_ip(interface)
             if not bind_ip:
                 return {"error": f"{interface} has no IPv4 address to bind to"}
-            cmd += ["-B", bind_ip]
+            cmd += ["-B", f"{bind_ip}%{interface}"]
         result = await proc_mod.run(cmd, timeout=duration + 15)
         data = json.loads(result.stdout)
         return {

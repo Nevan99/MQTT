@@ -624,7 +624,9 @@ function renderWifiNetworkCard(piId, iface, net, connectedBssid) {
           interface: iface,
           max_standard,
         });
-        statusEl.textContent = result && result.connected ? 'Connected.' : `Failed to connect${wifiFailureDetail(result) ? ': ' + wifiFailureDetail(result) : ''}`;
+        statusEl.textContent = result && result.connected
+          ? `Connected.${result.max_standard_applied === false ? ' Note: this Pi\'s wpa_supplicant build doesn\'t support capping to ' + result.max_standard + ' - connected at the radio\'s normal max instead.' : ''}`
+          : `Failed to connect${wifiFailureDetail(result) ? ': ' + wifiFailureDetail(result) : ''}`;
         if (result && result.connected) applyWifiPasswordMemory(body, net, password);
         // Only touch the Pi detail page's own cache/icon if this card is
         // actually being shown there for this same Pi - this card is also

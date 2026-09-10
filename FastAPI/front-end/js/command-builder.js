@@ -193,6 +193,7 @@ const ACTION_RESULT_FIELDS = {
     { name: 'channel', type: 'number' },
     { name: 'interface', type: 'text' },
     { name: 'max_standard', type: 'text' },
+    { name: 'max_standard_applied', type: 'boolean' },
     { name: 'failure_reason', type: 'text' },
     { name: 'output', type: 'text' },
   ],
@@ -311,7 +312,35 @@ function renderParamFields() {
   });
 
   const pingPicker = paramFields.querySelector('.ping-target-picker');
-  if (pingPicker) populatePingTargetPicker(pingPicker);
+  if (pingPicker) {
+    populatePingTargetPicker(pingPicker);
+    const targetInput = paramFields.querySelector('input[data-param="target"]');
+    if (targetInput) wirePingTargetExclusivity(pingPicker, targetInput);
+  }
+}
+
+// Picking a Pi radio and typing a raw IP are mutually exclusive - using one
+// clears+disables the other, so collectParams() (which just reads whichever
+// input has a value) never has to reconcile two live sources for the same
+// `target` param.
+function wirePingTargetExclusivity(picker, targetInput) {
+  picker.addEventListener('change', () => {
+    if (picker.value) {
+      targetInput.value = picker.value;
+      targetInput.disabled = true;
+    } else {
+      targetInput.disabled = false;
+      targetInput.value = '';
+    }
+  });
+  targetInput.addEventListener('input', () => {
+    if (targetInput.value) {
+      picker.value = '';
+      picker.disabled = true;
+    } else {
+      picker.disabled = false;
+    }
+  });
 }
 
 // Fills the ping action's "pick a Pi radio to ping" dropdown from every
@@ -336,11 +365,6 @@ async function populatePingTargetPicker(picker) {
   picker.innerHTML = '<option value="">— or pick a Pi radio to ping —</option>' + withIp.map(r =>
     `<option value="${r.ip_address}">${r.pi_id} / ${r.interface} — ${r.ip_address}${r.ssid ? ` (${r.ssid})` : ''}</option>`
   ).join('');
-  picker.addEventListener('change', () => {
-    if (!picker.value) return;
-    const targetInput = paramFields.querySelector('input[data-param="target"]');
-    if (targetInput) targetInput.value = picker.value;
-  });
 }
 
 let lastRenderedInterfacesKey = null;
