@@ -306,6 +306,17 @@ class InterfacesMixin:
                 "rx_bitrate_mbps": link.get("rx_bitrate_mbps"),
                 "tx_bitrate_mbps": link.get("tx_bitrate_mbps"),
                 "gateway": link.get("gateway"),
+                "key_mgmt": link.get("key_mgmt"),
+                "pairwise_cipher": link.get("pairwise_cipher"),
+                "group_cipher": link.get("group_cipher"),
+                "wpa_state": link.get("wpa_state"),
+                "address": link.get("address"),
+                "wifi_generation": link.get("wifi_generation"),
+                "noise_dbm": link.get("noise_dbm"),
+                "avg_signal_dbm": link.get("avg_signal_dbm"),
+                "link_speed_mbps": link.get("link_speed_mbps"),
+                "channel_width": link.get("channel_width"),
+                "radio_type": link.get("radio_type"),
             })
         result["command_id"] = str(uuid.uuid4())
         result["action"] = "interface_status"

@@ -26,6 +26,11 @@ router = APIRouter(prefix="/testcases", tags=["testcases"], dependencies=[Depend
 COMMAND_TIMEOUT_SECONDS = 60
 
 
+def _is_subsequence(needle: str, haystack: str) -> bool:
+    it = iter(haystack)
+    return all(ch in it for ch in needle)
+
+
 def _testcase_to_out(t: TestCase) -> TestCaseOut:
     return TestCaseOut(
         id=t.id, name=t.name, description=t.description, tags=t.tags, author=t.author,
@@ -66,7 +71,8 @@ def list_testcases(
         ql = q.lower()
         testcases = [t for t in testcases if ql in t.name.lower() or ql in t.description.lower()]
     if tag:
-        testcases = [t for t in testcases if tag in t.tags]
+        tagl = tag.lower()
+        testcases = [t for t in testcases if any(_is_subsequence(tagl, x.lower()) for x in t.tags)]
 
     response.headers["X-Total-Count"] = str(len(testcases))
     if limit > 0:
