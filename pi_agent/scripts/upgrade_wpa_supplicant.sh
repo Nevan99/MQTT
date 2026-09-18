@@ -1,34 +1,9 @@
 #!/usr/bin/env bash
-# Builds wpa_supplicant from source with 802.11ax/be (disable_he/disable_eht)
-# support and installs it as the system wpa_supplicant, so connect_wifi's
-# max_standard=ac/ax/be actually caps the negotiated standard instead of
-# silently no-op'ing (wpa_cli set_network returning FAIL for those network
-# fields) - the stock Raspberry Pi OS package is often built without
-# CONFIG_HE_OVERRIDES/CONFIG_IEEE80211BE even at wpa_supplicant 2.10+, where
-# those fields exist in the protocol but not in that particular build.
-#
-# Run this ON the Pi (not the controller) as the pi user with sudo access.
-# Safe to re-run: rebuilds from a clean checkout each time and only backs up
-# the live binary once (a pre-existing .bak from a previous run is kept, not
-# overwritten, so it always points at the real original stock binary).
 set -euo pipefail
 
 BUILD_DIR="${WPA_BUILD_DIR:-$HOME/wpa_supplicant-build}"
 HOSTAP_REPO="https://w1.fi/hostap.git"
-# Network config fields this build needs enabled that aren't always on in a
-# stock distro package - see wpa_supplicant/config_ssid.h/config.c for the
-# #ifdef guarding each one. CONFIG_IEEE80211BE requires CONFIG_IEEE80211AX;
-# disable_he specifically needs CONFIG_HE_OVERRIDES on top of that (a
-# separate guard from CONFIG_IEEE80211AX, easy to miss).
-#
-# CONFIG_HT_OVERRIDES (disable_ht) and CONFIG_VHT_OVERRIDES (disable_vht)
-# are NOT in hostap's own defconfig despite being older/more basic than the
-# HE/EHT ones above - the stock Raspberry Pi OS package has them built in
-# (that's the only reason the pre-rebuild binary could cap to "n"/"legacy"
-# at all), but a plain `cp defconfig .config` silently drops them. Missing
-# on a first pass here: the rebuild fixed ac/ax capping but broke n/legacy
-# in the same swap, since disable_vht/disable_ht started returning FAIL
-# where they'd previously returned OK.
+
 REQUIRED_CONFIG_FLAGS=(
     CONFIG_DRIVER_NL80211=y
     CONFIG_CTRL_IFACE=y
@@ -70,17 +45,6 @@ for flag in "${REQUIRED_CONFIG_FLAGS[@]}"; do
     fi
 done
 
-# A correct .config (confirmed by grep) has still produced a binary missing
-# disable_he on a `make clean; make -j$(nproc)` in practice, for reasons
-# that didn't reproduce on an immediate rebuild from the identical .config -
-# something about make's dependency tracking not fully invalidating every
-# object file `make clean` should have removed. Since that's not understood
-# well enough to prevent outright, this builds, verifies with `strings`, and
-# - only on failure - rebuilds exactly once more before giving up, which is
-# what actually recovered from it by hand. A second consecutive failure is
-# treated as a real config/Makefile problem, not a fluke, and dumps the
-# actual compiler flags used for config.c (the file disable_he/disable_eht
-# live in) so it's diagnosable without repeating this whole investigation.
 build_and_verify() {
     echo "==> Building (this takes a few minutes on a Pi)"
     make clean

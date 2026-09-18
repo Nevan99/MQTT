@@ -31,6 +31,11 @@ def _suite_run_to_out(r: TestSuiteRun) -> TestSuiteRunOut:
     )
 
 
+def _is_subsequence(needle: str, haystack: str) -> bool:
+    it = iter(haystack)
+    return all(ch in it for ch in needle)
+
+
 def _validate_testcase_ids(testcase_ids: list[int], session: Session):
     if not testcase_ids:
         return
@@ -47,7 +52,8 @@ def list_testsuites(q: str = "", tag: str = "", session: Session = Depends(get_s
         ql = q.lower()
         suites = [s for s in suites if ql in s.name.lower() or ql in s.description.lower()]
     if tag:
-        suites = [s for s in suites if tag in s.tags]
+        tagl = tag.lower()
+        suites = [s for s in suites if any(_is_subsequence(tagl, t.lower()) for t in s.tags)]
     return [_testsuite_to_out(s) for s in suites]
 
 

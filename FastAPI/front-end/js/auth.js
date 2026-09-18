@@ -1,23 +1,7 @@
 const API = '';
 
-// --- Date/time display -------------------------------------------------
-// Every timestamp from the backend is stored/sent as UTC (ISO 8601) -
-// `new Date(...).toLocaleString()` used to render it in whatever timezone
-// the browser/OS itself is set to, which drifted from Vietnam time on any
-// machine not explicitly configured for it. These pin every timestamp
-// display in the app to Asia/Ho_Chi_Minh (ICT, UTC+7) regardless of the
-// viewing machine's own timezone setting.
 const VN_TIME_ZONE = 'Asia/Ho_Chi_Minh';
 
-// SQLite drops timezone info on write, so every datetime the backend sends
-// back over the API - despite being generated as UTC-aware (utcnow() in
-// database/models.py) - round-trips as a bare, marker-less ISO string like
-// "2026-08-21T09:15:00" instead of "...+00:00"/"...Z". `new Date(...)`
-// treats a string with no timezone marker as *local browser time*, not
-// UTC - so without this, every timestamp got silently reinterpreted
-// through whatever timezone the viewing machine happens to be set to
-// before VN formatting was even applied. Every such timestamp in this app
-// is UTC by convention, so a missing marker is appended before parsing.
 function parseApiDate(value) {
   const s = String(value);
   const hasTz = /Z$|[+-]\d\d:?\d\d$/.test(s);
@@ -31,14 +15,6 @@ function formatVnDateTime(value) {
   return d.toLocaleString('en-GB', { timeZone: VN_TIME_ZONE });
 }
 
-// connect_wifi/connect_hotspot's `output` is just wpa_cli's "OK" echoes
-// for each configuration step (set_network ssid/psk/etc) - those all
-// succeed even when the actual over-the-air association then fails or
-// times out, which is why a failed connect can show the wholly unhelpful
-// "OK|OK|OK". The real reason lives in `failure_reason` instead - set from
-// wpa_supplicant's own control-socket event (wrong password, the AP
-// rejecting the association, etc. - see PiAgent.connect_wifi and
-// wpa_events.FAILURE_EVENTS) - which nothing was actually displaying.
 function wifiFailureDetail(result) {
   const parts = [];
   if (result && result.output) parts.push(result.output);
@@ -138,11 +114,6 @@ document.getElementById('logoutBtn').addEventListener('click', () => {
   showLoginScreen();
 });
 
-// appRoot starts hidden (class="auth-hidden" in the markup) so it's never
-// visible for even a flash before we know whether there's a token. If one
-// exists from a previous session, reveal the app optimistically - if it's
-// actually expired/invalid, the first API call's 401 (via apiFetch) will
-// send the user back to the login screen anyway.
 if (authToken) {
   hideLoginScreen();
 } else {
@@ -150,12 +121,6 @@ if (authToken) {
 }
 const tabs = document.querySelectorAll('nav .tab');
 const views = document.querySelectorAll('.view');
-// A tab click only ever changes the URL hash - routeApp (detail-page.js),
-// driven by the resulting hashchange, is what actually shows/hides views.
-// That's what makes a reload land back on whatever tab (or Pi detail page)
-// was open, and the browser Back/Forward buttons step between them - a
-// plain classList toggle here (the old behavior) did neither, since it
-// left no trace in the URL/history for a reload or Back to recover.
 tabs.forEach(btn => btn.addEventListener('click', () => {
   location.hash = `#${btn.dataset.view}`;
 }));
