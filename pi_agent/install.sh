@@ -23,10 +23,37 @@ sudo systemctl restart "$UNIT_NAME"
 # 99-pi-agent-unmanaged-wifi.conf) - NetworkManager fighting the agent for
 # the same interface during its own boot-time reconnect was the source of
 # the "Device or resource busy" scan failures and slow connects/disconnects.
-# Safe to re-run: NetworkManager just reloads the same config each time.
+#
+# Only touched when the conf actually changed, and then via a config
+# reload rather than a full NetworkManager restart. This used to restart
+# NM unconditionally on every run, landing about a second after the
+# pi-agent restart above - i.e. right while every agent-started
+# wpa_supplicant was being SIGTERM'd (they live in pi-agent's cgroup) and
+# the rtw89 dongles were dropping into power-save after the resulting
+# deauths. A USB register read that races that power transition times out
+# (`rtw89_8852bu ... usb read32 ... fail ret=-110 value=0x0` in dmesg), and
+# when the read that fails is the driver's rfkill GPIO poll the returned 0
+# reads as "RF switch off" - a hard rfkill block that only a USB replug
+# clears. NM's restart-time wiphy enumeration was extra traffic into that
+# window for no benefit: an unmanaged-devices rule is re-evaluated on a
+# plain config reload, and re-copying an identical file changes nothing.
+NM_CONF_SRC="$SCRIPT_DIR/99-pi-agent-unmanaged-wifi.conf"
+NM_CONF_DST="/etc/NetworkManager/conf.d/99-pi-agent-unmanaged-wifi.conf"
 if [[ -d /etc/NetworkManager/conf.d ]]; then
-    sudo cp "$SCRIPT_DIR/99-pi-agent-unmanaged-wifi.conf" /etc/NetworkManager/conf.d/
-    sudo systemctl restart NetworkManager
+    if sudo cmp -s "$NM_CONF_SRC" "$NM_CONF_DST"; then
+        echo "NetworkManager unmanaged-wifi config unchanged - not reloading NetworkManager"
+    else
+        sudo cp "$NM_CONF_SRC" "$NM_CONF_DST"
+        # `nmcli general reload conf` is the documented config reload
+        # (NM >= 1.22); `systemctl reload` sends the SIGHUP that does the
+        # same on older builds. Neither tears devices down.
+        if command -v nmcli >/dev/null 2>&1; then
+            sudo nmcli general reload conf
+        else
+            sudo systemctl reload NetworkManager
+        fi
+        echo "NetworkManager unmanaged-wifi config updated and reloaded"
+    fi
 else
     echo "Note: /etc/NetworkManager/conf.d not found - skipping the unmanaged-wifi config (NetworkManager not installed?)" >&2
 fi
