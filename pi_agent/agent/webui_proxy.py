@@ -304,6 +304,10 @@ class WebUiProxyMixin:
             return
 
         try:
+            if is_websocket:
+                print(f"[pi_agent] webui proxy: WS handshake -> {gateway}:{target_port}: "
+                      f"{request_line!r} headers={dict(headers.items())}")
+
             upstream_writer.write(self._serialize_message(request_line, headers, body))
             await upstream_writer.drain()
 
@@ -317,6 +321,11 @@ class WebUiProxyMixin:
                 print(f"[pi_agent] webui proxy: {gateway}:{target_port} closed the connection with no response")
                 writer.close()
                 return
+
+            if is_websocket:
+                print(f"[pi_agent] webui proxy: WS handshake response <- {gateway}:{target_port}: "
+                      f"{status_line!r} headers={dict(resp_headers.items())} "
+                      f"body={resp_body[:500]!r}")
 
             if is_websocket and status_line.split(" ", 2)[1:2] == ["101"]:
                 # Handshake succeeded - forward the 101 response as-is (its
