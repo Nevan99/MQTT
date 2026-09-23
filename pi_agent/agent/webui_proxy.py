@@ -1,7 +1,9 @@
 import asyncio
+import os
 import re
 import shutil
 import ssl
+import tempfile
 import zlib
 
 from . import proc
@@ -19,14 +21,47 @@ _REWRITABLE_TEXT_CONTENT_TYPES = (
     "text/html", "text/javascript", "application/javascript",
     "application/json", "text/css", "text/plain",
 )
-# (literal scheme in the page, scheme to rewrite it to on our plain-HTTP-
-# facing proxy port). wss/https get downgraded to ws/http because the
-# client is talking to this proxy over plain HTTP, not TLS - a page loaded
-# over http can still open a ws:// (or even wss://) connection without
-# hitting mixed-content blocking, but this proxy itself only speaks plain
-# HTTP/WS on the client-facing side, so wss:// would just fail to connect.
-_BODY_SCHEME_REWRITES = (("wss://", "ws://"), ("https://", "http://"),
-                          ("ws://", "ws://"), ("http://", "http://"))
+# (literal scheme in the page, scheme to rewrite it to on this proxy's own
+# client-facing port). This proxy now terminates TLS on that side too (see
+# _get_webui_tls_server_context) rather than downgrading to plain HTTP/WS,
+# because at least one AP model's frontend JS branches on window.location.
+# protocol to pick between a plaintext ("/ws") and TLS ("/wss") WebSocket
+# endpoint - serving the page over plain HTTP made it think it was loaded
+# over http: and request the wrong (nonexistent on that AP) path, getting a
+# 404 from the AP's own nginx. Keeping https/wss end to end on the client
+# leg keeps location.protocol matching what a browser sees connecting to
+# the AP directly, so the AP's own routing picks the right path itself.
+_BODY_SCHEME_REWRITES = (("wss://", "wss://"), ("https://", "https://"),
+                          ("ws://", "wss://"), ("http://", "https://"))
+
+_webui_tls_context_lock = asyncio.Lock()
+_webui_tls_context = None
+
+
+async def _get_webui_tls_server_context():
+    """Self-signed TLS context for this proxy's client-facing listeners,
+    generated once per agent process (a fresh cert each restart is fine -
+    nothing needs to trust or pin it beyond "the browser clicks through
+    the warning once", same as it likely already does for the AP's own
+    self-signed cert) and shared across every interface's proxy."""
+    global _webui_tls_context
+    async with _webui_tls_context_lock:
+        if _webui_tls_context is not None:
+            return _webui_tls_context
+        cert_dir = tempfile.mkdtemp(prefix="pi_agent_webui_proxy_")
+        cert_path = os.path.join(cert_dir, "cert.pem")
+        key_path = os.path.join(cert_dir, "key.pem")
+        result = await proc.run([
+            "openssl", "req", "-x509", "-newkey", "rsa:2048",
+            "-keyout", key_path, "-out", cert_path,
+            "-days", "3650", "-nodes", "-subj", "/CN=pi-agent-webui-proxy",
+        ], timeout=30)
+        if result.returncode != 0:
+            raise RuntimeError(f"could not generate proxy TLS cert: {result.stderr.strip()}")
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(cert_path, key_path)
+        _webui_tls_context = ctx
+        return ctx
 
 
 class _Headers:
@@ -81,15 +116,20 @@ class WebUiProxyMixin:
     checks) and silently reject an otherwise-correct login when they don't
     match the AP's own address - this is why login worked from a device
     connected directly to the AP's hotspot but failed through this proxy.
-    This proxy terminates the client's plain-HTTP request, rewrites those
-    headers to the AP's gateway address, and forwards it to <gateway>:
+    This proxy terminates the client's HTTPS request (its own listener is
+    TLS too, with a self-signed cert - see _get_webui_tls_server_context -
+    so a browser loading the proxied page sees https: just like it would
+    connecting to the AP directly; some AP frontends branch on window.
+    location.protocol to pick their WebSocket path, and serving plain HTTP
+    here made that pick the wrong, nonexistent path), rewrites Host/Origin/
+    Referer to the AP's gateway address, and forwards it to <gateway>:
     <target_port> - the AP's own web UI port, which varies by device model
     and is passed in per-call. Port 443 is assumed HTTPS with a self-signed
-    cert (skips verification for that leg - see _INSECURE_TLS_CONTEXT), any
-    other port is assumed plain HTTP. Then rewrites any
-    Location redirect back to the address the client actually used before
-    relaying the response. Relies on self._default_gateway_for (WifiMixin,
-    wifi.py).
+    cert on the AP's side too (skips verification for that leg - see
+    _INSECURE_TLS_CONTEXT), any other port is assumed plain HTTP. Then
+    rewrites any Location redirect back to the address the client actually
+    used before relaying the response. Relies on self._default_gateway_for
+    (WifiMixin, wifi.py).
 
     Text response bodies (HTML/JS/JSON/CSS) also get a best-effort string
     rewrite - see _rewrite_body_host_refs - for AP UIs whose JS hardcodes
@@ -198,6 +238,10 @@ class WebUiProxyMixin:
         if not gateway:
             return {"error": f"{interface} has no known gateway (not connected to an AP?)"}
         port = self._webui_proxy_port_for(interface)
+        try:
+            tls_context = await _get_webui_tls_server_context()
+        except RuntimeError as e:
+            return {"error": str(e)}
 
         async with self._webui_proxies_lock:
             existing = self._webui_proxies.get(interface)
@@ -208,7 +252,7 @@ class WebUiProxyMixin:
                 existing["timer"].cancel()
                 existing["timer"] = self._arm_webui_proxy_ttl(interface)
                 return {"interface": interface, "port": port, "gateway": gateway,
-                         "target_port": target_port, "applied": True}
+                         "target_port": target_port, "scheme": "https", "applied": True}
 
             if existing:
                 # Reconnected to a different AP, or a different port on the
@@ -220,7 +264,7 @@ class WebUiProxyMixin:
             try:
                 server = await asyncio.start_server(
                     lambda r, w, gw=gateway, tp=target_port, iface=interface: self._handle_webui_client(r, w, gw, tp, iface),
-                    "0.0.0.0", port,
+                    "0.0.0.0", port, ssl=tls_context,
                 )
             except OSError as e:
                 return {"error": f"could not bind proxy port {port}: {e}"}
@@ -231,7 +275,7 @@ class WebUiProxyMixin:
             }
 
         return {"interface": interface, "port": port, "gateway": gateway,
-                 "target_port": target_port, "applied": True}
+                 "target_port": target_port, "scheme": "https", "applied": True}
 
     def _touch_webui_proxy_ttl(self, interface):
         """Re-arms this interface's proxy TTL on real traffic through the
