@@ -1,9 +1,17 @@
 import asyncio
 import re
 import shutil
+import ssl
 import zlib
 
 from . import proc
+
+# The AP's own cert is self-signed (embedded device, no real CA chain) -
+# this leg is Pi-to-AP on its own subnet, not exposed to anything else, so
+# skip verification rather than fail every connection on an untrusted cert.
+_INSECURE_TLS_CONTEXT = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+_INSECURE_TLS_CONTEXT.check_hostname = False
+_INSECURE_TLS_CONTEXT.verify_mode = ssl.CERT_NONE
 
 
 class WebUiProxyMixin:
@@ -17,8 +25,12 @@ class WebUiProxyMixin:
     checks) and silently reject an otherwise-correct login when they don't
     match the AP's own address - this is why login worked from a device
     connected directly to the AP's hotspot but failed through this proxy.
-    This proxy terminates the client's HTTP request, rewrites those headers
-    to the AP's gateway address, forwards to <gateway>:80, then rewrites any
+    This proxy terminates the client's plain-HTTP request, rewrites those
+    headers to the AP's gateway address, and forwards it to <gateway>:
+    <target_port> - the AP's own web UI port, which varies by device model
+    and is passed in per-call. Port 443 is assumed HTTPS with a self-signed
+    cert (skips verification for that leg - see _INSECURE_TLS_CONTEXT), any
+    other port is assumed plain HTTP. Then rewrites any
     Location redirect back to the address the client actually used before
     relaying the response. Relies on self._default_gateway_for (WifiMixin,
     wifi.py).
@@ -28,7 +40,7 @@ class WebUiProxyMixin:
     relative URLs) will still break for anything that content links to.
     """
 
-    AP_WEBUI_TARGET_PORT = 80
+    AP_WEBUI_TARGET_PORT = 443
     AP_WEBUI_PROXY_TTL_SECONDS = 300
     UPSTREAM_CONNECT_TIMEOUT = 10
     # Only used to find and remove rules left behind by the old iptables-
@@ -94,14 +106,24 @@ class WebUiProxyMixin:
         except Exception:
             pass
 
-    async def start_ap_webui_proxy(self, interface):
+    async def start_ap_webui_proxy(self, interface, target_port=None):
         """(Re)starts, or extends the TTL of, the HTTP proxy for this
         interface's currently-connected AP. Auto-expires AP_WEBUI_PROXY_TTL_
         SECONDS after the last call that (re)armed it - not real traffic-
         idle detection, just "nobody's asked for this in N minutes" - so a
-        forgotten tab doesn't leave a listener open indefinitely."""
+        forgotten tab doesn't leave a listener open indefinitely.
+
+        target_port is the AP's own web UI port - it varies by device
+        model, so callers pass whatever their AP actually listens on
+        (defaults to AP_WEBUI_TARGET_PORT, 443, if omitted). Port 443 is
+        assumed to be HTTPS with a self-signed cert (the common case for
+        these devices); anything else is assumed to be plain HTTP."""
         if not interface:
             return {"error": "interface is required"}
+        try:
+            target_port = int(target_port) if target_port else self.AP_WEBUI_TARGET_PORT
+        except (TypeError, ValueError):
+            return {"error": f"invalid target_port: {target_port!r}"}
         gateway = await self._default_gateway_for(interface)
         if not gateway:
             return {"error": f"{interface} has no known gateway (not connected to an AP?)"}
@@ -110,39 +132,42 @@ class WebUiProxyMixin:
         async with self._webui_proxies_lock:
             existing = self._webui_proxies.get(interface)
 
-            if existing and existing["gateway"] == gateway:
-                # Same AP still proxied - just extend the TTL, the listener
-                # is already bound and pointed at the right gateway.
+            if existing and existing["gateway"] == gateway and existing["target_port"] == target_port:
+                # Same AP/port still proxied - just extend the TTL, the
+                # listener is already bound and pointed at the right place.
                 existing["timer"].cancel()
                 existing["timer"] = self._arm_webui_proxy_ttl(interface)
-                return {"interface": interface, "port": port, "gateway": gateway, "applied": True}
+                return {"interface": interface, "port": port, "gateway": gateway,
+                         "target_port": target_port, "applied": True}
 
             if existing:
-                # Reconnected to a different AP since the last proxy - tear
-                # down the old listener before binding the new one.
+                # Reconnected to a different AP, or a different port on the
+                # same one, since the last proxy - tear down the old
+                # listener before binding the new one.
                 existing["timer"].cancel()
                 await self._close_webui_server(existing["server"])
 
             try:
                 server = await asyncio.start_server(
-                    lambda r, w, gw=gateway: self._handle_webui_client(r, w, gw),
+                    lambda r, w, gw=gateway, tp=target_port: self._handle_webui_client(r, w, gw, tp),
                     "0.0.0.0", port,
                 )
             except OSError as e:
                 return {"error": f"could not bind proxy port {port}: {e}"}
 
             self._webui_proxies[interface] = {
-                "port": port, "gateway": gateway, "server": server,
+                "port": port, "gateway": gateway, "target_port": target_port, "server": server,
                 "timer": self._arm_webui_proxy_ttl(interface),
             }
 
-        return {"interface": interface, "port": port, "gateway": gateway, "applied": True}
+        return {"interface": interface, "port": port, "gateway": gateway,
+                 "target_port": target_port, "applied": True}
 
-    async def _handle_webui_client(self, reader, writer, gateway):
+    async def _handle_webui_client(self, reader, writer, gateway, target_port):
         """One client HTTP request/response cycle: read the request off
         `reader`, rewrite Host/Origin/Referer to point at the AP's gateway
-        instead of this Pi, forward to <gateway>:80, then rewrite any
-        Location redirect back to the address the client actually used
+        instead of this Pi, forward to <gateway>:<target_port>, then rewrite
+        any Location redirect back to the address the client actually used
         before relaying the response. Forces Connection: close on both legs
         so this stays a simple one-shot proxy - no keep-alive/pipelining
         bookkeeping."""
@@ -165,7 +190,10 @@ class WebUiProxyMixin:
 
         try:
             upstream_reader, upstream_writer = await asyncio.wait_for(
-                asyncio.open_connection(gateway, self.AP_WEBUI_TARGET_PORT),
+                asyncio.open_connection(
+                    gateway, target_port,
+                    ssl=_INSECURE_TLS_CONTEXT if target_port == 443 else None,
+                ),
                 self.UPSTREAM_CONNECT_TIMEOUT,
             )
         except (OSError, asyncio.TimeoutError):

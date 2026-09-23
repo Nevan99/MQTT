@@ -343,7 +343,7 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
                 )
                 return
             elif action == "start_ap_webui_proxy":
-                result = await self.start_ap_webui_proxy(payload.get("interface"))
+                result = await self.start_ap_webui_proxy(payload.get("interface"), payload.get("target_port"))
             elif action == "list_interfaces":
                 await self.publish_registration()
                 result = {"interfaces": await self.get_interface_details()}
