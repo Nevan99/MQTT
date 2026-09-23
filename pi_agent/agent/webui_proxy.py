@@ -175,9 +175,13 @@ class WebUiProxyMixin:
     async def start_ap_webui_proxy(self, interface, target_port=None):
         """(Re)starts, or extends the TTL of, the HTTP proxy for this
         interface's currently-connected AP. Auto-expires AP_WEBUI_PROXY_TTL_
-        SECONDS after the last call that (re)armed it - not real traffic-
-        idle detection, just "nobody's asked for this in N minutes" - so a
-        forgotten tab doesn't leave a listener open indefinitely.
+        SECONDS after the last call that (re)armed it OR the last request
+        that actually went through the listener (see _touch_webui_proxy_
+        ttl) - real traffic keeps it alive on its own, so a login flow
+        that takes a while between page load and its later API/WebSocket
+        calls doesn't find the listener torn out from under it; a truly
+        forgotten/abandoned tab still doesn't leave a listener open
+        indefinitely once traffic actually stops.
 
         target_port is the AP's own web UI port - it varies by device
         model, so callers pass whatever their AP actually listens on
@@ -215,7 +219,7 @@ class WebUiProxyMixin:
 
             try:
                 server = await asyncio.start_server(
-                    lambda r, w, gw=gateway, tp=target_port: self._handle_webui_client(r, w, gw, tp),
+                    lambda r, w, gw=gateway, tp=target_port, iface=interface: self._handle_webui_client(r, w, gw, tp, iface),
                     "0.0.0.0", port,
                 )
             except OSError as e:
@@ -229,7 +233,25 @@ class WebUiProxyMixin:
         return {"interface": interface, "port": port, "gateway": gateway,
                  "target_port": target_port, "applied": True}
 
-    async def _handle_webui_client(self, reader, writer, gateway, target_port):
+    def _touch_webui_proxy_ttl(self, interface):
+        """Re-arms this interface's proxy TTL on real traffic through the
+        listener, not just explicit start_ap_webui_proxy calls. Without
+        this, a login flow that takes longer than AP_WEBUI_PROXY_TTL_
+        SECONDS between the page loading and it making its later API/
+        WebSocket calls finds the listener already torn down by the TTL
+        and gets a bare connection-refused with nothing logged - the
+        kernel refuses the connection before it ever reaches this process,
+        which looks identical to the proxy silently doing nothing.
+        Best-effort, no lock: this can race _expire_webui_proxy removing
+        the entry just before this runs, in which case there's nothing to
+        touch - harmless, the next start_ap_webui_proxy call just creates
+        a fresh one."""
+        entry = self._webui_proxies.get(interface)
+        if entry:
+            entry["timer"].cancel()
+            entry["timer"] = self._arm_webui_proxy_ttl(interface)
+
+    async def _handle_webui_client(self, reader, writer, gateway, target_port, interface):
         """One client HTTP exchange: read the request off `reader`, rewrite
         Host/Origin/Referer to point at the AP's gateway instead of this
         Pi, forward to <gateway>:<target_port>, then rewrite any Location
@@ -242,6 +264,7 @@ class WebUiProxyMixin:
         on both legs, and on a successful 101 response hands off to a raw
         bidirectional byte relay instead of the one-shot request/response
         path, since after the handshake this is no longer HTTP at all."""
+        self._touch_webui_proxy_ttl(interface)
         try:
             request_line, headers, body = await self._read_http_message(reader)
         except (asyncio.IncompleteReadError, ConnectionError, ValueError) as e:
