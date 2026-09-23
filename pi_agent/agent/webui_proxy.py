@@ -1,6 +1,9 @@
 import asyncio
 import re
+import shutil
 import zlib
+
+from . import proc
 
 
 class WebUiProxyMixin:
@@ -28,6 +31,10 @@ class WebUiProxyMixin:
     AP_WEBUI_TARGET_PORT = 80
     AP_WEBUI_PROXY_TTL_SECONDS = 300
     UPSTREAM_CONNECT_TIMEOUT = 10
+    # Only used to find and remove rules left behind by the old iptables-
+    # based implementation of this proxy - the current implementation never
+    # adds rules under this (or any) comment itself.
+    AP_WEBUI_PROXY_COMMENT_PREFIX = "piagent_webui_"
 
     @staticmethod
     def _webui_proxy_port_for(interface):
@@ -38,13 +45,24 @@ class WebUiProxyMixin:
         return 18080 + (zlib.crc32(interface.encode()) % 1000)
 
     async def _cleanup_stale_webui_proxy_rules(self):
-        """No-op, kept so core.py's startup call doesn't need to change.
-        The old iptables-based proxy could leak a kernel NAT rule across a
-        crash/restart, which this swept up. The asyncio-server proxy has no
-        state outside this process - a restart just means no listeners are
-        bound until start_ap_webui_proxy is called again - so there is
-        nothing left to clean up."""
-        return
+        """One-time migration sweep, run at startup: removes any DNAT/
+        MASQUERADE iptables rules left behind by an older build of this
+        agent that used raw NAT instead of this HTTP-level proxy. Those
+        rules intercept traffic to the proxy port in the kernel, before it
+        ever reaches this process's listening socket - if left in place,
+        they silently redirect the port back to the old raw-NAT behavior
+        (or a since-changed gateway) no matter what this class does, which
+        is indistinguishable from the proxy not working at all. Safe to
+        keep running on every startup indefinitely: a no-op once no such
+        rules exist."""
+        if not shutil.which("iptables-save"):
+            return
+        out = (await proc.run(["iptables-save", "-t", "nat"])).stdout
+        for line in out.splitlines():
+            if self.AP_WEBUI_PROXY_COMMENT_PREFIX not in line or not line.startswith("-A "):
+                continue
+            args = line[3:].split()
+            await proc.run(["iptables", "-t", "nat", "-D", *args], timeout=15)
 
     def _arm_webui_proxy_ttl(self, interface):
         """A cancellable TTL: fires once, AP_WEBUI_PROXY_TTL_SECONDS from
