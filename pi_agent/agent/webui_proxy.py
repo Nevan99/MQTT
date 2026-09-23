@@ -29,6 +29,44 @@ _BODY_SCHEME_REWRITES = (("wss://", "ws://"), ("https://", "http://"),
                           ("ws://", "ws://"), ("http://", "http://"))
 
 
+class _Headers:
+    """Case-insensitive, single-valued, order-preserving HTTP header map.
+
+    HTTP header names are case-insensitive by spec (RFC 7230 3.2), but a
+    plain dict here caused a real bug: exact-case lookups like
+    headers.get("Upgrade")/("Connection") silently missed a WebSocket
+    handshake whose browser sent lowercase header names (Chrome does this),
+    so the upgrade went undetected, Connection: close got force-set over
+    the client's Connection: Upgrade, and the handshake broke outright
+    while everything else about the request looked correct.
+
+    Setting an existing header (by any casing) updates its value in place
+    and keeps whichever casing was first seen for that name, rather than
+    adding a second header with the new casing - important since some
+    embedded HTTP servers don't handle duplicate headers gracefully."""
+
+    def __init__(self):
+        self._entries = {}  # lower(name) -> (original_name, value)
+
+    def __contains__(self, name):
+        return name.lower() in self._entries
+
+    def get(self, name, default=None):
+        entry = self._entries.get(name.lower())
+        return entry[1] if entry else default
+
+    def __setitem__(self, name, value):
+        key = name.lower()
+        original = self._entries[key][0] if key in self._entries else name
+        self._entries[key] = (original, value)
+
+    def __delitem__(self, name):
+        del self._entries[name.lower()]
+
+    def items(self):
+        return [(original, value) for original, value in self._entries.values()]
+
+
 class WebUiProxyMixin:
     """AP web UI proxy - the tester's browser can't reach an AP's own subnet
     directly - only this Pi can, since it's the one actually associated to
@@ -346,7 +384,7 @@ class WebUiProxyMixin:
 
         lines = head.decode("iso-8859-1").split("\r\n")
         start_line = lines[0]
-        headers = {}
+        headers = _Headers()
         for line in lines[1:]:
             if not line or ":" not in line:
                 continue
