@@ -144,8 +144,9 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
         # today.
         self._wifi_disconnect_semaphore = asyncio.Semaphore(4)
 
-        # interface -> {"port", "gateway", "timer"} for start_ap_webui_proxy's
-        # DNAT/MASQUERADE rules - see that method for the full explanation.
+        # interface -> {"port", "gateway", "server", "timer"} for
+        # start_ap_webui_proxy's HTTP reverse-proxy listener - see that
+        # method for the full explanation.
         self._webui_proxies = {}
         self._webui_proxies_lock = asyncio.Lock()
 

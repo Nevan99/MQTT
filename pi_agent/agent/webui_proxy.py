@@ -1,23 +1,33 @@
 import asyncio
-import shutil
+import re
 import zlib
-
-from . import proc
 
 
 class WebUiProxyMixin:
     """AP web UI proxy - the tester's browser can't reach an AP's own subnet
     directly - only this Pi can, since it's the one actually associated to
-    that AP. So instead of the browser trying (and failing) to open the
-    gateway IP itself, the Pi relays: DNAT whatever arrives at this Pi's own
-    registered IP on a per-interface port to <gateway>:80, and MASQUERADE
-    the reply path so the AP answers the Pi rather than trying (and
-    failing) to reach the tester directly. Relies on self._default_gateway_for
-    (WifiMixin, wifi.py)."""
+    that AP. Runs a small HTTP-level reverse proxy on this Pi rather than
+    plain iptables DNAT/MASQUERADE, which this used to be: a pure L3/L4 NAT
+    forwards bytes but never touches the Host/Origin/Referer headers the
+    client's browser sends, which still name the Pi's own proxy address.
+    Many AP web UIs validate those headers on login (CSRF/anti-hijack
+    checks) and silently reject an otherwise-correct login when they don't
+    match the AP's own address - this is why login worked from a device
+    connected directly to the AP's hotspot but failed through this proxy.
+    This proxy terminates the client's HTTP request, rewrites those headers
+    to the AP's gateway address, forwards to <gateway>:80, then rewrites any
+    Location redirect back to the address the client actually used before
+    relaying the response. Relies on self._default_gateway_for (WifiMixin,
+    wifi.py).
+
+    Known limitation: only rewrites headers, not HTML/JS response bodies -
+    an AP UI that hardcodes its own IP in page content (rather than using
+    relative URLs) will still break for anything that content links to.
+    """
 
     AP_WEBUI_TARGET_PORT = 80
     AP_WEBUI_PROXY_TTL_SECONDS = 300
-    AP_WEBUI_PROXY_COMMENT_PREFIX = "piagent_webui_"
+    UPSTREAM_CONNECT_TIMEOUT = 10
 
     @staticmethod
     def _webui_proxy_port_for(interface):
@@ -27,49 +37,19 @@ class WebUiProxyMixin:
         the same interface always land on the same port."""
         return 18080 + (zlib.crc32(interface.encode()) % 1000)
 
-    def _webui_proxy_comment(self, interface):
-        return f"{self.AP_WEBUI_PROXY_COMMENT_PREFIX}{interface}"
-
-    def _webui_proxy_rule_args(self, interface, port, gateway):
-        comment = self._webui_proxy_comment(interface)
-        dnat = ["PREROUTING", "-p", "tcp", "--dport", str(port),
-                "-m", "comment", "--comment", comment,
-                "-j", "DNAT", "--to-destination", f"{gateway}:{self.AP_WEBUI_TARGET_PORT}"]
-        masq = ["POSTROUTING", "-d", gateway, "-p", "tcp", "--dport", str(self.AP_WEBUI_TARGET_PORT),
-                "-m", "comment", "--comment", comment,
-                "-j", "MASQUERADE"]
-        return dnat, masq
-
-    async def _teardown_webui_proxy_rules(self, interface, port, gateway):
-        dnat, masq = self._webui_proxy_rule_args(interface, port, gateway)
-        await proc.run(["iptables", "-t", "nat", "-D", *dnat], timeout=15)
-        await proc.run(["iptables", "-t", "nat", "-D", *masq], timeout=15)
-
     async def _cleanup_stale_webui_proxy_rules(self):
-        """Removes any DNAT/MASQUERADE rules a previous run of this agent
-        added and never got to expire - e.g. the service was restarted
-        while a proxy's TTL timer was still pending, which drops the
-        in-process Timer but leaves the actual kernel iptables rule behind
-        forever, since nothing else would ever remove it. Run once at
-        startup so a restart can't leak a rule."""
-        if not shutil.which("iptables-save"):
-            return
-        out = (await proc.run(["iptables-save", "-t", "nat"])).stdout
-        for line in out.splitlines():
-            if self.AP_WEBUI_PROXY_COMMENT_PREFIX not in line or not line.startswith("-A "):
-                continue
-            args = line[3:].split()
-            await proc.run(["iptables", "-t", "nat", "-D", *args], timeout=15)
+        """No-op, kept so core.py's startup call doesn't need to change.
+        The old iptables-based proxy could leak a kernel NAT rule across a
+        crash/restart, which this swept up. The asyncio-server proxy has no
+        state outside this process - a restart just means no listeners are
+        bound until start_ap_webui_proxy is called again - so there is
+        nothing left to clean up."""
+        return
 
     def _arm_webui_proxy_ttl(self, interface):
-        """A cancellable TTL, replacing the threading.Timer this used to arm.
-
-        Same contract: fires once, AP_WEBUI_PROXY_TTL_SECONDS from now, and
-        can be cancelled to re-arm. As a task it also dies with the agent
-        rather than keeping a non-daemon timer thread alive - and the
-        startup sweep in _cleanup_stale_webui_proxy_rules still covers the
-        rule it would have removed had the process not exited first.
-        """
+        """A cancellable TTL: fires once, AP_WEBUI_PROXY_TTL_SECONDS from
+        now, and can be cancelled to re-arm. Runs as a task so it dies with
+        the agent rather than keeping anything alive past process exit."""
         async def expire():
             try:
                 await asyncio.sleep(self.AP_WEBUI_PROXY_TTL_SECONDS)
@@ -86,18 +66,24 @@ class WebUiProxyMixin:
         async with self._webui_proxies_lock:
             entry = self._webui_proxies.pop(interface, None)
         if entry:
-            await self._teardown_webui_proxy_rules(interface, entry["port"], entry["gateway"])
+            await self._close_webui_server(entry["server"])
+
+    @staticmethod
+    async def _close_webui_server(server):
+        server.close()
+        try:
+            await server.wait_closed()
+        except Exception:
+            pass
 
     async def start_ap_webui_proxy(self, interface):
-        """(Re)starts, or extends the TTL of, the DNAT proxy for this
+        """(Re)starts, or extends the TTL of, the HTTP proxy for this
         interface's currently-connected AP. Auto-expires AP_WEBUI_PROXY_TTL_
         SECONDS after the last call that (re)armed it - not real traffic-
         idle detection, just "nobody's asked for this in N minutes" - so a
-        forgotten tab doesn't leave a NAT rule open indefinitely."""
+        forgotten tab doesn't leave a listener open indefinitely."""
         if not interface:
             return {"error": "interface is required"}
-        if not shutil.which("iptables"):
-            return {"error": "iptables is not installed on this Pi - run: sudo apt-get install iptables"}
         gateway = await self._default_gateway_for(interface)
         if not gateway:
             return {"error": f"{interface} has no known gateway (not connected to an AP?)"}
@@ -107,29 +93,183 @@ class WebUiProxyMixin:
             existing = self._webui_proxies.get(interface)
 
             if existing and existing["gateway"] == gateway:
-                # Same AP still proxied - just extend the TTL, no need to
-                # touch the (already-correct) iptables rules.
+                # Same AP still proxied - just extend the TTL, the listener
+                # is already bound and pointed at the right gateway.
                 existing["timer"].cancel()
                 existing["timer"] = self._arm_webui_proxy_ttl(interface)
                 return {"interface": interface, "port": port, "gateway": gateway, "applied": True}
 
             if existing:
-                # Reconnected to a different AP since the last proxy - drop
-                # the stale rule pointing at the old gateway first.
+                # Reconnected to a different AP since the last proxy - tear
+                # down the old listener before binding the new one.
                 existing["timer"].cancel()
-                await self._teardown_webui_proxy_rules(interface, existing["port"], existing["gateway"])
+                await self._close_webui_server(existing["server"])
 
-            await proc.run(["sysctl", "-w", "net.ipv4.ip_forward=1"], timeout=10)
-
-            dnat, masq = self._webui_proxy_rule_args(interface, port, gateway)
-            dnat_ret = await proc.run(["iptables", "-t", "nat", "-A", *dnat], timeout=15)
-            masq_ret = await proc.run(["iptables", "-t", "nat", "-A", *masq], timeout=15)
-            if dnat_ret.returncode != 0 or masq_ret.returncode != 0:
-                return {"error": (dnat_ret.stderr or masq_ret.stderr or "iptables rule failed").strip()}
+            try:
+                server = await asyncio.start_server(
+                    lambda r, w, gw=gateway: self._handle_webui_client(r, w, gw),
+                    "0.0.0.0", port,
+                )
+            except OSError as e:
+                return {"error": f"could not bind proxy port {port}: {e}"}
 
             self._webui_proxies[interface] = {
-                "port": port, "gateway": gateway,
+                "port": port, "gateway": gateway, "server": server,
                 "timer": self._arm_webui_proxy_ttl(interface),
             }
 
         return {"interface": interface, "port": port, "gateway": gateway, "applied": True}
+
+    async def _handle_webui_client(self, reader, writer, gateway):
+        """One client HTTP request/response cycle: read the request off
+        `reader`, rewrite Host/Origin/Referer to point at the AP's gateway
+        instead of this Pi, forward to <gateway>:80, then rewrite any
+        Location redirect back to the address the client actually used
+        before relaying the response. Forces Connection: close on both legs
+        so this stays a simple one-shot proxy - no keep-alive/pipelining
+        bookkeeping."""
+        try:
+            request_line, headers, body = await self._read_http_message(reader)
+        except (asyncio.IncompleteReadError, ConnectionError, ValueError):
+            writer.close()
+            return
+        if request_line is None:
+            writer.close()
+            return
+
+        client_host = headers.get("Host", gateway)
+
+        headers["Host"] = gateway
+        for name in ("Origin", "Referer"):
+            if name in headers:
+                headers[name] = self._rewrite_url_host(headers[name], gateway)
+        headers["Connection"] = "close"
+
+        try:
+            upstream_reader, upstream_writer = await asyncio.wait_for(
+                asyncio.open_connection(gateway, self.AP_WEBUI_TARGET_PORT),
+                self.UPSTREAM_CONNECT_TIMEOUT,
+            )
+        except (OSError, asyncio.TimeoutError):
+            await self._send_and_close(writer, b"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n")
+            return
+
+        try:
+            upstream_writer.write(self._serialize_message(request_line, headers, body))
+            await upstream_writer.drain()
+
+            status_line, resp_headers, resp_body = await self._read_http_message(upstream_reader)
+            if status_line is None:
+                writer.close()
+                return
+
+            if "Location" in resp_headers:
+                resp_headers["Location"] = self._rewrite_url_host(
+                    resp_headers["Location"], client_host, from_host=gateway,
+                )
+            resp_headers["Connection"] = "close"
+
+            await self._send_and_close(writer, self._serialize_message(status_line, resp_headers, resp_body))
+        finally:
+            upstream_writer.close()
+            try:
+                await upstream_writer.wait_closed()
+            except Exception:
+                pass
+
+    @staticmethod
+    async def _send_and_close(writer, data):
+        try:
+            writer.write(data)
+            await writer.drain()
+        except (ConnectionError, OSError):
+            pass
+        finally:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+    @staticmethod
+    async def _read_http_message(reader):
+        """Reads one HTTP/1.1 message (request or response) off `reader`:
+        start line, headers (as a dict keyed by canonical header name), and
+        body. Body length comes from Content-Length when present;
+        Transfer-Encoding: chunked bodies are de-chunked into a single blob
+        - the AP web UIs this proxies are simple embedded servers (config
+        pages, forms), not large enough to need streaming. Returns
+        (None, None, None) on a closed/empty connection."""
+        try:
+            head = await reader.readuntil(b"\r\n\r\n")
+        except asyncio.IncompleteReadError as e:
+            if not e.partial:
+                return None, None, None
+            raise
+        except asyncio.LimitOverrunError:
+            raise ValueError("header block too large")
+
+        lines = head.decode("iso-8859-1").split("\r\n")
+        start_line = lines[0]
+        headers = {}
+        for line in lines[1:]:
+            if not line or ":" not in line:
+                continue
+            name, _, value = line.partition(":")
+            headers[name.strip()] = value.strip()
+
+        body = b""
+        content_length = headers.get("Content-Length")
+        transfer_encoding = headers.get("Transfer-Encoding", "").lower()
+        if content_length is not None:
+            try:
+                n = int(content_length)
+            except ValueError:
+                n = 0
+            if n > 0:
+                body = await reader.readexactly(n)
+        elif "chunked" in transfer_encoding:
+            body = await WebUiProxyMixin._read_chunked_body(reader)
+            del headers["Transfer-Encoding"]
+            headers["Content-Length"] = str(len(body))
+
+        return start_line, headers, body
+
+    @staticmethod
+    async def _read_chunked_body(reader):
+        chunks = []
+        while True:
+            size_line = await reader.readuntil(b"\r\n")
+            size = int(size_line.strip().split(b";")[0], 16)
+            if size == 0:
+                await reader.readuntil(b"\r\n")  # trailing CRLF after final chunk
+                break
+            chunks.append(await reader.readexactly(size))
+            await reader.readexactly(2)  # CRLF after chunk data
+        return b"".join(chunks)
+
+    @staticmethod
+    def _serialize_message(start_line, headers, body):
+        lines = [start_line]
+        for name, value in headers.items():
+            lines.append(f"{name}: {value}")
+        head = "\r\n".join(lines).encode("iso-8859-1") + b"\r\n\r\n"
+        return head + body
+
+    @staticmethod
+    def _rewrite_url_host(value, new_host, from_host=None):
+        """Rewrites the host portion of a Host/Origin/Referer/Location
+        header value to `new_host`. Host/Origin/Referer are host-only or
+        absolute-URL values that should always be pointed at the AP; give
+        `from_host` (used for Location) to only rewrite when the existing
+        host actually matches it, since a redirect may legitimately point
+        somewhere else entirely and shouldn't be touched."""
+        m = re.match(r'^(https?://)([^/]+)(.*)$', value, re.IGNORECASE)
+        if not m:
+            if from_host is not None:
+                return value
+            return new_host
+        scheme, host, rest = m.groups()
+        if from_host is not None and host != from_host and not host.startswith(from_host + ":"):
+            return value
+        return f"{scheme}{new_host}{rest}"
