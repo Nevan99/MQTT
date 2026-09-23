@@ -1,9 +1,7 @@
 import asyncio
-import os
 import re
 import shutil
 import ssl
-import tempfile
 import zlib
 
 from . import proc
@@ -21,47 +19,29 @@ _REWRITABLE_TEXT_CONTENT_TYPES = (
     "text/html", "text/javascript", "application/javascript",
     "application/json", "text/css", "text/plain",
 )
-# (literal scheme in the page, scheme to rewrite it to on this proxy's own
-# client-facing port). This proxy now terminates TLS on that side too (see
-# _get_webui_tls_server_context) rather than downgrading to plain HTTP/WS,
-# because at least one AP model's frontend JS branches on window.location.
-# protocol to pick between a plaintext ("/ws") and TLS ("/wss") WebSocket
-# endpoint - serving the page over plain HTTP made it think it was loaded
-# over http: and request the wrong (nonexistent on that AP) path, getting a
-# 404 from the AP's own nginx. Keeping https/wss end to end on the client
-# leg keeps location.protocol matching what a browser sees connecting to
-# the AP directly, so the AP's own routing picks the right path itself.
-_BODY_SCHEME_REWRITES = (("wss://", "wss://"), ("https://", "https://"),
-                          ("ws://", "wss://"), ("http://", "https://"))
+# (literal scheme in the page, scheme to rewrite it to on our plain-HTTP-
+# facing proxy port). wss/https get downgraded to ws/http because the
+# client is talking to this proxy over plain HTTP, not TLS - a page loaded
+# over http can still open a ws:// (or even wss://) connection without
+# hitting mixed-content blocking, but this proxy itself only speaks plain
+# HTTP/WS on the client-facing side, so wss:// would just fail to connect.
+#
+# Serving TLS on this side too (to keep window.location.protocol == https:,
+# which at least one AP's frontend JS uses to pick its WebSocket path - see
+# _WS_PATH_FALLBACKS) was tried and reverted: the AP Configuration view
+# runs inside an iframe in the Fleet UI, and a browser cannot show or let
+# the user click through a self-signed-cert warning inside a nested frame
+# - the resource just fails to load with no way to accept the exception.
+# Must stay plain HTTP/WS here for that to keep working.
+_BODY_SCHEME_REWRITES = (("wss://", "ws://"), ("https://", "http://"),
+                          ("ws://", "ws://"), ("http://", "http://"))
 
-_webui_tls_context_lock = asyncio.Lock()
-_webui_tls_context = None
-
-
-async def _get_webui_tls_server_context():
-    """Self-signed TLS context for this proxy's client-facing listeners,
-    generated once per agent process (a fresh cert each restart is fine -
-    nothing needs to trust or pin it beyond "the browser clicks through
-    the warning once", same as it likely already does for the AP's own
-    self-signed cert) and shared across every interface's proxy."""
-    global _webui_tls_context
-    async with _webui_tls_context_lock:
-        if _webui_tls_context is not None:
-            return _webui_tls_context
-        cert_dir = tempfile.mkdtemp(prefix="pi_agent_webui_proxy_")
-        cert_path = os.path.join(cert_dir, "cert.pem")
-        key_path = os.path.join(cert_dir, "key.pem")
-        result = await proc.run([
-            "openssl", "req", "-x509", "-newkey", "rsa:2048",
-            "-keyout", key_path, "-out", cert_path,
-            "-days", "3650", "-nodes", "-subj", "/CN=pi-agent-webui-proxy",
-        ], timeout=30)
-        if result.returncode != 0:
-            raise RuntimeError(f"could not generate proxy TLS cert: {result.stderr.strip()}")
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ctx.load_cert_chain(cert_path, key_path)
-        _webui_tls_context = ctx
-        return ctx
+# Some AP frontends pick between these two WebSocket paths based on
+# window.location.protocol (https: -> /wss, http: -> /ws) even though only
+# one of the two actually exists on the AP's own server - since this proxy
+# has to serve plain HTTP client-side (see above), that JS logic picks the
+# wrong one and the AP 404s it. See _handle_webui_client's retry.
+_WS_PATH_FALLBACKS = {"/ws": "/wss", "/wss": "/ws"}
 
 
 class _Headers:
@@ -116,20 +96,26 @@ class WebUiProxyMixin:
     checks) and silently reject an otherwise-correct login when they don't
     match the AP's own address - this is why login worked from a device
     connected directly to the AP's hotspot but failed through this proxy.
-    This proxy terminates the client's HTTPS request (its own listener is
-    TLS too, with a self-signed cert - see _get_webui_tls_server_context -
-    so a browser loading the proxied page sees https: just like it would
-    connecting to the AP directly; some AP frontends branch on window.
-    location.protocol to pick their WebSocket path, and serving plain HTTP
-    here made that pick the wrong, nonexistent path), rewrites Host/Origin/
+    This proxy terminates the client's plain-HTTP request (deliberately
+    plain, not TLS - the AP Configuration view runs inside an iframe in
+    the Fleet UI, and a browser can't show or let the user click through
+    a self-signed-cert warning inside a nested frame, so this side can't
+    be TLS even though the AP's own side often is), rewrites Host/Origin/
     Referer to the AP's gateway address, and forwards it to <gateway>:
     <target_port> - the AP's own web UI port, which varies by device model
     and is passed in per-call. Port 443 is assumed HTTPS with a self-signed
-    cert on the AP's side too (skips verification for that leg - see
-    _INSECURE_TLS_CONTEXT), any other port is assumed plain HTTP. Then
-    rewrites any Location redirect back to the address the client actually
-    used before relaying the response. Relies on self._default_gateway_for
-    (WifiMixin, wifi.py).
+    cert (skips verification for that leg - see _INSECURE_TLS_CONTEXT), any
+    other port is assumed plain HTTP. Then rewrites any Location redirect
+    back to the address the client actually used before relaying the
+    response. Relies on self._default_gateway_for (WifiMixin, wifi.py).
+
+    Some AP frontends pick between two WebSocket paths (e.g. /ws vs /wss)
+    based on window.location.protocol, even though the AP's own server
+    only actually implements one of them - since this proxy has to stay
+    plain HTTP client-side (see above), that logic picks the wrong,
+    nonexistent path and 404s. _handle_webui_client works around this with
+    a same-request retry against the other path in _WS_PATH_FALLBACKS
+    rather than needing to fix the scheme mismatch that causes it.
 
     Text response bodies (HTML/JS/JSON/CSS) also get a best-effort string
     rewrite - see _rewrite_body_host_refs - for AP UIs whose JS hardcodes
@@ -238,10 +224,6 @@ class WebUiProxyMixin:
         if not gateway:
             return {"error": f"{interface} has no known gateway (not connected to an AP?)"}
         port = self._webui_proxy_port_for(interface)
-        try:
-            tls_context = await _get_webui_tls_server_context()
-        except RuntimeError as e:
-            return {"error": str(e)}
 
         async with self._webui_proxies_lock:
             existing = self._webui_proxies.get(interface)
@@ -252,7 +234,7 @@ class WebUiProxyMixin:
                 existing["timer"].cancel()
                 existing["timer"] = self._arm_webui_proxy_ttl(interface)
                 return {"interface": interface, "port": port, "gateway": gateway,
-                         "target_port": target_port, "scheme": "https", "applied": True}
+                         "target_port": target_port, "applied": True}
 
             if existing:
                 # Reconnected to a different AP, or a different port on the
@@ -264,7 +246,7 @@ class WebUiProxyMixin:
             try:
                 server = await asyncio.start_server(
                     lambda r, w, gw=gateway, tp=target_port, iface=interface: self._handle_webui_client(r, w, gw, tp, iface),
-                    "0.0.0.0", port, ssl=tls_context,
+                    "0.0.0.0", port,
                 )
             except OSError as e:
                 return {"error": f"could not bind proxy port {port}: {e}"}
@@ -275,7 +257,7 @@ class WebUiProxyMixin:
             }
 
         return {"interface": interface, "port": port, "gateway": gateway,
-                 "target_port": target_port, "scheme": "https", "applied": True}
+                 "target_port": target_port, "applied": True}
 
     def _touch_webui_proxy_ttl(self, interface):
         """Re-arms this interface's proxy TTL on real traffic through the
@@ -307,7 +289,10 @@ class WebUiProxyMixin:
         _relay_websocket) skips the Connection: close this otherwise forces
         on both legs, and on a successful 101 response hands off to a raw
         bidirectional byte relay instead of the one-shot request/response
-        path, since after the handshake this is no longer HTTP at all."""
+        path, since after the handshake this is no longer HTTP at all. If
+        the first attempt at a WS upgrade doesn't get a 101 and its path is
+        one of _WS_PATH_FALLBACKS, retries once against the other path
+        before giving up and forwarding whatever response it got."""
         self._touch_webui_proxy_ttl(interface)
         try:
             request_line, headers, body = await self._read_http_message(reader)
@@ -323,10 +308,16 @@ class WebUiProxyMixin:
         is_websocket = (headers.get("Upgrade", "").lower() == "websocket"
                          and "upgrade" in headers.get("Connection", "").lower())
 
+        # The AP's expected scheme for its own address, independent of what
+        # scheme the client used to reach this proxy (always plain http -
+        # see the class docstring) - matches how the upstream connection
+        # itself picks TLS vs plain (target_port == 443).
+        upstream_scheme = "https" if target_port == 443 else "http"
+
         headers["Host"] = gateway
         for name in ("Origin", "Referer"):
             if name in headers:
-                headers[name] = self._rewrite_url_host(headers[name], gateway)
+                headers[name] = self._rewrite_url_host(headers[name], gateway, force_scheme=upstream_scheme)
         if not is_websocket:
             headers["Connection"] = "close"
             # Force an uncompressed response so _rewrite_body_host_refs can
@@ -334,73 +325,100 @@ class WebUiProxyMixin:
             # UTF-8 decode there and silently skip the rewrite entirely.
             headers["Accept-Encoding"] = "identity"
 
+        request_lines_to_try = [request_line]
+        if is_websocket:
+            parts = request_line.split(" ", 2)
+            if len(parts) == 3 and parts[1] in _WS_PATH_FALLBACKS:
+                request_lines_to_try.append(f"{parts[0]} {_WS_PATH_FALLBACKS[parts[1]]} {parts[2]}")
+
+        upstream_writer = None
         try:
-            upstream_reader, upstream_writer = await asyncio.wait_for(
-                asyncio.open_connection(
-                    gateway, target_port,
-                    ssl=_INSECURE_TLS_CONTEXT if target_port == 443 else None,
-                ),
-                self.UPSTREAM_CONNECT_TIMEOUT,
-            )
-        except (OSError, asyncio.TimeoutError) as e:
-            print(f"[pi_agent] webui proxy: could not reach {gateway}:{target_port} ({e})")
-            await self._send_and_close(writer, b"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n")
-            return
+            for attempt, candidate_request_line in enumerate(request_lines_to_try):
+                is_last_attempt = attempt == len(request_lines_to_try) - 1
 
-        try:
-            if is_websocket:
-                print(f"[pi_agent] webui proxy: WS handshake -> {gateway}:{target_port}: "
-                      f"{request_line!r} headers={dict(headers.items())}")
+                try:
+                    upstream_reader, upstream_writer = await asyncio.wait_for(
+                        asyncio.open_connection(
+                            gateway, target_port,
+                            ssl=_INSECURE_TLS_CONTEXT if target_port == 443 else None,
+                        ),
+                        self.UPSTREAM_CONNECT_TIMEOUT,
+                    )
+                except (OSError, asyncio.TimeoutError) as e:
+                    print(f"[pi_agent] webui proxy: could not reach {gateway}:{target_port} ({e})")
+                    await self._send_and_close(writer, b"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n")
+                    return
 
-            upstream_writer.write(self._serialize_message(request_line, headers, body))
-            await upstream_writer.drain()
+                if is_websocket:
+                    print(f"[pi_agent] webui proxy: WS handshake -> {gateway}:{target_port}: "
+                          f"{candidate_request_line!r} headers={dict(headers.items())}")
 
-            try:
-                status_line, resp_headers, resp_body = await self._read_http_message(upstream_reader)
-            except (asyncio.IncompleteReadError, ConnectionError, ValueError) as e:
-                print(f"[pi_agent] webui proxy: failed to read response from {gateway}:{target_port}: {e}")
-                writer.close()
+                upstream_writer.write(self._serialize_message(candidate_request_line, headers, body))
+                await upstream_writer.drain()
+
+                try:
+                    status_line, resp_headers, resp_body = await self._read_http_message(upstream_reader)
+                except (asyncio.IncompleteReadError, ConnectionError, ValueError) as e:
+                    print(f"[pi_agent] webui proxy: failed to read response from {gateway}:{target_port}: {e}")
+                    writer.close()
+                    return
+                if status_line is None:
+                    print(f"[pi_agent] webui proxy: {gateway}:{target_port} closed the connection with no response")
+                    writer.close()
+                    return
+
+                if is_websocket:
+                    print(f"[pi_agent] webui proxy: WS handshake response <- {gateway}:{target_port}: "
+                          f"{status_line!r} headers={dict(resp_headers.items())} "
+                          f"body={resp_body[:500]!r}")
+
+                got_101 = is_websocket and status_line.split(" ", 2)[1:2] == ["101"]
+
+                if is_websocket and not got_101 and not is_last_attempt:
+                    # This path 404'd (or similar) - this AP only
+                    # implements one of /ws or /wss and this proxy, stuck
+                    # serving plain HTTP client-side, can't make the AP's
+                    # own protocol-based path choice pick the right one.
+                    # Retry once against the other candidate path instead.
+                    upstream_writer.close()
+                    try:
+                        await upstream_writer.wait_closed()
+                    except Exception:
+                        pass
+                    continue
+
+                if got_101:
+                    # Handshake succeeded - forward the 101 response as-is
+                    # (its Connection/Upgrade headers are already correct)
+                    # and switch to a raw relay; this owns closing both
+                    # sockets from here, so skip the finally-block close.
+                    writer.write(self._serialize_message(status_line, resp_headers, b""))
+                    await writer.drain()
+                    await self._relay_websocket(reader, writer, upstream_reader, upstream_writer)
+                    return
+
+                if "Location" in resp_headers:
+                    resp_headers["Location"] = self._rewrite_url_host(
+                        resp_headers["Location"], client_host, from_host=gateway,
+                    )
+
+                if resp_body and self._is_rewritable_text(resp_headers.get("Content-Type", "")):
+                    rewritten = self._rewrite_body_host_refs(resp_body, gateway, target_port, client_host)
+                    if rewritten != resp_body:
+                        resp_body = rewritten
+                        resp_headers["Content-Length"] = str(len(resp_body))
+
+                resp_headers["Connection"] = "close"
+
+                await self._send_and_close(writer, self._serialize_message(status_line, resp_headers, resp_body))
                 return
-            if status_line is None:
-                print(f"[pi_agent] webui proxy: {gateway}:{target_port} closed the connection with no response")
-                writer.close()
-                return
-
-            if is_websocket:
-                print(f"[pi_agent] webui proxy: WS handshake response <- {gateway}:{target_port}: "
-                      f"{status_line!r} headers={dict(resp_headers.items())} "
-                      f"body={resp_body[:500]!r}")
-
-            if is_websocket and status_line.split(" ", 2)[1:2] == ["101"]:
-                # Handshake succeeded - forward the 101 response as-is (its
-                # Connection/Upgrade headers are already correct) and switch
-                # to a raw relay; this call owns closing both sockets from
-                # here, so skip the generic finally-block close below.
-                writer.write(self._serialize_message(status_line, resp_headers, b""))
-                await writer.drain()
-                await self._relay_websocket(reader, writer, upstream_reader, upstream_writer)
-                return
-
-            if "Location" in resp_headers:
-                resp_headers["Location"] = self._rewrite_url_host(
-                    resp_headers["Location"], client_host, from_host=gateway,
-                )
-
-            if resp_body and self._is_rewritable_text(resp_headers.get("Content-Type", "")):
-                rewritten = self._rewrite_body_host_refs(resp_body, gateway, target_port, client_host)
-                if rewritten != resp_body:
-                    resp_body = rewritten
-                    resp_headers["Content-Length"] = str(len(resp_body))
-
-            resp_headers["Connection"] = "close"
-
-            await self._send_and_close(writer, self._serialize_message(status_line, resp_headers, resp_body))
         finally:
-            upstream_writer.close()
-            try:
-                await upstream_writer.wait_closed()
-            except Exception:
-                pass
+            if upstream_writer is not None:
+                upstream_writer.close()
+                try:
+                    await upstream_writer.wait_closed()
+                except Exception:
+                    pass
 
     @staticmethod
     async def _relay_websocket(client_reader, client_writer, upstream_reader, upstream_writer):
@@ -517,21 +535,34 @@ class WebUiProxyMixin:
         return head + body
 
     @staticmethod
-    def _rewrite_url_host(value, new_host, from_host=None):
+    def _rewrite_url_host(value, new_host, from_host=None, force_scheme=None):
         """Rewrites the host portion of a Host/Origin/Referer/Location
         header value to `new_host`. Host/Origin/Referer are host-only or
         absolute-URL values that should always be pointed at the AP; give
         `from_host` (used for Location) to only rewrite when the existing
         host actually matches it, since a redirect may legitimately point
-        somewhere else entirely and shouldn't be touched."""
+        somewhere else entirely and shouldn't be touched.
+
+        `force_scheme` (used for Origin/Referer heading upstream) replaces
+        the value's own scheme rather than preserving it - the client
+        always sent plain http:// (this proxy can't be TLS client-side,
+        see the class docstring), but an AP served over HTTPS expects
+        Origin to say https://, confirmed by this device's own reference
+        client (ar6445g_auth.py: `origin = f"{parsed.scheme}://..."`,
+        parsed.scheme being "https" for this device) - preserving the
+        client's http:// here would send the AP an Origin it never
+        actually sees from a real browser and may not accept."""
         m = re.match(r'^(https?://)([^/]+)(.*)$', value, re.IGNORECASE)
         if not m:
             if from_host is not None:
                 return value
-            return new_host
+            scheme = f"{force_scheme}://" if force_scheme else "http://"
+            return f"{scheme}{new_host}"
         scheme, host, rest = m.groups()
         if from_host is not None and host != from_host and not host.startswith(from_host + ":"):
             return value
+        if force_scheme is not None:
+            scheme = f"{force_scheme}://"
         return f"{scheme}{new_host}{rest}"
 
     @staticmethod
