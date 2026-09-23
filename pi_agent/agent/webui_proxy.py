@@ -164,13 +164,18 @@ class WebUiProxyMixin:
                  "target_port": target_port, "applied": True}
 
     async def _handle_webui_client(self, reader, writer, gateway, target_port):
-        """One client HTTP request/response cycle: read the request off
-        `reader`, rewrite Host/Origin/Referer to point at the AP's gateway
-        instead of this Pi, forward to <gateway>:<target_port>, then rewrite
-        any Location redirect back to the address the client actually used
-        before relaying the response. Forces Connection: close on both legs
-        so this stays a simple one-shot proxy - no keep-alive/pipelining
-        bookkeeping."""
+        """One client HTTP exchange: read the request off `reader`, rewrite
+        Host/Origin/Referer to point at the AP's gateway instead of this
+        Pi, forward to <gateway>:<target_port>, then rewrite any Location
+        redirect back to the address the client actually used before
+        relaying the response.
+
+        A WebSocket upgrade (Connection: Upgrade / Upgrade: websocket - the
+        AP UI's login flow uses one, per its own comment - see
+        _relay_websocket) skips the Connection: close this otherwise forces
+        on both legs, and on a successful 101 response hands off to a raw
+        bidirectional byte relay instead of the one-shot request/response
+        path, since after the handshake this is no longer HTTP at all."""
         try:
             request_line, headers, body = await self._read_http_message(reader)
         except (asyncio.IncompleteReadError, ConnectionError, ValueError):
@@ -181,12 +186,15 @@ class WebUiProxyMixin:
             return
 
         client_host = headers.get("Host", gateway)
+        is_websocket = (headers.get("Upgrade", "").lower() == "websocket"
+                         and "upgrade" in headers.get("Connection", "").lower())
 
         headers["Host"] = gateway
         for name in ("Origin", "Referer"):
             if name in headers:
                 headers[name] = self._rewrite_url_host(headers[name], gateway)
-        headers["Connection"] = "close"
+        if not is_websocket:
+            headers["Connection"] = "close"
 
         try:
             upstream_reader, upstream_writer = await asyncio.wait_for(
@@ -209,6 +217,16 @@ class WebUiProxyMixin:
                 writer.close()
                 return
 
+            if is_websocket and status_line.split(" ", 2)[1:2] == ["101"]:
+                # Handshake succeeded - forward the 101 response as-is (its
+                # Connection/Upgrade headers are already correct) and switch
+                # to a raw relay; this call owns closing both sockets from
+                # here, so skip the generic finally-block close below.
+                writer.write(self._serialize_message(status_line, resp_headers, b""))
+                await writer.drain()
+                await self._relay_websocket(reader, writer, upstream_reader, upstream_writer)
+                return
+
             if "Location" in resp_headers:
                 resp_headers["Location"] = self._rewrite_url_host(
                     resp_headers["Location"], client_host, from_host=gateway,
@@ -222,6 +240,41 @@ class WebUiProxyMixin:
                 await upstream_writer.wait_closed()
             except Exception:
                 pass
+
+    @staticmethod
+    async def _relay_websocket(client_reader, client_writer, upstream_reader, upstream_writer):
+        """Glues client and upstream sockets together after a successful
+        WebSocket upgrade: no frame inspection, just raw bytes shuttled in
+        both directions until either side closes or errors, at which point
+        both ends are torn down (so a client that never closes doesn't
+        leave the other pump - and this connection - waiting forever)."""
+        async def pump(src, dst):
+            try:
+                while True:
+                    data = await src.read(65536)
+                    if not data:
+                        break
+                    dst.write(data)
+                    await dst.drain()
+            except (ConnectionError, OSError):
+                pass
+
+        tasks = [
+            asyncio.create_task(pump(client_reader, upstream_writer)),
+            asyncio.create_task(pump(upstream_reader, client_writer)),
+        ]
+        try:
+            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in tasks:
+                task.cancel()
+            for w in (client_writer, upstream_writer):
+                w.close()
+            for w in (client_writer, upstream_writer):
+                try:
+                    await w.wait_closed()
+                except Exception:
+                    pass
 
     @staticmethod
     async def _send_and_close(writer, data):
