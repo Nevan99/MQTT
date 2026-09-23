@@ -13,6 +13,21 @@ _INSECURE_TLS_CONTEXT = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 _INSECURE_TLS_CONTEXT.check_hostname = False
 _INSECURE_TLS_CONTEXT.verify_mode = ssl.CERT_NONE
 
+# Response content types worth scanning for hardcoded references to the
+# AP's own address - see WebUiProxyMixin._rewrite_body_host_refs.
+_REWRITABLE_TEXT_CONTENT_TYPES = (
+    "text/html", "text/javascript", "application/javascript",
+    "application/json", "text/css", "text/plain",
+)
+# (literal scheme in the page, scheme to rewrite it to on our plain-HTTP-
+# facing proxy port). wss/https get downgraded to ws/http because the
+# client is talking to this proxy over plain HTTP, not TLS - a page loaded
+# over http can still open a ws:// (or even wss://) connection without
+# hitting mixed-content blocking, but this proxy itself only speaks plain
+# HTTP/WS on the client-facing side, so wss:// would just fail to connect.
+_BODY_SCHEME_REWRITES = (("wss://", "ws://"), ("https://", "http://"),
+                          ("ws://", "ws://"), ("http://", "http://"))
+
 
 class WebUiProxyMixin:
     """AP web UI proxy - the tester's browser can't reach an AP's own subnet
@@ -35,9 +50,19 @@ class WebUiProxyMixin:
     relaying the response. Relies on self._default_gateway_for (WifiMixin,
     wifi.py).
 
-    Known limitation: only rewrites headers, not HTML/JS response bodies -
-    an AP UI that hardcodes its own IP in page content (rather than using
-    relative URLs) will still break for anything that content links to.
+    Text response bodies (HTML/JS/JSON/CSS) also get a best-effort string
+    rewrite - see _rewrite_body_host_refs - for AP UIs whose JS hardcodes
+    the AP's own address (e.g. building a JSON-RPC-over-WebSocket URL from
+    a literal like `new WebSocket("wss://192.168.1.1/rpc")` instead of a
+    relative one) rather than deriving it from window.location; header
+    rewriting alone never touches page content, so without this the
+    browser would try to open that connection straight to the AP - which
+    it can't reach - and the WebSocket would simply never appear at all.
+
+    Known limitation: this is plain string substitution, not a real HTML/
+    JS parser - obfuscated or dynamically-constructed (e.g. string-
+    concatenated at runtime) references to the AP's address won't match
+    and will still break.
     """
 
     AP_WEBUI_TARGET_PORT = 443
@@ -195,6 +220,10 @@ class WebUiProxyMixin:
                 headers[name] = self._rewrite_url_host(headers[name], gateway)
         if not is_websocket:
             headers["Connection"] = "close"
+            # Force an uncompressed response so _rewrite_body_host_refs can
+            # actually decode and scan it - a gzip/br body would fail the
+            # UTF-8 decode there and silently skip the rewrite entirely.
+            headers["Accept-Encoding"] = "identity"
 
         try:
             upstream_reader, upstream_writer = await asyncio.wait_for(
@@ -231,6 +260,13 @@ class WebUiProxyMixin:
                 resp_headers["Location"] = self._rewrite_url_host(
                     resp_headers["Location"], client_host, from_host=gateway,
                 )
+
+            if resp_body and self._is_rewritable_text(resp_headers.get("Content-Type", "")):
+                rewritten = self._rewrite_body_host_refs(resp_body, gateway, target_port, client_host)
+                if rewritten != resp_body:
+                    resp_body = rewritten
+                    resp_headers["Content-Length"] = str(len(resp_body))
+
             resp_headers["Connection"] = "close"
 
             await self._send_and_close(writer, self._serialize_message(status_line, resp_headers, resp_body))
@@ -372,3 +408,38 @@ class WebUiProxyMixin:
         if from_host is not None and host != from_host and not host.startswith(from_host + ":"):
             return value
         return f"{scheme}{new_host}{rest}"
+
+    @staticmethod
+    def _is_rewritable_text(content_type):
+        ct = content_type.split(";")[0].strip().lower()
+        return any(ct.startswith(t) for t in _REWRITABLE_TEXT_CONTENT_TYPES)
+
+    @staticmethod
+    def _rewrite_body_host_refs(body, gateway, target_port, client_host):
+        """Best-effort rewrite of hardcoded references to the AP's own
+        address inside HTML/JS/JSON response bodies, so client-side code
+        that builds a URL from a literal baked into the page (e.g.
+        `new WebSocket("wss://192.168.1.1/rpc")`) talks back through this
+        proxy instead of trying to reach the AP directly - which the
+        browser can't do, since only this Pi is actually associated to
+        that AP's subnet. Header rewriting (Host/Origin/Referer/Location)
+        never touches page content, so this is the other half of that.
+
+        Plain string substitution, not an HTML/JS parser: code that builds
+        the URL dynamically from window.location at runtime is untouched,
+        but doesn't need rewriting anyway - it already resolves against
+        the proxy address the browser actually loaded the page from."""
+        try:
+            text = body.decode("utf-8")
+        except UnicodeDecodeError:
+            return body  # binary asset with a text-ish content-type - leave alone
+
+        gateway_forms = (f"{gateway}:{target_port}", gateway)
+        original = text
+        for scheme_from, scheme_to in _BODY_SCHEME_REWRITES:
+            for form in gateway_forms:
+                text = text.replace(f"{scheme_from}{form}", f"{scheme_to}{client_host}")
+
+        if text == original:
+            return body
+        return text.encode("utf-8")
