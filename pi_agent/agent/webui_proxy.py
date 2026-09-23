@@ -55,6 +55,9 @@ class _Headers:
         entry = self._entries.get(name.lower())
         return entry[1] if entry else default
 
+    def __getitem__(self, name):
+        return self._entries[name.lower()][1]
+
     def __setitem__(self, name, value):
         key = name.lower()
         original = self._entries[key][0] if key in self._entries else name
