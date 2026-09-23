@@ -241,7 +241,8 @@ class WebUiProxyMixin:
         path, since after the handshake this is no longer HTTP at all."""
         try:
             request_line, headers, body = await self._read_http_message(reader)
-        except (asyncio.IncompleteReadError, ConnectionError, ValueError):
+        except (asyncio.IncompleteReadError, ConnectionError, ValueError) as e:
+            print(f"[pi_agent] webui proxy ({gateway}:{target_port}): failed to read client request: {e}")
             writer.close()
             return
         if request_line is None:
@@ -271,7 +272,8 @@ class WebUiProxyMixin:
                 ),
                 self.UPSTREAM_CONNECT_TIMEOUT,
             )
-        except (OSError, asyncio.TimeoutError):
+        except (OSError, asyncio.TimeoutError) as e:
+            print(f"[pi_agent] webui proxy: could not reach {gateway}:{target_port} ({e})")
             await self._send_and_close(writer, b"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n")
             return
 
@@ -279,8 +281,14 @@ class WebUiProxyMixin:
             upstream_writer.write(self._serialize_message(request_line, headers, body))
             await upstream_writer.drain()
 
-            status_line, resp_headers, resp_body = await self._read_http_message(upstream_reader)
+            try:
+                status_line, resp_headers, resp_body = await self._read_http_message(upstream_reader)
+            except (asyncio.IncompleteReadError, ConnectionError, ValueError) as e:
+                print(f"[pi_agent] webui proxy: failed to read response from {gateway}:{target_port}: {e}")
+                writer.close()
+                return
             if status_line is None:
+                print(f"[pi_agent] webui proxy: {gateway}:{target_port} closed the connection with no response")
                 writer.close()
                 return
 
