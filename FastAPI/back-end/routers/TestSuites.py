@@ -2,7 +2,7 @@ import json
 import threading
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
 from database.database import get_session, get_session_direct
@@ -10,6 +10,7 @@ from database.models import TestSuite, TestSuiteRun, TestCase, TestRun
 from schemas.schemas import TestSuiteRequest, TestSuiteOut, TestSuiteRunOut
 from service.auth import get_current_user
 from routers.TestCases import _run_testcase
+from service import run_control
 
 router = APIRouter(prefix="/testsuites", tags=["testsuites"], dependencies=[Depends(get_current_user)])
 
@@ -197,11 +198,26 @@ def _run_testsuite(suite_run_id: int):
             session.commit()
 
     save_results()
+    live = run_control.register_suite(suite_run_id)
+    try:
+        _run_testsuite_body(suite_run_id, testcase_ids, stop_on_failure, results, save_results, live)
+    finally:
+        run_control.unregister_suite(suite_run_id)
 
+
+def _run_testsuite_body(suite_run_id, testcase_ids, stop_on_failure, results, save_results, live):
     overall_passed = True
     stopped_at = None
+    user_stopped = False
 
     for i, tc_id in enumerate(testcase_ids):
+        # POST /testsuites/runs/{id}/stop - either mode keeps the suite from
+        # starting another testcase; "now" has also already cut the running
+        # one short (see run_control.request_suite_stop).
+        if live.stop_mode is not None:
+            user_stopped = True
+            stopped_at = i - 1
+            break
         with get_session_direct() as session:
             testcase = session.get(TestCase, tc_id)
             if testcase is None:
@@ -225,6 +241,9 @@ def _run_testsuite(suite_run_id: int):
             session.commit()
             session.refresh(run)
             run_id, testcase_name = run.id, testcase.name
+        # Before _run_testcase registers the run, so a suite "stop now" is
+        # forwarded either here or by _run_testcase's own check on start.
+        live.current_run_id = run_id
 
         # Published before the (blocking) run starts, so the UI can open this
         # testcase's own run and follow its steps while they happen.
@@ -232,6 +251,7 @@ def _run_testsuite(suite_run_id: int):
         save_results()
 
         _run_testcase(run_id)
+        live.current_run_id = None
 
         with get_session_direct() as session:
             finished = session.get(TestRun, run_id)
@@ -245,6 +265,10 @@ def _run_testsuite(suite_run_id: int):
             overall_passed = False
         save_results()
 
+        if status == "stopped" or live.stop_mode is not None:
+            user_stopped = True
+            stopped_at = i
+            break
         if status != "passed" and stop_on_failure:
             stopped_at = i
             break
@@ -260,10 +284,41 @@ def _run_testsuite(suite_run_id: int):
         r = session.get(TestSuiteRun, suite_run_id)
         if r is None:
             return
-        r.status = "passed" if overall_passed else "failed"
+        r.status = "stopped" if user_stopped else ("passed" if overall_passed else "failed")
         r.completed_at = datetime.now(timezone.utc)
         session.add(r)
         session.commit()
+
+
+@router.post("/runs/{run_id}/stop")
+def stop_suite_run(
+    run_id: int,
+    mode: str = Query(run_control.STOP_NOW, description="now | after_testcase"),
+    session: Session = Depends(get_session),
+):
+    """Asks a running testsuite to stop. now: the testcase in flight is
+    stopped too (see POST /testcases/runs/{id}/stop). after_testcase: it is
+    left to finish. Remaining testcases are marked skipped and the suite run
+    ends as "stopped"."""
+    if mode not in run_control.SUITE_STOP_MODES:
+        raise HTTPException(status_code=400, detail=f"mode must be one of {run_control.SUITE_STOP_MODES}")
+    r = session.get(TestSuiteRun, run_id)
+    if r is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if r.status != "running":
+        raise HTTPException(status_code=409, detail=f"Run is not running (status: {r.status})")
+    if not run_control.request_suite_stop(run_id, mode):
+        # Orphaned by a backend restart - see TestCases.stop_run.
+        results = json.loads(r.results_json)
+        for entry in results:
+            if entry.get("status") in ("pending", "running"):
+                entry["status"] = "skipped"
+        r.results_json = json.dumps(results)
+        r.status = "stopped"
+        r.completed_at = datetime.now(timezone.utc)
+        session.add(r)
+        session.commit()
+    return {"run_id": run_id, "stop_requested": mode}
 
 
 @router.post("/{testsuite_id}/run", response_model=TestSuiteRunOut)

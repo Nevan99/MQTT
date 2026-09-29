@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <title>Pi Fleet Controller</title>
 <link rel="icon" type="image/png" href="assets/favicon-512-clean.png">
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="styles.css?v=4">
 </head>
 <body>
 <div id="loginOverlay">
@@ -35,6 +35,7 @@
     <button class="tab active" data-view="fleet">Fleet</button>
     <button class="tab" data-view="interfaces">Interfaces</button>
     <button class="tab" data-view="packages">Packages</button>
+    <button class="tab" data-view="running">Running</button>
     <button class="tab" data-view="results">Results</button>
     <button class="tab" data-view="captures">Captures</button>
     <button class="tab" data-view="history">History</button>
@@ -103,6 +104,7 @@
           <th data-key="connected">Wi-Fi connected</th><th data-key="ssid">SSID</th><th data-key="bssid">BSSID</th>
           <th data-key="frequency_mhz">Frequency</th><th data-key="band">Band</th><th data-key="signal_dbm">Signal</th>
           <th data-key="rx_bitrate_mbps">RX bitrate</th><th data-key="tx_bitrate_mbps">TX bitrate</th><th data-key="gateway">Gateway</th>
+          <th data-key="key_mgmt">Key mgmt</th><th data-key="radio_type">Radio type</th>
         </tr>
         <tr id="interfacesFilterRow" class="table-filter-row">
           <th><input type="text" class="table-filter-input" data-key="pi_id" placeholder="Filter…"></th>
@@ -120,6 +122,8 @@
           <th><input type="text" class="table-filter-input" data-key="rx_bitrate_mbps" placeholder="Filter…"></th>
           <th><input type="text" class="table-filter-input" data-key="tx_bitrate_mbps" placeholder="Filter…"></th>
           <th><input type="text" class="table-filter-input" data-key="gateway" placeholder="Filter…"></th>
+          <th><input type="text" class="table-filter-input" data-key="key_mgmt" placeholder="Filter…"></th>
+          <th><input type="text" class="table-filter-input" data-key="radio_type" placeholder="Filter…"></th>
         </tr>
       </thead>
       <tbody id="interfacesTableBody"></tbody>
@@ -143,6 +147,7 @@
         <option value="running">Running</option>
         <option value="passed">Passed</option>
         <option value="failed">Failed</option>
+        <option value="stopped">Stopped</option>
       </select>
       <input type="text" id="resSearchInput" class="field" placeholder="Search name…" style="flex: 1 1 auto;">
       <button type="button" id="resRefreshBtn" style="flex: 0 0 auto;">Refresh</button>
@@ -170,6 +175,7 @@
       <button type="button" id="resDetailBackBtn" style="flex: 0 0 auto;">&larr; Back</button>
       <h2 id="resDetailTitle" style="margin: 0 0 0 0.25rem; font-size: 1rem; flex: 1 1 auto;"></h2>
       <span id="resDetailStatus" class="cmd-status pending"></span>
+      <span id="resDetailStopHost" class="tc-stop-host"></span>
       <button type="button" id="resDetailRerunBtn" style="flex: 0 0 auto;">Rerun</button>
       <button type="button" id="resDetailDeleteBtn" class="tc-bulk-danger" style="flex: 0 0 auto;">Delete</button>
     </div>
@@ -236,6 +242,7 @@
     <div class="row" style="align-items: center; margin-bottom: 0.75rem;">
       <button type="button" id="tcRunBackBtn" style="flex: 0 0 auto;">&larr; Back</button>
       <h2 id="tcRunTitle" style="margin: 0 0 0 0.75rem; font-size: 1rem; flex: 1 1 auto;"></h2>
+      <span id="tcRunStopHost" class="tc-stop-host"></span>
       <span id="tcRunStatus" class="cmd-status pending"></span>
     </div>
     <div id="tcRunSteps"></div>
@@ -380,19 +387,6 @@
   </div>
 </div>
 
-<div id="tsRunOverlay" class="wifi-info-overlay tc-editor-overlay hidden">
-  <div class="wifi-info-modal tc-editor-modal">
-    <div class="wifi-info-modal-header">
-      <span id="tsRunTitle"></span>
-      <span id="tsRunStatus" class="cmd-status pending"></span>
-      <button type="button" class="icon-btn" id="tsRunCloseBtn" title="Close">&times;</button>
-    </div>
-    <div class="wifi-info-modal-body">
-      <div id="tsRunTestcases"></div>
-    </div>
-  </div>
-</div>
-
 <!-- Shown before actually starting a testsuite run (from either its own Run
      button or the Results tab's Rerun) - the suite's membership/config may
      have drifted since any past run of it, so this confirms exactly what
@@ -467,6 +461,41 @@
     </div>
   </div>
 </div>
+
+<!-- Live runs - testsuites and standalone testcases. Pressing Run on either
+     (or View in their run history) lands here; see testsuites-tab.js. -->
+<section id="running" class="view">
+  <div class="ts-live-layout">
+    <div class="panel ts-live-list-panel">
+      <div class="row" style="align-items: center; margin-bottom: 0.5rem;">
+        <h2 style="margin: 0; font-size: 1rem; flex: 1 1 auto;">Runs</h2>
+        <button type="button" id="tsLiveRefreshBtn" style="flex: 0 0 auto;">Refresh</button>
+      </div>
+      <div id="tsLiveList"></div>
+    </div>
+    <div class="panel ts-live-detail-panel">
+      <div id="tsRunEmpty" class="pi-log-empty">No run selected - start a testcase or testsuite from Packages, or pick a run on the left.</div>
+      <div id="tsRunDetail" class="hidden">
+        <div class="row" style="align-items: center; margin-bottom: 0.75rem;">
+          <h2 id="tsRunTitle" style="margin: 0; font-size: 1rem; flex: 1 1 auto;"></h2>
+          <span id="tsRunStopHost" class="tc-stop-host"></span>
+          <span id="tsRunStatus" class="cmd-status pending"></span>
+        </div>
+        <div id="tsRunMeta" class="hint" style="margin-bottom: 0.6rem;"></div>
+        <div id="tsRunTestcases"></div>
+      </div>
+      <div id="tcLiveDetail" class="hidden">
+        <div class="row" style="align-items: center; margin-bottom: 0.75rem;">
+          <h2 id="tcLiveTitle" style="margin: 0; font-size: 1rem; flex: 1 1 auto;"></h2>
+          <span id="tcLiveStopHost" class="tc-stop-host"></span>
+          <span id="tcLiveStatus" class="cmd-status pending"></span>
+        </div>
+        <div id="tcLiveMeta" class="hint" style="margin-bottom: 0.6rem;"></div>
+        <div id="tcLiveSteps"></div>
+      </div>
+    </div>
+  </div>
+</section>
 
 <section id="captures" class="view">
   <div class="panel captures-panel">
@@ -611,15 +640,15 @@
      serves them with only Last-Modified/ETag, which Chrome's heuristic
      cache treats as "reuse without revalidating" for a warm tab), so a
      plain reload can otherwise keep serving a stale copy indefinitely. -->
-<script src="js/testcases-tab.js?v=9"></script>
-<script src="js/testsuites-tab.js?v=6"></script>
+<script src="js/testcases-tab.js?v=10"></script>
+<script src="js/testsuites-tab.js?v=8"></script>
 <!-- After testcases-tab.js: reuses its tcRenderRunSteps/tcStatusClass so a
      run's step detail renders identically in both places. -->
-<script src="js/results-tab.js?v=7"></script>
+<script src="js/results-tab.js?v=8"></script>
 <script src="js/wifi-scan.js?v=2"></script>
 <script src="js/wifi-info-modal.js?v=2"></script>
 <script src="js/log-rendering.js"></script>
 <script src="js/wireshark-table.js"></script>
-<script src="js/detail-page.js?v=3"></script>
+<script src="js/detail-page.js?v=4"></script>
 </body>
 </html>

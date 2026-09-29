@@ -327,6 +327,7 @@ function renderDetailIfaceBody(body, name) {
     if (link.frequency_mhz != null) rows.push(['Frequency', `${link.frequency_mhz} MHz`]);
     if (link.band) rows.push(['Band', link.band]);
     if (link.radio_type) rows.push(['Radio type', link.radio_type]);
+    if (link.key_mgmt) rows.push(['Key mgmt', link.key_mgmt]);
     if (link.signal_dbm != null) rows.push(['Signal', `${link.signal_dbm} dBm`]);
     if (link.rx_bitrate_mbps != null) rows.push(['RX bitrate', `${link.rx_bitrate_mbps} Mbps`]);
     if (link.tx_bitrate_mbps != null) rows.push(['TX bitrate', `${link.tx_bitrate_mbps} Mbps`]);
@@ -1040,7 +1041,7 @@ function showPiDetail(piId) {
   // closeWifiInfoModal is called above.
   if (typeof closeTcEditorModal === 'function') closeTcEditorModal();
   if (typeof closeTsEditorModal === 'function') closeTsEditorModal();
-  if (typeof closeTsRunModal === 'function') closeTsRunModal();
+  if (typeof pauseTsRunTab === 'function') pauseTsRunTab();
   if (typeof closeTsRunHistoryModal === 'function') closeTsRunHistoryModal();
   detailPiId = piId;
   lastDetailInterfacesKey = null;

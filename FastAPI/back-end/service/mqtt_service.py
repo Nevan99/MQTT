@@ -221,6 +221,9 @@ class MQTTService:
             "mac_address", "state", "type", "ip_address", "ipv6_address",
             "connected", "ssid", "bssid", "frequency_mhz", "band",
             "signal_dbm", "rx_bitrate_mbps", "tx_bitrate_mbps", "gateway",
+            "key_mgmt", "pairwise_cipher", "group_cipher", "wpa_state",
+            "address", "wifi_generation", "noise_dbm", "avg_signal_dbm",
+            "link_speed_mbps", "channel_width", "radio_type",
         ):
             if field in payload:
                 setattr(row, field, payload[field])

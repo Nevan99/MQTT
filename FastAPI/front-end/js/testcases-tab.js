@@ -440,11 +440,8 @@ async function bulkRunSelected() {
   try {
     const runs = await tcBulkPost('run', { ids }, 'Failed to start runs');
     tcClearSelection();
-    // One selection, several independent runs - there is no single run view
-    // to land on, so show the history (where they all appear) unless it was
-    // really just one, which behaves exactly like the row's own Run button.
-    if (runs.length === 1) openRunView(runs[0].id);
-    else showTcRunHistoryView();
+    // Several at once: the Running tab lists them all; the first is opened.
+    if (runs.length) openRunView(runs[0].id);
   } catch (err) {
     alert(err.message);
   }
@@ -1367,7 +1364,14 @@ async function runTestcaseById(id) {
   }
 }
 
+// Runs are watched in the Running tab now (testsuites-tab.js); this is
+// kept as the entry point every Run/View button already calls.
 async function openRunView(runId) {
+  openLiveTestcaseRun(runId);
+}
+
+// The old in-tab run view, no longer reached from any button.
+async function openRunViewInline(runId) {
   tcActiveRunId = runId;
   showTcRunView();
   await refreshTcRun();
@@ -1375,22 +1379,29 @@ async function openRunView(runId) {
   tcRunPollTimer = setInterval(refreshTcRun, 1500);
 }
 
+// Only one refresh in flight at a time: on a slow tick setInterval would
+// otherwise stack requests (and renders) on top of each other.
+let tcRunRefreshing = false;
+
 async function refreshTcRun() {
-  if (!tcActiveRunId) return;
+  if (!tcActiveRunId || tcRunRefreshing) return;
+  tcRunRefreshing = true;
   try {
-    const res = await apiFetch(`${API}/testcases/runs/${tcActiveRunId}`);
-    if (!res.ok) return;
-    const run = await res.json();
-    renderTcRunView(run);
-    if (run.status !== 'running') stopTcRunPolling();
+    const summary = await tcRenderRunInto(document.getElementById('tcRunSteps'), tcActiveRunId);
+    if (!summary) return;
+    renderTcRunView(summary);
+    if (summary.status !== 'running') stopTcRunPolling();
   } catch {
     // transient; the next tick retries
+  } finally {
+    tcRunRefreshing = false;
   }
 }
 
 function tcStatusClass(status) {
   if (status === 'passed') return 'complete';
   if (status === 'failed' || status === 'timeout') return 'failed';
+  if (status === 'stopped' || status === 'skipped') return status;
   return 'pending';
 }
 
@@ -1426,6 +1437,7 @@ function tcStepMetaText(r) {
   const bits = [];
   if (r.target) bits.push(r.target);
   if (r.pass_index > 0) bits.push(`pass ${r.pass_index + 1}`);
+  if (r.loop_group) bits.push(`loop ${r.loop_group} ${r.loop_pass}${r.loop_count ? `/${r.loop_count}` : ''}`);
   if (r.iteration > 1) bits.push(`repeat ${r.iteration}`);
   const d = tcDuration(r.duration_ms);
   if (d) bits.push(d);
@@ -1518,7 +1530,10 @@ function tcRunDefaultExpanded(run) {
 // every step/Pi entry defaults collapsed regardless of tcRunDefaultExpanded
 // (the Results tab's own default - see resSuiteTestcaseStepsHtml/
 // renderResTestcaseDetail - rather than auto-opening while still running).
-function tcRenderRunSteps(container, run, forceCollapsed = false) {
+// baseIndex: position of run.results[0] in the whole run, when rendering one
+// page of a bigger run (see tcRenderRunInto) - keeps data-step ids, and so
+// the per-step toggle state, unique across pages.
+function tcRenderRunSteps(container, run, forceCollapsed = false, baseIndex = 0) {
   if (tcRunCollapseRunId !== run.id) {
     tcRunCollapseRunId = run.id;
     tcRunToggledSteps = new Set();
@@ -1530,14 +1545,14 @@ function tcRenderRunSteps(container, run, forceCollapsed = false) {
     container.innerHTML = `<div class="pi-log-empty">${run.status === 'running' ? 'starting…' : 'no steps recorded'}</div>`;
     return;
   }
-  container.innerHTML = results.map((r, i) => tcRunStepHtml(r, i)).join('');
+  container.innerHTML = results.map((r, i) => tcRunStepHtml(r, i + baseIndex)).join('');
 
   // Result payloads go through command-builder.js's renderResultTable - the
   // same nested renderer the Action panel uses, so a testcase result reads
   // identically to running that action by hand. It builds DOM (textContent,
   // not innerHTML), which also keeps arbitrary result strings inert.
   container.querySelectorAll('.tc-run-result').forEach(el => {
-    const r = results[Number(el.dataset.step)];
+    const r = results[Number(el.dataset.step) - baseIndex];
     const entry = r && (r.entries || [])[Number(el.dataset.entry)];
     if (entry && entry.result !== undefined && entry.result !== null) {
       renderResultTable(el, entry.result);
@@ -1596,12 +1611,281 @@ function tcRenderRunSteps(container, run, forceCollapsed = false) {
   }
 }
 
-function renderTcRunView(run) {
-  document.getElementById('tcRunTitle').textContent = `Run: ${run.testcase_name}`;
+// --- lazy run renderer ---------------------------------------------------
+// A looped testcase can expand into thousands of step executions. Fetching
+// the whole run (every step's log, checks and payload) and rebuilding every
+// step card on each 1.5s poll is what used to hang the tab, so every run
+// view goes through here instead:
+//
+//   GET /testcases/runs/{id}/summary  outline only - counts + one "block"
+//                                     per loop pass - cheap to poll
+//   GET /testcases/runs/{id}/steps    full step detail, one page at a time,
+//                                     only for the blocks actually opened
+//
+// A run small enough to read in one go (a single block of at most
+// TC_RUN_INLINE_MAX steps) still renders exactly as before, every step
+// inline. Anything bigger becomes a paged list of collapsible loop-pass
+// headers; opening one loads just that pass's steps.
+const TC_RUN_INLINE_MAX = 200;
+const TC_RUN_BLOCKS_PER_PAGE = 50;
+const TC_RUN_STEPS_PER_PAGE = 100;
+
+// Per-container view state (which run, what's open, which page), kept
+// across poll ticks so a re-render doesn't undo what the user clicked.
+const tcRunViewStates = new WeakMap();
+
+function tcRunViewState(container, runId) {
+  let st = tcRunViewStates.get(container);
+  if (!st || st.runId !== runId) {
+    st = {
+      runId, summary: null, sig: null, loading: false,
+      open: new Map(),        // block start -> true/false the user chose
+      shown: new Map(),       // block start -> how many of its steps to load
+      bodies: new Map(),      // block start -> {sig, el} cached rendered body
+      page: null,             // block page index, null = follow current block
+      failedOnly: false,
+    };
+    tcRunViewStates.set(container, st);
+  }
+  return st;
+}
+
+function tcBlockStatus(counts) {
+  const n = k => counts[k] || 0;
+  if (n('running')) return 'running';
+  if (n('failed') || n('timeout')) return 'failed';
+  if (n('stopped')) return 'stopped';
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  if (n('skipped') === total) return 'skipped';
+  if (n('pending')) return 'pending';
+  return 'passed';
+}
+
+function tcBlockLabel(b, summary) {
+  const bits = [];
+  if (summary.repeat_count > 1) bits.push(`Pass ${b.pass_index + 1}`);
+  if (b.loop_group) {
+    bits.push(`Loop ${tcEsc(b.loop_group)} · pass ${b.loop_pass}${b.loop_count ? `/${b.loop_count}` : ''}`);
+  } else {
+    bits.push('Steps');
+  }
+  return `${bits.join(' · ')} <span class="tc-run-meta">#${b.start + 1}${b.end - b.start > 1 ? `–${b.end}` : ''}</span>`;
+}
+
+function tcCountsText(counts) {
+  const order = [['passed', '✓'], ['failed', '✗'], ['timeout', '⏱'], ['stopped', '■'], ['running', '▶'], ['skipped', '–'], ['pending', '…']];
+  return order.filter(([k]) => counts[k]).map(([k, sym]) =>
+    `<span class="tc-count tc-count-${k}" title="${k}">${sym}${counts[k]}</span>`).join(' ');
+}
+
+// Renders run `runId` into `container` and returns its summary (null when
+// it couldn't be fetched). Safe to call on every poll tick: it's a no-op
+// while a previous call for the same container is still in flight, and
+// skips re-rendering when the run hasn't changed since the last call.
+// opts.forceCollapsed: nothing auto-expands (the Results tab's default).
+async function tcRenderRunInto(container, runId, opts = {}) {
+  const st = tcRunViewState(container, runId);
+  if (st.loading) return st.summary;
+  st.loading = true;
+  try {
+    const res = await apiFetch(`${API}/testcases/runs/${runId}/summary`);
+    if (!res.ok) {
+      if (!st.summary) container.innerHTML = '<div class="pi-log-empty">failed to load</div>';
+      return null;
+    }
+    const summary = await res.json();
+    st.summary = summary;
+    const sig = JSON.stringify([summary.status, summary.version, summary.total, summary.stop_requested]);
+    if (sig === st.sig && container.childElementCount) return summary;
+
+    if (summary.blocks.length <= 1 && summary.total <= TC_RUN_INLINE_MAX) {
+      const page = await tcFetchRunSteps(runId, 0, Math.max(1, summary.total));
+      if (!page) return summary;
+      tcRenderRunSteps(container, { ...summary, results: page.items }, !!opts.forceCollapsed);
+    } else {
+      await tcRenderRunBlocks(container, st, summary, opts);
+    }
+    st.sig = sig;
+    return summary;
+  } catch (err) {
+    if (!st.summary) container.innerHTML = `<div class="pi-log-empty">failed to load: ${tcEsc(err.message)}</div>`;
+    return null;
+  } finally {
+    st.loading = false;
+  }
+}
+
+async function tcFetchRunSteps(runId, offset, limit) {
+  const res = await apiFetch(`${API}/testcases/runs/${runId}/steps?offset=${offset}&limit=${Math.min(500, limit)}`);
+  return res.ok ? res.json() : null;
+}
+
+async function tcRenderRunBlocks(container, st, summary, opts) {
+  const running = summary.status === 'running';
+  const autoExpand = running && !opts.forceCollapsed;
+  const currentBlock = summary.current === null || summary.current === undefined ? null
+    : summary.blocks.find(b => summary.current >= b.start && summary.current < b.end);
+
+  const blocks = st.failedOnly
+    ? summary.blocks.filter(b => b.counts.failed || b.counts.timeout || b.counts.stopped)
+    : summary.blocks;
+  const pages = Math.max(1, Math.ceil(blocks.length / TC_RUN_BLOCKS_PER_PAGE));
+  // Follows the block in flight until the user picks a page themselves.
+  let page = st.page;
+  if (page === null) {
+    const i = currentBlock ? blocks.indexOf(currentBlock) : -1;
+    page = i >= 0 ? Math.floor(i / TC_RUN_BLOCKS_PER_PAGE) : 0;
+  }
+  page = Math.min(page, pages - 1);
+  const visible = blocks.slice(page * TC_RUN_BLOCKS_PER_PAGE, (page + 1) * TC_RUN_BLOCKS_PER_PAGE);
+
+  const isOpen = b => st.open.has(b.start) ? st.open.get(b.start) : (autoExpand && b === currentBlock);
+
+  container.innerHTML = `
+    <div class="tc-run-overview">
+      <span>${summary.total} step run(s) in ${summary.blocks.length} block(s)</span>
+      <span class="tc-run-counts">${tcCountsText(summary.counts)}</span>
+      <label class="tc-run-failed-only"><input type="checkbox" ${st.failedOnly ? 'checked' : ''}> only blocks with failures</label>
+    </div>
+    ${visible.map(b => `
+      <div class="cmd-entry tc-run-block" data-block="${b.start}">
+        <div class="hdr tc-run-block-toggle" data-block="${b.start}">
+          <button type="button" class="icon-btn tc-run-toggle-chevron" title="Show/hide steps">${chevronIconSvg(isOpen(b) ? 'down' : 'right')}</button>
+          <span class="tc-run-step-label">${tcBlockLabel(b, summary)}</span>
+          <span class="tc-run-counts">${tcCountsText(b.counts)}</span>
+          <span class="cmd-status ${tcStatusClass(tcBlockStatus(b.counts))}">${tcBlockStatus(b.counts)}</span>
+        </div>
+        <div class="result tc-run-block-body${isOpen(b) ? '' : ' hidden'}" data-block-body="${b.start}"></div>
+      </div>
+    `).join('') || '<div class="pi-log-empty">no matching blocks</div>'}
+    ${pages > 1 ? `
+      <div class="tc-pager tc-run-block-pager">
+        <button type="button" data-page="${page - 1}" ${page === 0 ? 'disabled' : ''}>&lsaquo; Prev</button>
+        <span>blocks ${page * TC_RUN_BLOCKS_PER_PAGE + 1}–${Math.min(blocks.length, (page + 1) * TC_RUN_BLOCKS_PER_PAGE)} of ${blocks.length}</span>
+        <button type="button" data-page="${page + 1}" ${page >= pages - 1 ? 'disabled' : ''}>Next &rsaquo;</button>
+        ${running && st.page !== null ? '<button type="button" data-page="follow">Follow current</button>' : ''}
+      </div>` : ''}
+  `;
+
+  const rerender = () => { st.sig = null; tcRenderRunBlocks(container, st, st.summary, opts); };
+  container.querySelector('.tc-run-failed-only input').addEventListener('change', e => {
+    st.failedOnly = e.target.checked;
+    st.page = 0;
+    rerender();
+  });
+  container.querySelectorAll('.tc-run-block-pager button').forEach(btn => btn.addEventListener('click', () => {
+    st.page = btn.dataset.page === 'follow' ? null : Number(btn.dataset.page);
+    rerender();
+  }));
+
+  const loads = visible.map(b => {
+    const hdr = container.querySelector(`.tc-run-block-toggle[data-block="${b.start}"]`);
+    hdr.addEventListener('click', () => {
+      // Looked up at click time: tcFillRunBlock may have swapped in a cached
+      // body element since this was wired.
+      const body = container.querySelector(`[data-block-body="${b.start}"]`);
+      const opening = body.classList.contains('hidden');
+      st.open.set(b.start, opening);
+      body.classList.toggle('hidden', !opening);
+      hdr.querySelector('.tc-run-toggle-chevron').innerHTML = chevronIconSvg(opening ? 'down' : 'right');
+      if (opening) tcFillRunBlock(body, st, b, opts);
+    });
+    return isOpen(b)
+      ? tcFillRunBlock(container.querySelector(`[data-block-body="${b.start}"]`), st, b, opts)
+      : null;
+  });
+  await Promise.all(loads);
+}
+
+// One block's steps, reusing the rendered body from the last tick when the
+// block hasn't changed - an unchanged pass shouldn't be refetched (or have
+// its open logs snap shut) just because another pass moved on.
+async function tcFillRunBlock(body, st, b, opts) {
+  const size = b.end - b.start;
+  const shown = Math.min(size, st.shown.get(b.start) || TC_RUN_STEPS_PER_PAGE);
+  const sig = JSON.stringify([b.counts, shown, st.summary.status]);
+  const cached = st.bodies.get(b.start);
+  if (cached && cached.sig === sig) {
+    // The element itself is moved back in (not just its children) - the
+    // step toggles inside it were wired against this element.
+    if (cached.el !== body) body.replaceWith(cached.el);
+    cached.el.classList.remove('hidden');
+    return;
+  }
+  if (!cached) body.innerHTML = '<div class="pi-log-empty">loading…</div>';
+  const page = await tcFetchRunSteps(st.runId, b.start, shown);
+  if (!page) return;
+  tcRenderRunSteps(body, { id: st.runId, status: st.summary.status, results: page.items },
+    !!opts.forceCollapsed, b.start);
+  if (shown < size) {
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'tc-run-more';
+    more.textContent = `Show more (${shown} of ${size})`;
+    more.addEventListener('click', () => {
+      st.shown.set(b.start, shown + TC_RUN_STEPS_PER_PAGE);
+      tcFillRunBlock(body, st, b, opts);
+    });
+    body.appendChild(more);
+  }
+  st.bodies.set(b.start, { sig, el: body });
+}
+
+// --- stop controls ---------------------------------------------------------
+// kind: 'testcase' | 'testsuite'. summary: anything with id/status (and
+// stop_requested, for a testcase run). Hidden once the run isn't running.
+function tcRenderStopControls(host, kind, run) {
+  if (!host) return;
+  if (!run || run.status !== 'running') {
+    host.innerHTML = '';
+    return;
+  }
+  const pendingMode = host.dataset.runKey === `${kind}:${run.id}` ? host.dataset.requested : '';
+  const requested = run.stop_requested || pendingMode;
+  if (requested) {
+    host.innerHTML = `<span class="tc-stop-pending">stopping${requested === 'now' ? '' : ` (${requested.replace(/_/g, ' ')})`}…</span>`;
+    return;
+  }
+  const soft = kind === 'testsuite'
+    ? { mode: 'after_testcase', label: 'Stop after this testcase' }
+    : { mode: 'after_loop_pass', label: 'Stop after this loop pass' };
+  host.innerHTML = `
+    <button type="button" class="tc-bulk-danger tc-stop-btn" data-mode="now">Stop now</button>
+    <button type="button" class="tc-stop-btn" data-mode="${soft.mode}">${soft.label}</button>
+  `;
+  host.querySelectorAll('.tc-stop-btn').forEach(btn => btn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const mode = btn.dataset.mode;
+    const what = kind === 'testsuite' ? 'testsuite run' : 'testcase run';
+    const how = mode === 'now'
+      ? 'Stop now? The step in progress is abandoned (a command already sent to a Pi keeps running there) and the rest is skipped.'
+      : `${btn.textContent}? The rest is skipped after that.`;
+    if (!confirm(`${how}\n\nThis ${what} will end as "stopped".`)) return;
+    const base = kind === 'testsuite' ? 'testsuites' : 'testcases';
+    try {
+      const res = await apiFetch(`${API}/${base}/runs/${run.id}/stop?mode=${mode}`, { method: 'POST' });
+      if (!res.ok) {
+        alert(`Failed to stop: ${res.status} ${await res.text()}`);
+        return;
+      }
+    } catch (err) {
+      alert(`Failed to stop: ${err.message}`);
+      return;
+    }
+    host.dataset.runKey = `${kind}:${run.id}`;
+    host.dataset.requested = mode;
+    tcRenderStopControls(host, kind, run);
+  }));
+}
+
+// Header only - the steps themselves are drawn by tcRenderRunInto.
+// summary: GET /testcases/runs/{id}/summary.
+function renderTcRunView(summary) {
+  document.getElementById('tcRunTitle').textContent = `Run: ${summary.testcase_name}`;
   const statusEl = document.getElementById('tcRunStatus');
-  statusEl.textContent = run.status;
-  statusEl.className = `cmd-status ${tcStatusClass(run.status)}`;
-  tcRenderRunSteps(document.getElementById('tcRunSteps'), run);
+  statusEl.textContent = summary.status;
+  statusEl.className = `cmd-status ${tcStatusClass(summary.status)}`;
+  tcRenderStopControls(document.getElementById('tcRunStopHost'), 'testcase', summary);
 }
 
 async function loadTcRunHistory() {

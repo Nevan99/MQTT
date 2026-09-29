@@ -53,6 +53,17 @@ def _add_missing_columns():
             conn.execute(text("ALTER TABLE testrun ADD COLUMN suite_run_id INTEGER"))
             conn.commit()
 
+        iface_status_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(interfacestatus)"))}
+        for col, coltype in (
+            ("key_mgmt", "VARCHAR"), ("pairwise_cipher", "VARCHAR"), ("group_cipher", "VARCHAR"),
+            ("wpa_state", "VARCHAR"), ("address", "VARCHAR"), ("wifi_generation", "VARCHAR"),
+            ("noise_dbm", "INTEGER"), ("avg_signal_dbm", "INTEGER"), ("link_speed_mbps", "INTEGER"),
+            ("channel_width", "VARCHAR"), ("radio_type", "VARCHAR"),
+        ):
+            if iface_status_cols and col not in iface_status_cols:
+                conn.execute(text(f"ALTER TABLE interfacestatus ADD COLUMN {col} {coltype}"))
+                conn.commit()
+
 
 def get_session():
     with Session(engine) as session:

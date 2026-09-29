@@ -26,6 +26,8 @@ const INTERFACES_TAB_COLUMNS = [
   ['rx_bitrate_mbps', r => r.rx_bitrate_mbps != null ? `${r.rx_bitrate_mbps} Mbps` : null],
   ['tx_bitrate_mbps', r => r.tx_bitrate_mbps != null ? `${r.tx_bitrate_mbps} Mbps` : null],
   ['gateway'],
+  ['key_mgmt'],
+  ['radio_type'],
 ];
 
 // Last-fetched, unfiltered rows - kept so typing into a filter (or the next

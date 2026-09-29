@@ -113,6 +113,17 @@ class InterfaceStatus(SQLModel, table=True):
     rx_bitrate_mbps: Optional[float] = None
     tx_bitrate_mbps: Optional[float] = None
     gateway: Optional[str] = None
+    key_mgmt: Optional[str] = None
+    pairwise_cipher: Optional[str] = None
+    group_cipher: Optional[str] = None
+    wpa_state: Optional[str] = None
+    address: Optional[str] = None
+    wifi_generation: Optional[str] = None
+    noise_dbm: Optional[int] = None
+    avg_signal_dbm: Optional[int] = None
+    link_speed_mbps: Optional[int] = None
+    channel_width: Optional[str] = None
+    radio_type: Optional[str] = None
     updated_at: datetime = Field(default_factory=utcnow)
 
 

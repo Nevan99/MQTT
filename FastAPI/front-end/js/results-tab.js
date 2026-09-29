@@ -325,7 +325,6 @@ async function openResDetail(kind, id) {
   resSuiteTestcaseNames = {};
   resSuiteTestcaseSteps = {};
   resExpandedSuiteTcIds.clear();
-  resFinishedRunCache.clear();
   showResDetailView();
   await refreshResDetail(kind, id);
   resStopPolling();
@@ -374,24 +373,41 @@ function resPendingStepsRun(testcaseId) {
   };
 }
 
+// One refresh in flight at a time - see testcases-tab.js refreshTcRun.
+let resDetailRefreshing = false;
+
 async function refreshResDetail(kind, id) {
-  const path = kind === 'testsuite' ? `${API}/testsuites/runs/${id}` : `${API}/testcases/runs/${id}`;
+  if (resDetailRefreshing) return;
+  resDetailRefreshing = true;
   try {
-    const res = await apiFetch(path);
-    if (!res.ok) return;
-    const run = await res.json();
+    let run;
     if (kind === 'testsuite') {
+      const res = await apiFetch(`${API}/testsuites/runs/${id}`);
+      if (!res.ok) return;
+      run = await res.json();
       if (!Object.keys(resSuiteTestcaseNames).length && (run.testcase_ids || []).length) {
         await resLoadSuiteTestcaseNames(run.testcase_ids);
       }
       renderResSuiteDetail(run);
       await resRefreshRunningSuiteRow(run);
     } else {
+      // Summary + only the opened loop passes, never the whole run - see
+      // tcRenderRunInto (testcases-tab.js). Forced collapsed: this tab is
+      // for scanning past runs, not watching one live, so nothing here
+      // auto-expands just because a run happens to still be "running".
+      run = await tcRenderRunInto(document.getElementById('resDetailBody'), id, { forceCollapsed: true });
+      if (!run) return;
       renderResTestcaseDetail(run);
+    }
+    // The user may have navigated to another run while this one loaded.
+    if (resDetailCurrent && resDetailCurrent.kind === kind && resDetailCurrent.id === id) {
+      tcRenderStopControls(document.getElementById('resDetailStopHost'), kind, run);
     }
     if (run.status !== 'running') resStopPolling();
   } catch {
     // transient; the next tick retries
+  } finally {
+    resDetailRefreshing = false;
   }
 }
 
@@ -403,19 +419,16 @@ function resSetDetailHeader(title, status, metaBits) {
   document.getElementById('resDetailMeta').textContent = metaBits.filter(Boolean).join('  ·  ');
 }
 
+// Header only; run is a GET /testcases/runs/{id}/summary - the steps were
+// already drawn by tcRenderRunInto in refreshResDetail.
 function renderResTestcaseDetail(run) {
   resSetDetailHeader(`Testcase run: ${run.testcase_name}`, run.status, [
     `started ${formatVnDateTime(run.started_at)}`,
     run.completed_at ? `completed ${formatVnDateTime(run.completed_at)}` : null,
-    `${(run.results || []).length} step result(s)`,
+    `${run.total} step result(s)`,
     run.repeat_count > 1 ? `repeat ×${run.repeat_count}` : null,
     run.stop_on_failure ? 'stop on failure' : 'continue on failure',
   ]);
-  // The same renderer the Packages tab's live run view uses, but forced to
-  // start every step/Pi entry collapsed (see tcRenderRunSteps) - this tab is
-  // for scanning past runs, not watching one live, so nothing here should
-  // auto-expand just because a run happens to still be "running".
-  tcRenderRunSteps(document.getElementById('resDetailBody'), run, true);
 }
 
 // One row per testcase_id the run steps through - not just the ones with a
@@ -468,13 +481,6 @@ function resSuiteRowHtml(r, i, expanded) {
   `;
 }
 
-// run_id -> its TestRunOut, once finished - the whole suite view rebuilds
-// on every 1.5s poll tick while any testcase in it is still running (see
-// refreshResDetail), so without this an expanded *finished* row would
-// refetch its own (unchanging) run over and over for as long as the rest of
-// the suite keeps going.
-const resFinishedRunCache = new Map();
-
 // Fills one row's expanded step detail - a static planned-step preview for
 // one not yet started, or the real (possibly still live) run for one that
 // is. Called both right after expanding and, for a running testcase, on
@@ -488,19 +494,10 @@ async function resFillSuiteTcSteps(el, r) {
     return;
   }
   if (!r.run_id) return;
-  if (r.status !== 'running' && resFinishedRunCache.has(r.run_id)) {
-    tcRenderRunSteps(el, resFinishedRunCache.get(r.run_id), true);
-    return;
-  }
-  try {
-    const res = await apiFetch(`${API}/testcases/runs/${r.run_id}`);
-    if (!res.ok) return;
-    const tcRun = await res.json();
-    if (tcRun.status !== 'running') resFinishedRunCache.set(r.run_id, tcRun);
-    tcRenderRunSteps(el, tcRun, true);
-  } catch {
-    // transient; the next poll tick (if running) or a re-expand retries
-  }
+  // Summary-first and lazy per loop pass, same as the testcase-run view -
+  // a finished row re-rendered by a suite-level tick costs one small
+  // summary request, not the whole run.
+  await tcRenderRunInto(el, r.run_id, { forceCollapsed: true });
 }
 
 // A suite run holds one entry per testcase it launched, each pointing at its

@@ -54,20 +54,189 @@ function tsEditorModalKeydown(e) {
   if (e.key === 'Escape') closeTsEditorModal();
 }
 
-function openTsRunModal() {
-  document.getElementById('tsRunOverlay').classList.remove('hidden');
-  document.addEventListener('keydown', tsRunModalKeydown);
+// --- Running tab ------------------------------------------------------------
+// Testsuite runs are watched in their own top-level tab (#running) rather
+// than a pop-up: a list of running + recent suite runs on the left, the
+// selected one's live detail on the right. Polling only happens while the
+// tab is visible; leaving it pauses (tsActiveRunId is kept, so coming back
+// resumes the same run).
+let tsLivePollTimer = null;
+const TS_LIVE_RECENT = 15;
+
+// The selected standalone testcase run (null when a suite run - or nothing
+// - is selected; tsActiveRunId is the suite equivalent). Only one of the
+// two is ever set.
+let tcLiveRunId = null;
+let tcLivePollTimer = null;
+let tcLiveRefreshing = false;
+
+function stopTcLivePolling() {
+  if (tcLivePollTimer) {
+    clearInterval(tcLivePollTimer);
+    tcLivePollTimer = null;
+  }
 }
 
-function closeTsRunModal() {
+function tsShowLivePane(which) {
+  document.getElementById('tsRunEmpty').classList.toggle('hidden', which !== null);
+  document.getElementById('tsRunDetail').classList.toggle('hidden', which !== 'testsuite');
+  document.getElementById('tcLiveDetail').classList.toggle('hidden', which !== 'testcase');
+}
+
+// Selects a standalone testcase run in the Running tab, switching to it.
+async function openLiveTestcaseRun(runId) {
+  if (tsActiveRunId !== null) {
+    stopTsRunPolling();
+    tsActiveRunId = null;
+  }
+  if (tcLiveRunId !== runId) {
+    tcLiveRunId = runId;
+    document.getElementById('tcLiveSteps').innerHTML = '<div class="pi-log-empty">loading…</div>';
+  }
+  tsShowLivePane('testcase');
+  tsMarkLiveSelection();
+  if (location.hash !== '#running') {
+    location.hash = '#running';   // tabshown resumes polling on this run
+    return;
+  }
+  await refreshTcLive();
+  startTcLivePolling();
+}
+
+function startTcLivePolling() {
+  stopTcLivePolling();
+  tcLivePollTimer = setInterval(refreshTcLive, 1500);
+}
+
+async function refreshTcLive() {
+  if (tcLiveRunId === null || tcLiveRefreshing) return;
+  const runId = tcLiveRunId;
+  tcLiveRefreshing = true;
+  try {
+    // Expanded while running: the pass/step in flight opens by itself.
+    const sm = await tcRenderRunInto(document.getElementById('tcLiveSteps'), runId);
+    if (!sm || tcLiveRunId !== runId) return;
+    document.getElementById('tcLiveTitle').textContent = `Testcase run: ${sm.testcase_name}`;
+    const statusEl = document.getElementById('tcLiveStatus');
+    statusEl.textContent = sm.status;
+    statusEl.className = `cmd-status ${tcStatusClass(sm.status)}`;
+    const c = k => sm.counts[k] || 0;
+    const done = sm.total - c('pending') - c('running') - c('skipped');
+    document.getElementById('tcLiveMeta').textContent = [
+      `started ${formatVnDateTime(sm.started_at)}`,
+      sm.completed_at ? `completed ${formatVnDateTime(sm.completed_at)}` : null,
+      `${done}/${sm.total} step runs done`,
+      c('skipped') ? `${c('skipped')} skipped` : null,
+      sm.current !== null && sm.current !== undefined ? `now on #${sm.current + 1}` : null,
+    ].filter(Boolean).join('  ·  ');
+    tcRenderStopControls(document.getElementById('tcLiveStopHost'), 'testcase', sm);
+    if (sm.status !== 'running') stopTcLivePolling();
+  } catch {
+    // transient; the next tick retries
+  } finally {
+    tcLiveRefreshing = false;
+  }
+}
+
+function startTsRunPolling() {
   stopTsRunPolling();
-  tsActiveRunId = null;
-  document.getElementById('tsRunOverlay').classList.add('hidden');
-  document.removeEventListener('keydown', tsRunModalKeydown);
+  tsRunPollTimer = setInterval(refreshTsRun, 1500);
 }
 
-function tsRunModalKeydown(e) {
-  if (e.key === 'Escape') closeTsRunModal();
+function startTsLivePolling() {
+  stopTsLivePolling();
+  tsLivePollTimer = setInterval(loadTsLiveList, 3000);
+}
+
+function stopTsLivePolling() {
+  if (tsLivePollTimer) {
+    clearInterval(tsLivePollTimer);
+    tsLivePollTimer = null;
+  }
+}
+
+// Called when navigating away from the tab (and from showPiDetail, which
+// bypasses the tabshown event).
+function pauseTsRunTab() {
+  stopTsRunPolling();
+  stopTcLivePolling();
+  stopTsLivePolling();
+}
+
+let tsLiveLoading = false;
+
+async function loadTsLiveList() {
+  if (tsLiveLoading) return;
+  tsLiveLoading = true;
+  try {
+    const [sRes, cRes] = await Promise.all([
+      apiFetch(`${API}/testsuites/runs?limit=${TS_LIVE_RECENT + 20}`),
+      apiFetch(`${API}/testcases/runs?limit=${TS_LIVE_RECENT + 20}&light=true`),
+    ]);
+    if (!sRes.ok || !cRes.ok) return;
+    const runs = [
+      ...(await sRes.json()).map(r => ({ ...r, kind: 'testsuite' })),
+      ...(await cRes.json()).map(r => ({ ...r, kind: 'testcase' })),
+    ].sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)));
+    renderTsLiveList(runs);
+    // Nothing picked yet: open the newest running one by itself.
+    if (tsActiveRunId === null && tcLiveRunId === null) {
+      const first = runs.find(r => r.status === 'running');
+      if (first && first.kind === 'testsuite') openTsRunView(first.id);
+      else if (first) openLiveTestcaseRun(first.id);
+    }
+  } catch {
+    // transient; the next tick retries
+  } finally {
+    tsLiveLoading = false;
+  }
+}
+
+function tsLiveIsSelected(kind, id) {
+  return kind === 'testsuite' ? id === tsActiveRunId : id === tcLiveRunId;
+}
+
+function tsLiveItemHtml(r) {
+  const when = r.status === 'running'
+    ? `started ${formatVnDateTime(r.started_at)}`
+    : `${formatVnDateTime(r.completed_at || r.started_at)}`;
+  let sub;
+  if (r.kind === 'testsuite') {
+    const done = (r.results || []).filter(e => !['pending', 'running', 'skipped'].includes(e.status)).length;
+    sub = `suite · ${done}/${(r.testcase_ids || []).length} testcases · ${when}`;
+  } else {
+    sub = `testcase · ${when}`;
+  }
+  const name = r.kind === 'testsuite' ? r.testsuite_name : r.testcase_name;
+  return `
+    <div class="ts-live-item${tsLiveIsSelected(r.kind, r.id) ? ' selected' : ''}" data-kind="${r.kind}" data-id="${r.id}">
+      <span class="ts-live-name">${tcEsc(name)} <span class="tc-run-meta">#${r.id}</span>
+        <span class="ts-live-sub">${sub}</span>
+      </span>
+      <span class="cmd-status ${tcStatusClass(r.status)}">${r.status}</span>
+    </div>`;
+}
+
+function renderTsLiveList(runs) {
+  const running = runs.filter(r => r.status === 'running');
+  const recent = runs.filter(r => r.status !== 'running').slice(0, TS_LIVE_RECENT);
+  const el = document.getElementById('tsLiveList');
+  el.innerHTML = `
+    <div class="ts-live-section">Running (${running.length})</div>
+    ${running.map(tsLiveItemHtml).join('') || '<div class="pi-log-empty">nothing running</div>'}
+    <div class="ts-live-section">Recent</div>
+    ${recent.map(tsLiveItemHtml).join('') || '<div class="pi-log-empty">no finished runs</div>'}
+  `;
+  el.querySelectorAll('.ts-live-item').forEach(item => item.addEventListener('click', () => {
+    if (item.dataset.kind === 'testsuite') openTsRunView(Number(item.dataset.id));
+    else openLiveTestcaseRun(Number(item.dataset.id));
+  }));
+}
+
+function tsMarkLiveSelection() {
+  document.querySelectorAll('#tsLiveList .ts-live-item').forEach(item => {
+    item.classList.toggle('selected', tsLiveIsSelected(item.dataset.kind, Number(item.dataset.id)));
+  });
 }
 
 function openTsRunHistoryModal() {
@@ -386,14 +555,31 @@ async function runTestsuiteById(id) {
   }
 }
 
+// Selects a suite run in the Running tab (switching to the tab if needed) -
+// used by starting a run, the run history's View buttons, and the tab's own
+// list.
 async function openTsRunView(runId) {
-  tsActiveRunId = runId;
-  tsLastRunRenderSignature = null;
-  tsResetRunDetailState();
-  openTsRunModal();
+  if (tcLiveRunId !== null) {
+    stopTcLivePolling();
+    tcLiveRunId = null;
+  }
+  tsShowLivePane('testsuite');
+  if (tsActiveRunId !== runId) {
+    tsActiveRunId = runId;
+    tsLastRunRenderSignature = null;
+    tsRunTestcaseNames = {};
+    tsRunTestcaseSteps = {};
+    tsResetRunDetailState();
+    document.getElementById('tsRunTestcases').innerHTML = '<div class="pi-log-empty">loading…</div>';
+  }
+  tsMarkLiveSelection();
+  if (location.hash !== '#running') {
+    // tabshown for #running resumes polling on this run.
+    location.hash = '#running';
+    return;
+  }
   await refreshTsRun();
-  stopTsRunPolling();
-  tsRunPollTimer = setInterval(refreshTsRun, 1500);
+  startTsRunPolling();
 }
 
 // Every testcase_id the suite run will step through, by name - fetched once
@@ -433,11 +619,15 @@ function tsPendingStepsRun(testcaseId) {
   };
 }
 
+let tsRunRefreshing = false;
+
 async function refreshTsRun() {
-  if (!tsActiveRunId) return;
+  if (!tsActiveRunId || tsRunRefreshing) return;
+  tsRunRefreshing = true;
   try {
-    const res = await apiFetch(`${API}/testsuites/runs/${tsActiveRunId}`);
-    if (!res.ok) return;
+    const runId = tsActiveRunId;
+    const res = await apiFetch(`${API}/testsuites/runs/${runId}`);
+    if (!res.ok || tsActiveRunId !== runId) return;
     const run = await res.json();
     if (!Object.keys(tsRunTestcaseNames).length && (run.testcase_ids || []).length) {
       await tsLoadRunTestcaseNames(run.testcase_ids);
@@ -447,11 +637,13 @@ async function refreshTsRun() {
     if (run.status !== 'running') stopTsRunPolling();
   } catch {
     // transient; the next tick retries
+  } finally {
+    tsRunRefreshing = false;
   }
 }
 
 // One testcase's step-level detail, rendered inside its row when expanded.
-// Reuses GET /testcases/runs/{run_id} and tcRenderRunSteps (testcases-tab.js)
+// Reuses tcRenderRunInto (testcases-tab.js)
 // - the exact renderer the Testcases tab's own run view uses - so a suite run
 // shows the same per-step targets, checks, logs and timings, live, instead of
 // a stripped-down summary.
@@ -463,7 +655,6 @@ async function refreshTsRun() {
 const tsExpandedRunIds = new Set();       // testcase run_ids whose detail is open
 const tsAutoExpandedRunIds = new Set();   // ones this view opened by itself
 const tsFinishedDetailRunIds = new Set(); // detail is final - stop refetching
-const tsDetailSignatures = new Map();     // run_id -> last rendered step signature
 // testcase_ids whose row is expanded while the suite hasn't reached them yet
 // (no run_id to key off, unlike tsExpandedRunIds above).
 const tsExpandedPendingIds = new Set();
@@ -472,40 +663,16 @@ function tsResetRunDetailState() {
   tsExpandedRunIds.clear();
   tsAutoExpandedRunIds.clear();
   tsFinishedDetailRunIds.clear();
-  tsDetailSignatures.clear();
   tsExpandedPendingIds.clear();
 }
 
+// tcRenderRunInto does the in-flight guard and skip-if-unchanged itself, and
+// only loads the loop passes that are open - a looped testcase inside a
+// suite no longer pulls every step result on every tick.
 async function tsLoadTestcaseRunDetail(resultEl, runId) {
-  // A tick can fire again while the previous fetch is still in flight; one
-  // request per row at a time keeps them from rendering out of order.
-  if (resultEl.dataset.loading === '1') return;
-  if (!resultEl.dataset.rendered) resultEl.innerHTML = '<div class="pi-log-empty">loading…</div>';
-  resultEl.dataset.loading = '1';
-  try {
-    const res = await apiFetch(`${API}/testcases/runs/${runId}`);
-    if (!res.ok) {
-      if (!resultEl.dataset.rendered) resultEl.innerHTML = '<div class="pi-log-empty">failed to load</div>';
-      return;
-    }
-    const tcRun = await res.json();
-    // Same reasoning as the suite-level signature below: re-rendering
-    // identical steps every 1.5s would close any log block just opened.
-    const signature = JSON.stringify({
-      status: tcRun.status,
-      results: (tcRun.results || []).map(r => [r.step_index, r.status, (r.entries || []).length, (r.log || []).length]),
-    });
-    if (tsDetailSignatures.get(runId) !== signature) {
-      tsDetailSignatures.set(runId, signature);
-      tcRenderRunSteps(resultEl, tcRun);
-    }
-    resultEl.dataset.rendered = '1';
-    if (tcRun.status !== 'running') tsFinishedDetailRunIds.add(runId);
-  } catch (err) {
-    if (!resultEl.dataset.rendered) resultEl.innerHTML = `<div class="pi-log-empty">failed to load: ${err.message}</div>`;
-  } finally {
-    delete resultEl.dataset.loading;
-  }
+  if (!resultEl.childElementCount) resultEl.innerHTML = '<div class="pi-log-empty">loading…</div>';
+  const summary = await tcRenderRunInto(resultEl, runId);
+  if (summary && summary.status !== 'running') tsFinishedDetailRunIds.add(runId);
 }
 
 // Every open row that still has something new to show, refreshed on each
@@ -537,6 +704,15 @@ function renderTsRunView(run) {
   const statusEl = document.getElementById('tsRunStatus');
   statusEl.textContent = run.status;
   statusEl.className = `cmd-status ${tcStatusClass(run.status)}`;
+  tcRenderStopControls(document.getElementById('tsRunStopHost'), 'testsuite', run);
+  const done = run.results.filter(e => !['pending', 'running', 'skipped'].includes(e.status)).length;
+  const current = run.results.find(e => e.status === 'running');
+  document.getElementById('tsRunMeta').textContent = [
+    `started ${formatVnDateTime(run.started_at)}`,
+    run.completed_at ? `completed ${formatVnDateTime(run.completed_at)}` : null,
+    `${done}/${run.testcase_ids.length} testcases done`,
+    current ? `now running: ${current.testcase_name || `#${current.testcase_id}`}` : null,
+  ].filter(Boolean).join('  ·  ');
 
   // The testcase the suite is on right now opens by itself, so the steps are
   // visible without a click - once per run_id, so collapsing it by hand isn't
@@ -570,7 +746,6 @@ function tsRenderRunTestcaseRows(run) {
   // Rebuilding throws away whatever was rendered inside each open row, so the
   // per-row caches go with it - otherwise an unchanged testcase would be
   // skipped as "already rendered" and its row left blank.
-  tsDetailSignatures.clear();
   tsFinishedDetailRunIds.clear();
   container.innerHTML = run.results.length
     ? run.results.map((r, i) => tsRunTestcaseRowHtml(r, i, r.run_id
@@ -650,13 +825,7 @@ async function tsRefreshRunningStepDetail(run) {
   // Not rendered, or the user collapsed it by hand - leave it alone rather
   // than fight a deliberate click.
   if (!resultEl || resultEl.classList.contains('hidden')) return;
-  try {
-    const res = await apiFetch(`${API}/testcases/runs/${runId}`);
-    if (!res.ok) return;
-    tcRenderRunSteps(resultEl, await res.json());
-  } catch {
-    // transient; the next tick retries
-  }
+  await tcRenderRunInto(resultEl, runId);
 }
 
 async function loadTsRunHistory() {
@@ -691,10 +860,7 @@ document.getElementById('tsEditorCloseBtn').addEventListener('click', closeTsEdi
 document.getElementById('tsEditorOverlay').addEventListener('click', (e) => {
   if (e.target.id === 'tsEditorOverlay') closeTsEditorModal();
 });
-document.getElementById('tsRunCloseBtn').addEventListener('click', closeTsRunModal);
-document.getElementById('tsRunOverlay').addEventListener('click', (e) => {
-  if (e.target.id === 'tsRunOverlay') closeTsRunModal();
-});
+document.getElementById('tsLiveRefreshBtn').addEventListener('click', loadTsLiveList);
 document.getElementById('tsRunHistoryBtn').addEventListener('click', openTsRunHistoryModal);
 document.getElementById('tsRunHistoryCloseBtn').addEventListener('click', closeTsRunHistoryModal);
 document.getElementById('tsRunHistoryOverlay').addEventListener('click', (e) => {
@@ -728,7 +894,19 @@ document.addEventListener('tabshown', (e) => {
     loadTestsuites();
   } else {
     closeTsEditorModal();
-    closeTsRunModal();
     closeTsRunHistoryModal();
+  }
+  if (e.detail.viewId === 'running') {
+    loadTsLiveList();
+    startTsLivePolling();
+    if (tsActiveRunId !== null) {
+      refreshTsRun();
+      startTsRunPolling();
+    } else if (tcLiveRunId !== null) {
+      refreshTcLive();
+      startTcLivePolling();
+    }
+  } else {
+    pauseTsRunTab();
   }
 });

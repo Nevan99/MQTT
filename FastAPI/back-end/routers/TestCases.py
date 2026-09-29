@@ -3,7 +3,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlmodel import Session, select
 
 from database.database import get_session, get_session_direct
@@ -13,6 +13,7 @@ from schemas.schemas import (
     TestCaseBulkRequest, TestCaseBulkTagRequest,
 )
 from service.mqtt_service import mqtt_service
+from service import run_control
 from service.auth import get_current_user
 from routers.Commands import _dispatch
 
@@ -100,7 +101,8 @@ def create_testcase(req: TestCaseRequest, session: Session = Depends(get_session
 # literal testcase id - same reasoning as routers/Pis.get_all_interface_status.
 
 @router.get("/runs", response_model=list[TestRunOut])
-def list_runs(limit: int = 50, include_suite_children: bool = False, session: Session = Depends(get_session)):
+def list_runs(limit: int = 50, include_suite_children: bool = False, light: bool = False,
+              session: Session = Depends(get_session)):
     """Run history across every testcase, newest first - the Testcases tab's
     History view and the Results tab's flat list.
 
@@ -109,20 +111,181 @@ def list_runs(limit: int = 50, include_suite_children: bool = False, session: Se
     TestSuiteRun already lists each one nested under itself (drill-down via
     GET /testsuites/runs/{id} -> its results[].run_id), so including them
     here too would show the same run twice. Pass include_suite_children=true
-    to get the unfiltered list back."""
+    to get the unfiltered list back.
+
+    light=true leaves out each run's steps and results - the Running tab
+    polls this list every few seconds, and a single big looped run's
+    results alone can be megabytes."""
     query = select(TestRun).order_by(TestRun.started_at.desc())
     if not include_suite_children:
         query = query.where(TestRun.suite_run_id.is_(None))
     runs = session.exec(query.limit(limit)).all()
+    if light:
+        return [TestRunOut(
+            id=r.id, testcase_id=r.testcase_id, testcase_name=r.testcase_name,
+            stop_on_failure=r.stop_on_failure, repeat_count=r.repeat_count, status=r.status,
+            suite_run_id=r.suite_run_id, started_at=r.started_at, completed_at=r.completed_at,
+        ) for r in runs]
     return [_run_to_out(r) for r in runs]
 
 
 @router.get("/runs/{run_id}", response_model=TestRunOut)
 def get_run(run_id: int, session: Session = Depends(get_session)):
+    """The whole run, every step result included. Fine for a normal run, but
+    a big looped one is thousands of entries - the run views use /summary
+    and /steps below instead, and only load the part being looked at."""
     run = session.get(TestRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
-    return _run_to_out(run)
+    out = _run_to_out(run)
+    live = run_control.get_run(run_id)
+    if live is not None:
+        with live.lock:
+            out.results = json.loads(json.dumps(live.results))
+    return out
+
+
+# Parsed results_json of recently viewed *finished* runs. Paging through a
+# big finished run's /steps would otherwise re-parse its entire JSON on every
+# page; a finished run never changes, so completed_at is a safe cache key.
+_FINISHED_CACHE_MAX = 8
+_finished_results_cache: dict = {}
+
+
+def _run_results(run: TestRun):
+    """(results, live) - live results while the run executes in this
+    process, else the persisted copy."""
+    live = run_control.get_run(run.id)
+    if live is not None:
+        return live.results, live
+    if run.status == "running":
+        return json.loads(run.results_json), None
+    key = (run.id, run.completed_at)
+    cached = _finished_results_cache.get(key)
+    if cached is None:
+        cached = json.loads(run.results_json)
+        if len(_finished_results_cache) >= _FINISHED_CACHE_MAX:
+            _finished_results_cache.pop(next(iter(_finished_results_cache)))
+        _finished_results_cache[key] = cached
+    return cached, None
+
+
+def _results_blocks(results: list) -> list:
+    """Contiguous runs of entries sharing (pass_index, loop_group,
+    loop_pass) - one per loop pass, or one per outer repeat pass for steps
+    outside any loop. This is the unit the run views collapse/expand, so a
+    1000-pass loop is 1000 one-line headers rather than every step at once."""
+    blocks = []
+    for i, r in enumerate(results):
+        key = (r.get("pass_index") or 0, r.get("loop_group"), r.get("loop_pass"))
+        if not blocks or blocks[-1]["_key"] != key:
+            blocks.append({
+                "_key": key, "start": i, "end": i,
+                "pass_index": key[0], "loop_group": key[1], "loop_pass": key[2],
+                "loop_count": r.get("loop_count"), "counts": {},
+            })
+        b = blocks[-1]
+        b["end"] = i + 1
+        st = r.get("status") or "pending"
+        b["counts"][st] = b["counts"].get(st, 0) + 1
+    for b in blocks:
+        del b["_key"]
+    return blocks
+
+
+@router.get("/runs/{run_id}/summary")
+def get_run_summary(run_id: int, session: Session = Depends(get_session)):
+    """Everything a run view needs to draw its outline - status, per-status
+    counts, per-loop-pass blocks, where the run is now - without a single
+    step's logs or result payload. Cheap enough to poll every 1.5s however
+    many loop passes the run has; step detail comes from /steps on demand."""
+    run = session.get(TestRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    results, live = _run_results(run)
+    if live is not None:
+        with live.lock:
+            blocks = _results_blocks(results)
+            total, current, version, stop_mode = len(results), live.current, live.version, live.stop_mode
+    else:
+        blocks = _results_blocks(results)
+        total, current, version, stop_mode = len(results), None, None, None
+    counts = {}
+    for b in blocks:
+        for st, n in b["counts"].items():
+            counts[st] = counts.get(st, 0) + n
+    return {
+        "id": run.id, "testcase_id": run.testcase_id, "testcase_name": run.testcase_name,
+        "stop_on_failure": run.stop_on_failure, "repeat_count": run.repeat_count,
+        "status": run.status, "suite_run_id": run.suite_run_id,
+        "started_at": run.started_at, "completed_at": run.completed_at,
+        "total": total, "counts": counts, "blocks": blocks, "current": current,
+        # Changes whenever any step changes, so a view can skip re-rendering
+        # an unchanged run. None once finished (nothing changes any more).
+        "version": version,
+        "stop_requested": stop_mode,
+        # False after a backend restart orphaned a "running" row - stopping
+        # it then just closes the row out (see stop_run below).
+        "live": live is not None,
+    }
+
+
+@router.get("/runs/{run_id}/steps")
+def get_run_steps(
+    run_id: int,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(200, ge=1, le=500),
+    session: Session = Depends(get_session),
+):
+    """One page of full step results (logs, checks, payloads), by position
+    in the run's flat execution order - the same indices /summary's blocks
+    use as start/end."""
+    run = session.get(TestRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    results, live = _run_results(run)
+    if live is not None:
+        with live.lock:
+            items = json.loads(json.dumps(results[offset:offset + limit]))
+            total = len(results)
+    else:
+        items, total = results[offset:offset + limit], len(results)
+    return {"total": total, "offset": offset, "items": items}
+
+
+@router.post("/runs/{run_id}/stop")
+def stop_run(
+    run_id: int,
+    mode: str = Query(run_control.STOP_NOW, description="now | after_loop_pass"),
+    session: Session = Depends(get_session),
+):
+    """Asks a running testcase to stop.
+
+    now: the step in flight is abandoned (a command already sent to a Pi
+    can't be recalled - it just stops being waited on) and every remaining
+    step is marked skipped. after_loop_pass: the current loop pass (or, for
+    steps outside any loop, the current repeat pass) finishes first.
+    Either way the run ends as "stopped" with its history kept."""
+    if mode not in run_control.TESTCASE_STOP_MODES:
+        raise HTTPException(status_code=400, detail=f"mode must be one of {run_control.TESTCASE_STOP_MODES}")
+    run = session.get(TestRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if run.status != "running":
+        raise HTTPException(status_code=409, detail=f"Run is not running (status: {run.status})")
+    if not run_control.request_run_stop(run_id, mode):
+        # Row says running but no thread owns it - left behind by a backend
+        # restart. Nothing to signal; close it out so it stops showing as live.
+        results = json.loads(run.results_json)
+        for entry in results:
+            if entry.get("status") in ("pending", "running"):
+                entry["status"] = "skipped"
+        run.results_json = json.dumps(results)
+        run.status = "stopped"
+        run.completed_at = datetime.now(timezone.utc)
+        session.add(run)
+        session.commit()
+    return {"run_id": run_id, "stop_requested": mode}
 
 
 @router.delete("/runs/{run_id}")
@@ -134,6 +297,9 @@ def delete_run(run_id: int, session: Session = Depends(get_session)):
     run = session.get(TestRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
+    # Also stops it dispatching further commands, rather than letting it run
+    # on unseen until its next flush notices the row is gone.
+    run_control.request_run_stop(run_id, run_control.STOP_NOW)
     session.delete(run)
     session.commit()
     return {"deleted": run_id}
@@ -413,6 +579,11 @@ def _await_command(command_id: str, timeout_seconds: float = COMMAND_TIMEOUT_SEC
     backend-side runner instead of over HTTP."""
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
+        # A "stop now" on this run abandons the wait rather than sitting out
+        # the rest of the timeout - the command itself can't be recalled
+        # from the Pi, but the runner no longer has to care how it ends.
+        if run_control.should_abort_now():
+            return "stopped", None
         transient = mqtt_service.get_transient_command(command_id)
         if transient is not None:
             if transient["status"] != "pending":
@@ -593,7 +764,10 @@ def _run_step_once(step: dict, step_index: int = 0, iteration: int = 1) -> dict:
     if params:
         log.append(_log_line("debug", f"{label}: params {json.dumps(params, default=str)}"))
 
+    aborted = False
     for pi_id in targets:
+        if aborted:
+            break
         dispatches, resolved_ifaces = _expand_interface_dispatches(params, pi_id)
         if not dispatches:
             asked = params.get("interfaces", params.get("interface"))
@@ -620,6 +794,13 @@ def _run_step_once(step: dict, step_index: int = 0, iteration: int = 1) -> dict:
                         f"interface(s): {', '.join(resolved_ifaces)}"))
 
         for dispatch_params in dispatches:
+            # Checked before every dispatch, not just once per step: a step
+            # fanning out over several Pis/radios shouldn't keep sending new
+            # commands after the operator has asked the run to stop.
+            if run_control.should_abort_now():
+                log.append(_log_line("error", f"{label}: stopped by user - remaining dispatches not sent"))
+                aborted = True
+                break
             # Which interface this particular command went to, for the entry
             # label - the singular case has one per dispatch, the plural case
             # carries the whole list in one.
@@ -646,6 +827,19 @@ def _run_step_once(step: dict, step_index: int = 0, iteration: int = 1) -> dict:
                 label, pi_id, iface, out, expected, entry_started, log, entries,
             ) is False:
                 step_passed = False
+            if entries and entries[-1].get("status") == "stopped":
+                aborted = True
+                break
+
+    if aborted:
+        completed_at = datetime.now(timezone.utc)
+        return {
+            "action": action, "status": "stopped", "target": step.get("target"),
+            "params": params, "iteration": iteration,
+            "started_at": started_at.isoformat(),
+            "completed_at": completed_at.isoformat(),
+            "duration_ms": _elapsed_ms(started_at), "log": log, "entries": entries,
+        }
 
     # Every target skipped for having nothing selected means the step ran no
     # commands at all. Without this it would report "passed" on the strength
@@ -688,6 +882,21 @@ def _run_one_dispatch(label, pi_id, iface, out, expected, entry_started, log, en
     who = f"{pi_id}/{iface}" if iface else str(pi_id)
     status, result = _await_command(out.command_id)
     duration_ms = _elapsed_ms(entry_started)
+
+    if status == "stopped":
+        log.append(_log_line(
+            "error",
+            f"{label} -> {who}: stopped by user while waiting "
+            f"(command {out.command_id} may still be running on the Pi)",
+        ))
+        entries.append({
+            "pi_id": pi_id, "interface": iface, "command_id": out.command_id,
+            "status": "stopped", "command_status": "stopped",
+            "dispatched_at": entry_started.isoformat(),
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "duration_ms": duration_ms,
+        })
+        return False
 
     if status == "timeout":
         log.append(_log_line(
@@ -739,7 +948,7 @@ def _run_one_dispatch(label, pi_id, iface, out, expected, entry_started, log, en
 # count is taken from its first step.
 
 def _expand_step_plan(steps: list) -> list:
-    """(step, step_index, loop_group, loop_pass) in execution order.
+    """(step, step_index, loop_group, loop_pass, loop_count) in execution order.
 
     Non-contiguous reuse of the same group name is treated as two separate
     groups, each looping on its own - the editor only ever writes contiguous
@@ -750,7 +959,7 @@ def _expand_step_plan(steps: list) -> list:
     while i < n:
         group = steps[i].get("loop_group")
         if not group:
-            plan.append((steps[i], i, None, None))
+            plan.append((steps[i], i, None, None, None))
             i += 1
             continue
         j = i
@@ -759,7 +968,7 @@ def _expand_step_plan(steps: list) -> list:
         count = max(1, int(steps[i].get("loop_count") or 1))
         for it in range(count):
             for k in range(i, j):
-                plan.append((steps[k], k, group, it + 1))
+                plan.append((steps[k], k, group, it + 1, count))
         i = j
     return plan
 
@@ -773,14 +982,27 @@ def _plan_skeletons(plan: list, repeat_count: int) -> list:
     ones that have already finished."""
     skeletons = []
     for pass_no in range(repeat_count):
-        for step, idx, loop_group, loop_pass in plan:
+        for step, idx, loop_group, loop_pass, loop_count in plan:
             for rep in range(max(1, step.get("repeat_count", 1))):
                 skeletons.append({
                     "action": step.get("action"), "target": step.get("target"),
                     "status": "pending", "step_index": idx, "pass_index": pass_no,
-                    "loop_group": loop_group, "loop_pass": loop_pass, "iteration": rep + 1,
+                    "loop_group": loop_group, "loop_pass": loop_pass, "loop_count": loop_count,
+                    "iteration": rep + 1,
                 })
     return skeletons
+
+
+# How often a live run's results are flushed to SQLite. Readers get live
+# state from run_control in between, so this only bounds how much progress a
+# backend crash could lose - not how fresh the UI is.
+RESULTS_FLUSH_SECONDS = 3.0
+
+
+def _block_key(pass_no, loop_group, loop_pass):
+    """What "the current loop pass" means for a stop-after-loop-pass: one
+    pass of a loop group, or (outside any group) one outer repeat pass."""
+    return (pass_no, loop_group, loop_pass)
 
 
 def _run_testcase(run_id: int):
@@ -791,106 +1013,158 @@ def _run_testcase(run_id: int):
         steps = json.loads(run.steps_json)
         stop_on_failure = run.stop_on_failure
         repeat_count = max(1, run.repeat_count)
+        suite_run_id = run.suite_run_id
 
     overall_passed = True
-    stopped = False
+    stopped = False          # stop_on_failure tripped
+    user_stopped = False     # POST /runs/{id}/stop
 
     # Built once: loop groups expand into the flat execution order here, so
     # the run loop below stays a straight walk and every step result can name
     # which loop pass produced it.
     plan = _expand_step_plan(steps)
     results = _plan_skeletons(plan, repeat_count)
+    live = run_control.register_run(run_id, results)
+    run_control.set_current_run(run_id)
+    # A suite "stop now" that arrived after the suite launched this run but
+    # before it registered above had no live run to forward to - picked up
+    # here instead (request_suite_stop sets the suite flag first).
+    suite = run_control.get_suite(suite_run_id) if suite_run_id is not None else None
+    if suite is not None and suite.stop_mode == run_control.STOP_NOW:
+        run_control.request_run_stop(run_id, run_control.STOP_NOW)
+    last_flush = 0.0
 
-    def save_results():
+    def save_results(force=False):
+        """Flushes live results to the DB (throttled unless forced). False
+        once the run row is gone - deleted via DELETE /testcases/runs/{id}
+        while this was still running - so the caller can stop updating."""
+        nonlocal last_flush
+        now = time.monotonic()
+        if not force and now - last_flush < RESULTS_FLUSH_SECONDS:
+            return True
+        with live.lock:
+            payload = json.dumps(results)
         with get_session_direct() as session:
             run = session.get(TestRun, run_id)
             if run is None:
                 return False
-            run.results_json = json.dumps(results)
+            run.results_json = payload
             session.add(run)
             session.commit()
-            return True
+        last_flush = now
+        return True
 
-    if not save_results():
-        return
+    try:
+        if not save_results(force=True):
+            return
 
-    pos = 0
-    for pass_no in range(repeat_count):
-        if stopped:
-            break
-        for step, idx, loop_group, loop_pass in plan:
-            if stopped:
+        pos = 0
+        prev_block = None
+        for pass_no in range(repeat_count):
+            if stopped or user_stopped:
                 break
-            for rep in range(max(1, step.get("repeat_count", 1))):
-                # Flipped to "running" *before* dispatch (mirroring
-                # TestSuites._run_testsuite's per-testcase "running" entry),
-                # so a client polling mid-step sees it happening now rather
-                # than only "pending" right up until it completes.
-                results[pos].update({"status": "running"})
-                if not save_results():
-                    return
-
-                delay = step.get("delay_before_seconds") or 0
-                delay_log = []
-                if delay:
-                    # Logged rather than slept through silently: a run that
-                    # looks stalled is usually a step's own configured delay,
-                    # and without this there is nothing in the stream between
-                    # the previous step finishing and this one dispatching.
-                    delay_log.append(_log_line(
-                        "debug", f"step {idx + 1} '{step.get('action')}': waiting {delay}s before dispatch"))
-                    time.sleep(delay)
-
-                step_result = _run_step_once(step, step_index=idx, iteration=rep + 1)
-                step_result["step_index"] = idx
-                # Which outer repeat of the whole testcase this belongs to -
-                # without it, repeat_count > 1 produces several identical-
-                # looking rows for the same step with nothing to tell them
-                # apart. loop_group/loop_pass do the same job for a step
-                # inside a looped block.
-                step_result["pass_index"] = pass_no
-                step_result["loop_group"] = loop_group
-                step_result["loop_pass"] = loop_pass
-                if delay_log:
-                    step_result["log"] = delay_log + step_result.get("log", [])
-                results[pos] = step_result
-
-                if step_result["status"] == "failed":
-                    overall_passed = False
-                    if stop_on_failure:
-                        stopped = True
-
-                # Persisted after every step (not just at the end) so a
-                # client polling GET /testcases/runs/{run_id} sees live
-                # per-step progress instead of only the final result.
-                if not save_results():
-                    # Deleted (see DELETE /testcases/runs/{run_id}) while this
-                    # was still running - nothing left to write progress to,
-                    # and the commands already dispatched can't be recalled,
-                    # so just stop updating rather than crash the thread.
-                    return
-
-                pos += 1
-                if stopped:
+            for step, idx, loop_group, loop_pass, loop_count in plan:
+                block = _block_key(pass_no, loop_group, loop_pass)
+                mode = live.stop_mode
+                if mode == run_control.STOP_NOW or (
+                        mode == run_control.STOP_AFTER_LOOP_PASS and block != prev_block):
+                    user_stopped = True
+                if stopped or user_stopped:
                     break
+                prev_block = block
+                for rep in range(max(1, step.get("repeat_count", 1))):
+                    if live.stop_mode == run_control.STOP_NOW:
+                        user_stopped = True
+                        break
+                    # Flipped to "running" *before* dispatch (mirroring
+                    # TestSuites._run_testsuite's per-testcase "running"
+                    # entry), so a client polling mid-step sees it happening
+                    # now rather than only "pending" right up until it
+                    # completes. In memory only - see RESULTS_FLUSH_SECONDS.
+                    with live.lock:
+                        results[pos].update({"status": "running"})
+                        live.current = pos
+                        live.bump()
 
-    # Steps stopped_on_failure never reached stay "pending" indefinitely
-    # otherwise - marked "skipped" instead, same as TestSuites._run_testsuite
-    # does for the testcases after the one that stopped it.
-    if stopped:
-        for entry in results[pos:]:
-            entry["status"] = "skipped"
-        if not save_results():
+                    delay = step.get("delay_before_seconds") or 0
+                    delay_log = []
+                    if delay:
+                        # Logged rather than slept through silently: a run
+                        # that looks stalled is usually a step's own
+                        # configured delay, and without this there is nothing
+                        # in the stream between the previous step finishing
+                        # and this one dispatching.
+                        delay_log.append(_log_line(
+                            "debug", f"step {idx + 1} '{step.get('action')}': waiting {delay}s before dispatch"))
+                        # Sliced so a "stop now" doesn't sit out a long delay.
+                        deadline = time.monotonic() + delay
+                        while time.monotonic() < deadline and not run_control.should_abort_now():
+                            time.sleep(min(0.5, deadline - time.monotonic()))
+
+                    if run_control.should_abort_now():
+                        step_result = dict(results[pos], status="stopped", log=delay_log + [
+                            _log_line("error", f"step {idx + 1} '{step.get('action')}': stopped by user before dispatch")])
+                    else:
+                        step_result = _run_step_once(step, step_index=idx, iteration=rep + 1)
+                        if delay_log:
+                            step_result["log"] = delay_log + step_result.get("log", [])
+                    step_result["step_index"] = idx
+                    # Which outer repeat of the whole testcase this belongs
+                    # to - without it, repeat_count > 1 produces several
+                    # identical-looking rows for the same step with nothing
+                    # to tell them apart. loop_group/loop_pass do the same
+                    # job for a step inside a looped block.
+                    step_result["pass_index"] = pass_no
+                    step_result["loop_group"] = loop_group
+                    step_result["loop_pass"] = loop_pass
+                    step_result["loop_count"] = loop_count
+                    with live.lock:
+                        results[pos] = step_result
+                        live.current = None
+                        live.bump()
+
+                    if step_result["status"] == "stopped":
+                        user_stopped = True
+                    elif step_result["status"] == "failed":
+                        overall_passed = False
+                        if stop_on_failure:
+                            stopped = True
+
+                    if not save_results():
+                        # Deleted (see DELETE /testcases/runs/{run_id}) while
+                        # this was still running - nothing left to write
+                        # progress to, so just stop rather than crash.
+                        return
+
+                    pos += 1
+                    if stopped or user_stopped:
+                        break
+
+        # Steps never reached stay "pending" indefinitely otherwise - marked
+        # "skipped" instead, same as TestSuites._run_testsuite does for the
+        # testcases after the one that stopped it.
+        if stopped or user_stopped:
+            with live.lock:
+                for entry in results[pos:]:
+                    if entry["status"] in ("pending", "running"):
+                        entry["status"] = "skipped"
+                live.bump()
+        if not save_results(force=True):
             return
 
-    with get_session_direct() as session:
-        run = session.get(TestRun, run_id)
-        if run is None:
-            return
-        run.status = "passed" if overall_passed else "failed"
-        run.completed_at = datetime.now(timezone.utc)
-        session.add(run)
-        session.commit()
+        with get_session_direct() as session:
+            run = session.get(TestRun, run_id)
+            if run is None:
+                return
+            # A user stop is reported as such even if some step failed before
+            # it - "stopped" says the run is incomplete, which matters more.
+            run.status = "stopped" if user_stopped else ("passed" if overall_passed else "failed")
+            run.completed_at = datetime.now(timezone.utc)
+            session.add(run)
+            session.commit()
+    finally:
+        run_control.set_current_run(None)
+        run_control.unregister_run(run_id)
 
 
 @router.post("/{testcase_id}/run", response_model=TestRunOut)

@@ -717,6 +717,8 @@ function renderFleetIfaceBody(entry, cardState) {
     if (link.rx_bitrate_mbps != null) rows.push(['RX bitrate', `${link.rx_bitrate_mbps} Mbps`]);
     if (link.tx_bitrate_mbps != null) rows.push(['TX bitrate', `${link.tx_bitrate_mbps} Mbps`]);
     if (link.gateway) rows.push(['Gateway', link.gateway]);
+    if (link.key_mgmt) rows.push(['Key mgmt', link.key_mgmt]);
+    if (link.radio_type) rows.push(['Radio type', link.radio_type]);
   }
   cardState.infoEl.innerHTML = rows.length
     ? `<table class="result-table">${rows.map(([k, v]) =>

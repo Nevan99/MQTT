@@ -43,7 +43,12 @@ def get_all_interface_status(session: Session = Depends(get_session)):
             "connected": r.connected, "ssid": r.ssid, "bssid": r.bssid,
             "frequency_mhz": r.frequency_mhz, "band": r.band, "signal_dbm": r.signal_dbm,
             "rx_bitrate_mbps": r.rx_bitrate_mbps, "tx_bitrate_mbps": r.tx_bitrate_mbps,
-            "gateway": r.gateway, "updated_at": r.updated_at.isoformat(),
+            "gateway": r.gateway, "key_mgmt": r.key_mgmt, "pairwise_cipher": r.pairwise_cipher,
+            "group_cipher": r.group_cipher, "wpa_state": r.wpa_state, "address": r.address,
+            "wifi_generation": r.wifi_generation, "noise_dbm": r.noise_dbm,
+            "avg_signal_dbm": r.avg_signal_dbm, "link_speed_mbps": r.link_speed_mbps,
+            "channel_width": r.channel_width, "radio_type": r.radio_type,
+            "updated_at": r.updated_at.isoformat(),
         }
         for r in rows
     ]
@@ -376,7 +381,12 @@ def get_interface_status(pi_id: str, session: Session = Depends(get_session)):
             "connected": r.connected, "ssid": r.ssid, "bssid": r.bssid,
             "frequency_mhz": r.frequency_mhz, "band": r.band, "signal_dbm": r.signal_dbm,
             "rx_bitrate_mbps": r.rx_bitrate_mbps, "tx_bitrate_mbps": r.tx_bitrate_mbps,
-            "gateway": r.gateway, "updated_at": r.updated_at.isoformat(),
+            "gateway": r.gateway, "key_mgmt": r.key_mgmt, "pairwise_cipher": r.pairwise_cipher,
+            "group_cipher": r.group_cipher, "wpa_state": r.wpa_state, "address": r.address,
+            "wifi_generation": r.wifi_generation, "noise_dbm": r.noise_dbm,
+            "avg_signal_dbm": r.avg_signal_dbm, "link_speed_mbps": r.link_speed_mbps,
+            "channel_width": r.channel_width, "radio_type": r.radio_type,
+            "updated_at": r.updated_at.isoformat(),
         }
         for r in rows
     ]
