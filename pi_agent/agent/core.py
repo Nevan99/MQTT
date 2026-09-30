@@ -134,7 +134,7 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
         # it never needed the same protection connect_wifi does. Sharing one
         # semaphore between them meant a disconnect could queue behind a
         # connect that was still mid-association or mid-DHCP, which can
-        # legitimately run for up to ~140s (60s association wait + 2x40s DHCP
+        # legitimately run for up to ~200s (60-120s association wait + 2x40s DHCP
         # wait) - confirmed as the reason disconnects measured slower on
         # busier Pis (several interfaces mid-connect at once) than on quieter
         # ones, even though disconnect_wifi's own code path never changed.
