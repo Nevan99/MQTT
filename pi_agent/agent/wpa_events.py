@@ -61,6 +61,12 @@ class WpaEventListener:
     def available(self):
         return os.path.exists(self.ctrl_path)
 
+    @property
+    def closed(self):
+        """True once the socket reader has stopped - no more events will
+        ever arrive, so a waiter should stop listening and poll instead."""
+        return self._reader_task is None or self._reader_task.done()
+
     async def __aenter__(self):
         await self.attach()
         return self
@@ -71,19 +77,7 @@ class WpaEventListener:
 
     async def attach(self):
         """Bind, connect and register for unsolicited events."""
-        if not hasattr(socket, "AF_UNIX"):
-            raise RuntimeError("wpa_supplicant control sockets need AF_UNIX")
-
-        # wpa_supplicant replies to the *bound* path, so the local socket
-        # needs a real filesystem name, unique per listener.
-        fd, self._local_path = tempfile.mkstemp(prefix=f"wpa_ctrl_{self.interface}_")
-        os.close(fd)
-        os.unlink(self._local_path)
-
-        self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-        self._sock.bind(self._local_path)
-        self._sock.setblocking(False)
-        self._sock.connect(self.ctrl_path)
+        self._sock, self._local_path = _open_ctrl_socket(self.interface, self.ctrl_path)
 
         loop = asyncio.get_running_loop()
         await loop.sock_sendall(self._sock, b"ATTACH")
@@ -164,6 +158,89 @@ class WpaEventListener:
                 continue
             return text
         raise asyncio.TimeoutError(f"no reply to {command!r}")
+
+
+def _open_ctrl_socket(interface, ctrl_path):
+    """Bound, connected, non-blocking datagram socket to a wpa_supplicant
+    control interface. Returns (sock, local_path); the caller owns both."""
+    if not hasattr(socket, "AF_UNIX"):
+        raise RuntimeError("wpa_supplicant control sockets need AF_UNIX")
+
+    # wpa_supplicant replies to the *bound* path, so the local socket
+    # needs a real filesystem name, unique per connection.
+    fd, local_path = tempfile.mkstemp(prefix=f"wpa_ctrl_{interface}_")
+    os.close(fd)
+    os.unlink(local_path)
+
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    try:
+        sock.bind(local_path)
+        sock.setblocking(False)
+        sock.connect(ctrl_path)
+    except OSError:
+        sock.close()
+        with contextlib.suppress(OSError):
+            os.unlink(local_path)
+        raise
+    return sock, local_path
+
+
+class WpaCtrlConnection:
+    """A plain (never ATTACHed) control-socket connection for sending
+    commands like STATUS directly, instead of spawning `wpa_cli` for each
+    one - a wait loop re-reading state every couple of seconds would
+    otherwise start a fresh process every time.
+
+    Deliberately separate from WpaEventListener: that socket is ATTACHed,
+    so its background reader would swallow command replies along with the
+    events. A socket that never ATTACHes gets nothing unsolicited, so every
+    datagram on it is the reply to the command just sent.
+    """
+
+    def __init__(self, interface, ctrl_dir=None):
+        self.interface = interface
+        self.ctrl_path = os.path.join(ctrl_dir or CTRL_DIR, interface)
+        self._sock = None
+        self._local_path = None
+        self._lock = asyncio.Lock()
+
+    def open(self):
+        self._sock, self._local_path = _open_ctrl_socket(self.interface, self.ctrl_path)
+        return self
+
+    def close(self):
+        if self._sock is not None:
+            self._sock.close()
+            self._sock = None
+        if self._local_path is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(self._local_path)
+            self._local_path = None
+
+    async def request(self, command, timeout=5):
+        """Send one command and return its reply text. Raises OSError /
+        asyncio.TimeoutError if wpa_supplicant can't be reached."""
+        loop = asyncio.get_running_loop()
+        async with self._lock:
+            # Drop anything left over from an earlier request that timed
+            # out, so its late reply can't be read as this one's.
+            with contextlib.suppress(BlockingIOError, InterruptedError):
+                while self._sock.recv(4096):
+                    pass
+            await loop.sock_sendall(self._sock, command.encode())
+            data = await asyncio.wait_for(loop.sock_recv(self._sock, 8192), timeout)
+        return data.decode(errors="replace")
+
+
+def parse_status(text):
+    """`STATUS` reply (key=value lines) -> dict, same shape as parsing
+    `wpa_cli status` output."""
+    status = {}
+    for line in text.splitlines():
+        key, sep, value = line.partition("=")
+        if sep:
+            status[key] = value
+    return status
 
 
 def parse_event(line):

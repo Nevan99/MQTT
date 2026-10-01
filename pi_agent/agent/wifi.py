@@ -310,7 +310,7 @@ class WifiMixin:
     # TasksCurrent on the systemd unit). disconnect_wifi has its own,
     # separate _wifi_disconnect_semaphore - the two used to share one
     # semaphore, which meant a disconnect could sit queued behind a slow
-    # connect (up to ~95s: 60s association wait + 35s DHCP wait) on any Pi
+    # connect (up to ~200s: 60-120s association wait + 2x40s DHCP attempts) on any Pi
     # busy enough to have both semaphore slots occupied by connects -
     # confirmed as the reason disconnects measured slower on busier Pis even
     # though disconnect_wifi's own code path never changed.
@@ -367,18 +367,14 @@ class WifiMixin:
         ret = await self._wpa_cli(interface, "status")
         if ret.returncode != 0:
             return None
-        status = {}
-        for line in ret.stdout.splitlines():
-            key, sep, value = line.partition("=")
-            if sep:
-                status[key] = value
-        return status
+        return wpa_events.parse_status(ret.stdout)
 
     async def _current_wpa_state(self, interface):
         status = await self._current_wpa_status(interface)
         return status.get("wpa_state") if status else None
 
-    async def _wait_for_wpa_state(self, interface, target_state, timeout=60, expected_net_id=None, expected_bssid=None):
+    async def _wait_for_wpa_state(self, interface, target_state, timeout=60, expected_net_id=None, expected_bssid=None,
+                                  scan_target=None, max_timeout=None):
         """Wait for wpa_supplicant to reach `target_state`.
 
         Listens on the control socket rather than polling `status` once a
@@ -428,22 +424,86 @@ class WifiMixin:
         permissions), so behavior degrades rather than breaks.
         """
         self.last_wpa_failure = None
+        # Last wpa_state actually observed, so a timeout can say where it
+        # got stuck instead of always guessing "never found on air".
+        last_state = None
+
+        # State checks go straight over the control socket rather than
+        # through `wpa_cli status`: this wait re-reads the state on every
+        # event and every WPA_STATE_RECHECK_SECONDS, and a subprocess per
+        # read is exactly the kind of spawn volume the multi-interface
+        # "Pi went offline" incident was traced to. Falls back to wpa_cli
+        # if the socket can't be opened or stops answering.
+        ctrl = None
+        if os.path.exists(f"{self.WPA_CTRL_DIR}/{interface}"):
+            try:
+                ctrl = wpa_events.WpaCtrlConnection(interface, self.WPA_CTRL_DIR).open()
+            except (OSError, RuntimeError) as e:
+                print(f"[pi_agent] {interface}: wpa control socket unavailable for STATUS ({e}), using wpa_cli")
+
+        async def read_status():
+            nonlocal ctrl
+            if ctrl is not None:
+                try:
+                    return wpa_events.parse_status(await ctrl.request("STATUS"))
+                except (OSError, asyncio.TimeoutError) as e:
+                    print(f"[pi_agent] {interface}: STATUS over control socket failed ({e}), using wpa_cli")
+                    ctrl.close()
+                    ctrl = None
+            return await self._current_wpa_status(interface)
 
         async def matches():
-            status = await self._current_wpa_status(interface)
+            nonlocal last_state
+            status = await read_status()
+            if status:
+                last_state = status.get("wpa_state") or last_state
             if not status or status.get("wpa_state") != target_state:
                 return False
             if expected_net_id is not None and status.get("id") != str(expected_net_id):
                 return False
             return True
 
+        # What wpa_supplicant's scanning actually did during the wait, from
+        # the events we already receive - see _scan_miss_detail.
+        scans = {"completed": 0, "failed": [], "not_found": 0}
+
+        async def ctrl_command(command):
+            """A control command's reply text, over the socket when we have
+            one, else via wpa_cli (only reached on a timeout, so one spawn
+            at most)."""
+            if ctrl is not None:
+                try:
+                    return await ctrl.request(command)
+                except (OSError, asyncio.TimeoutError):
+                    pass
+            ret = await self._wpa_cli(interface, *command.lower().split())
+            return ret.stdout if ret.returncode == 0 else ""
+
+        async def timed_out(waited=timeout):
+            # One last look before declaring failure: an association that
+            # lands in the final moments (or whose event we never saw) must
+            # not be reported as a timeout while the radio is in fact
+            # connected - see WPA_STATE_RECHECK_SECONDS.
+            if await matches():
+                return True
+            reason = self._wpa_timeout_reason(target_state, waited, last_state)
+            if last_state in self._WPA_NOT_FOUND_STATES and scan_target:
+                detail = await self._scan_miss_detail(ctrl_command, scan_target, scans)
+                if detail:
+                    reason = f"{reason}; {detail}"
+            self.last_wpa_failure = reason
+            return False
+
         async def poll_fallback():
             # Same "never leave a failure unexplained" rule as the event
             # path below - see _wpa_timeout_reason.
-            if await self._poll_for_wpa_state(matches, timeout):
-                return True
-            self.last_wpa_failure = self._wpa_timeout_reason(target_state, timeout)
-            return False
+            try:
+                if await self._poll_for_wpa_state(matches, timeout):
+                    return True
+                return await timed_out()
+            finally:
+                if ctrl is not None:
+                    ctrl.close()
 
         listener = wpa_events.WpaEventListener(interface)
         if not listener.available:
@@ -455,6 +515,10 @@ class WifiMixin:
             print(f"[pi_agent] {interface}: wpa control socket unavailable ({e}), polling instead")
             return await poll_fallback()
 
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        deadline = started + timeout
+        hard_deadline = started + max(timeout, max_timeout or 0)
         try:
             # Check once up front: the target state may already have been
             # reached between select_network and the ATTACH above, and no
@@ -462,53 +526,230 @@ class WifiMixin:
             if await matches():
                 return True
 
-            async for line in listener.events(timeout=timeout):
-                name, fields = wpa_events.parse_event(line)
-                if name == "CTRL-EVENT-CONNECTED" and target_state == "COMPLETED":
-                    # The event alone doesn't carry the network id - it
-                    # fires on any completed association, old or new - so
-                    # still confirm via matches() rather than trusting the
-                    # event name by itself.
-                    if await matches():
-                        return True
-                    continue
-                if name in wpa_events.FAILURE_EVENTS:
-                    event_bssid = fields.get("bssid")
-                    if expected_bssid and event_bssid and event_bssid.lower() != expected_bssid.lower():
-                        # Someone else's rejection (an older saved network
-                        # for this SSID, still enabled) - not a verdict on
-                        # the bssid this call actually pinned. Keep waiting.
+            while True:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    # A fixed cut-off reported failure on connects that
+                    # wpa_supplicant went on to complete moments later - it
+                    # keeps trying after we stop watching, so the radio ended
+                    # up connected behind a "failed" result. Keep watching
+                    # while there is evidence the attempt is still live, up
+                    # to hard_deadline; give up at `timeout` only when there
+                    # is none (see _wpa_attempt_still_live).
+                    if loop.time() < hard_deadline and await self._wpa_attempt_still_live(
+                        ctrl_command, scan_target, scans, last_state,
+                    ):
+                        deadline = min(hard_deadline, loop.time() + self.WPA_ASSOC_EXTEND_SECONDS)
+                        print(f"[pi_agent] {interface}: still no {target_state} after "
+                              f"{round(loop.time() - started)}s but the attempt is live "
+                              f"(wpa_state={last_state}), extending the wait")
                         continue
-                    self.last_wpa_failure = f"{name} {' '.join(f'{k}={v}' for k, v in fields.items())}".strip()
-                    return False
-                if name.startswith("CTRL-EVENT-"):
-                    # Any state-ish transition: confirm against the real
-                    # state rather than trying to map every event name.
-                    if await matches():
+                    break
+                # Events alone were trusted to announce success, and a
+                # missed one (wpa_supplicant drops datagrams to a monitor
+                # whose socket buffer is full, e.g. during a scan-result
+                # burst on a busy Pi) meant sitting out the whole timeout
+                # and reporting failure on a connect that had completed.
+                # So the event wait is sliced, and the real state is
+                # re-read at the end of every slice regardless.
+                async for line in listener.events(timeout=min(self.WPA_STATE_RECHECK_SECONDS, remaining)):
+                    name, fields = wpa_events.parse_event(line)
+                    if name == "CTRL-EVENT-SCAN-RESULTS":
+                        scans["completed"] += 1
+                    elif name == "CTRL-EVENT-SCAN-FAILED":
+                        scans["failed"].append(fields.get("ret", "?"))
+                    elif name == "CTRL-EVENT-NETWORK-NOT-FOUND":
+                        scans["not_found"] += 1
+                    if name == "CTRL-EVENT-CONNECTED" and target_state == "COMPLETED":
+                        # The event alone doesn't carry the network id - it
+                        # fires on any completed association, old or new - so
+                        # still confirm via matches() rather than trusting the
+                        # event name by itself.
+                        if await matches():
+                            return True
+                        continue
+                    if name in wpa_events.FAILURE_EVENTS:
+                        event_bssid = fields.get("bssid")
+                        if expected_bssid and event_bssid and event_bssid.lower() != expected_bssid.lower():
+                            # Someone else's rejection (an older saved network
+                            # for this SSID, still enabled) - not a verdict on
+                            # the bssid this call actually pinned. Keep waiting.
+                            continue
+                        self.last_wpa_failure = f"{name} {' '.join(f'{k}={v}' for k, v in fields.items())}".strip()
+                        return False
+                    if name.startswith("CTRL-EVENT-"):
+                        # Any state-ish transition: confirm against the real
+                        # state rather than trying to map every event name.
+                        if await matches():
+                            return True
+                if await matches():
+                    return True
+                if listener.closed:
+                    # Socket reader died - events() would now return
+                    # instantly every slice. Poll out the rest instead.
+                    if await self._poll_for_wpa_state(matches, deadline - loop.time()):
                         return True
-            self.last_wpa_failure = self._wpa_timeout_reason(target_state, timeout)
-            return False
+                    break
+            return await timed_out(round(loop.time() - started))
         finally:
             await listener.detach()
+            if ctrl is not None:
+                ctrl.close()
 
-    @staticmethod
-    def _wpa_timeout_reason(target_state, timeout):
+    # How often _wait_for_wpa_state re-reads `wpa_cli status` while waiting
+    # on control-socket events, so a missed event costs at most this long
+    # rather than the whole timeout.
+    WPA_STATE_RECHECK_SECONDS = 2
+
+    # States that mean wpa_supplicant never got as far as talking to an AP.
+    _WPA_NOT_FOUND_STATES = (None, "SCANNING", "DISCONNECTED", "INACTIVE", "INTERFACE_DISABLED")
+
+    # connect_wifi's hard ceiling on the association wait, including every
+    # extension - the base timeout is still 60s for an attempt with no sign
+    # of life.
+    WPA_ASSOC_MAX_SECONDS = 120
+    # How much longer _wait_for_wpa_state keeps watching, per extension,
+    # once its base timeout is up but the attempt is still live.
+    WPA_ASSOC_EXTEND_SECONDS = 15
+    # A BSS table entry older than this doesn't count as "AP is on air now".
+    WPA_BSS_FRESH_SECONDS = 30
+
+    @classmethod
+    async def _wpa_attempt_still_live(cls, ctrl_command, target, scans, last_state):
+        """Whether an association that hasn't completed yet is still worth
+        waiting for - i.e. whether giving up now would likely report a
+        failure that wpa_supplicant then turns into a success on its own.
+
+        Live when any of:
+          - wpa_supplicant is already past scanning (authenticating,
+            associating, 4-way handshake) - it has picked the AP and is
+            mid-connect;
+          - some of its scans failed (e.g. ret=-16 EBUSY while several
+            radios are busy) - "not found" is then no verdict on the AP,
+            the radio just hasn't had a clean look yet;
+          - the target is in its scan table and was seen recently - the AP
+            is on air, wpa_supplicant just hasn't got to it yet.
+        Not live - so fail now, as before - when scans have been completing
+        cleanly and the target isn't among the results: waiting longer
+        wouldn't change anything.
+        """
+        if last_state not in cls._WPA_NOT_FOUND_STATES:
+            return True
+        if scans["failed"]:
+            return True
+        if not target:
+            return False
+        if target.get("bssid"):
+            entry = wpa_events.parse_status(await ctrl_command(f"BSS {target['bssid']}"))
+            if not entry.get("bssid"):
+                return False
+            try:
+                return int(entry.get("age", "0")) <= cls.WPA_BSS_FRESH_SECONDS
+            except ValueError:
+                return True
+        if target.get("ssid"):
+            for line in (await ctrl_command("SCAN_RESULTS")).splitlines()[1:]:
+                cols = line.split("\t")
+                if len(cols) >= 5 and cols[4] == target["ssid"]:
+                    return True
+        return False
+
+    @classmethod
+    def _wpa_timeout_reason(cls, target_state, timeout, last_state=None):
         """Why a wait ended with nothing to report.
 
         A rejected association names itself (CTRL-EVENT-ASSOC-REJECT and
         friends), but running out the clock does not - and without this the
         result went back to the UI as `connected: false` with an entirely
         empty failure_reason, indistinguishable from a command that never
-        ran or a crashed agent. Silence here is itself informative: it means
-        wpa_supplicant kept scanning and neither reached the state nor was
-        turned away, which in practice means the requested BSSID/SSID was
-        never seen on air (an AP that moved channel, a hotspot that rotated
-        its MAC or went to sleep, or one simply out of range)."""
+        ran or a crashed agent.
+
+        The "never found on air" conclusion (an AP that moved channel, a
+        hotspot that rotated its MAC or went to sleep, or one simply out of
+        range) only holds if wpa_supplicant was still scanning when time ran
+        out. It used to be stated unconditionally, which was misleading when
+        the wait actually stalled mid-association or mid-handshake - so the
+        last observed wpa_state now decides which explanation is given."""
+        base = f"timed out after {timeout}s waiting for wpa_state={target_state}"
+        if last_state in cls._WPA_NOT_FOUND_STATES:
+            return (
+                f"{base} (last wpa_state={last_state or 'unknown'}) - wpa_supplicant "
+                "reported no rejection, so the requested BSSID/SSID was most likely "
+                "never found on air"
+            )
         return (
-            f"timed out after {timeout}s waiting for wpa_state={target_state} - "
-            "wpa_supplicant reported no rejection, so the requested BSSID/SSID "
-            "was most likely never found on air"
+            f"{base} - AP was found but the connection stalled at "
+            f"wpa_state={last_state} with no rejection reported"
         )
+
+    @staticmethod
+    async def _scan_miss_detail(ctrl_command, target, scans):
+        """Why wpa_supplicant sat in SCANNING for the whole wait, as far as
+        it can be told after the fact.
+
+        "Never found on air" was a guess; this checks it. The scan counts
+        say whether scanning ran at all (failed scans, e.g. ret=-16 EBUSY,
+        point at the radio/driver being busy - the multi-interface case -
+        rather than at the AP). The target's own scan-table entry, if any,
+        says whether the AP *was* seen - and if it was, its freq and
+        security flags usually name why wpa_supplicant skipped it anyway
+        (a pinned channel it isn't on, WPA3-SAE-only vs our WPA-PSK, a
+        password given for an open AP or vice versa). Those skips are silent
+        in wpa_supplicant: no rejection event, just more scanning.
+
+        `target`: {"ssid", "bssid", "freq", "secured"}. Looks the BSSID up
+        with `BSS <bssid>` rather than grepping SCAN_RESULTS, whose reply is
+        truncated at wpa_supplicant's 4KB control-reply limit in a busy RF
+        environment - exactly where the target could be cut off.
+        """
+        parts = [
+            f"scans: {scans['completed']} completed, {len(scans['failed'])} failed"
+            + (f" (ret={','.join(sorted(set(scans['failed'])))})" if scans["failed"] else "")
+            + f", {scans['not_found']} network-not-found"
+        ]
+
+        entry = {}
+        if target.get("bssid"):
+            entry = wpa_events.parse_status(await ctrl_command(f"BSS {target['bssid']}"))
+        elif target.get("ssid"):
+            # SSID-only connect: best effort through the (possibly
+            # truncated) table. Columns: bssid, freq, level, flags, ssid.
+            for line in (await ctrl_command("SCAN_RESULTS")).splitlines()[1:]:
+                cols = line.split("\t")
+                if len(cols) >= 5 and cols[4] == target["ssid"]:
+                    entry = {"bssid": cols[0], "freq": cols[1], "level": cols[2], "flags": cols[3], "ssid": cols[4]}
+                    break
+
+        name = target.get("bssid") or target.get("ssid")
+        if not entry.get("bssid"):
+            parts.append(f"{name} is not in this radio's scan results")
+            return "; ".join(parts)
+
+        seen = f"{name} WAS seen: {entry.get('freq')} MHz, {entry.get('level')} dBm, {entry.get('flags', '')}"
+        if entry.get("age"):
+            seen += f", last seen {entry['age']}s ago"
+        parts.append(seen)
+
+        flags = entry.get("flags", "")
+        hints = []
+        if target.get("freq") and entry.get("freq") and int(entry["freq"]) != int(target["freq"]):
+            hints.append(f"connect is pinned to {target['freq']} MHz but the AP is on {entry['freq']} MHz")
+        if target.get("ssid") and entry.get("ssid") and entry["ssid"] != target["ssid"]:
+            hints.append(f"AP now advertises SSID {entry['ssid']!r}, not {target['ssid']!r}")
+        if target.get("secured"):
+            if "WPA" not in flags and "RSN" not in flags:
+                hints.append("a password was given but the AP is open")
+            elif "PSK" not in flags and "SAE" in flags:
+                hints.append("AP is WPA3-SAE only but connect_wifi configures WPA-PSK")
+            elif "PSK" not in flags and "EAP" in flags:
+                hints.append("AP is WPA-Enterprise (EAP), not PSK")
+        elif "WPA" in flags or "RSN" in flags:
+            hints.append("AP requires a password but none was given")
+        if hints:
+            parts.append("likely skipped because " + " and ".join(hints))
+        else:
+            parts.append("config looks compatible - wpa_supplicant saw it but never tried it")
+        return "; ".join(parts)
 
     async def _poll_for_wpa_state(self, matches, timeout):
         """Pre-control-socket fallback: ask `status` once a second."""
@@ -521,11 +762,85 @@ class WifiMixin:
         return False
 
     # How long connect_wifi waits for an address to actually land on the
-    # interface after handing off to dhcpcd. Sized against the lease
+    # interface after each hand-off to dhcpcd. Sized against the lease
     # negotiations seen on real hardware (solicit to lease is typically
     # 5-8s, occasionally longer when several radios negotiate at once), not
     # against dhcpcd's own -t, which bounds a different thing entirely.
-    DHCP_IP_WAIT_SECONDS = 30
+    DHCP_IP_WAIT_SECONDS = 15
+    # dhcpcd's own -t per attempt, and how many attempts. See
+    # _obtain_dhcp_lease for why a single attempt wasn't enough.
+    DHCP_ATTEMPT_TIMEOUT_SECONDS = 20
+    DHCP_ATTEMPTS = 2
+
+    async def _obtain_dhcp_lease(self, interface):
+        """Ask dhcpcd for a lease and wait for the address to land.
+
+        Returns (ip_address, dhcpcd_output, failure_reason).
+
+        This used to be one `dhcpcd -n` followed by a 30s watch for an
+        address, and with several interfaces connecting on one Pi that
+        regularly ended in "associated but no IPv4 address". A single
+        request has two ways to go nowhere while we keep watching:
+          - with a system-wide dhcpcd daemon running, `-n` is only a rebind
+            message to it, and one that lands while the daemon is still
+            reacting to the same interface's carrier change (or while it
+            doesn't consider that interface its own) is dropped silently;
+          - without one, the per-interface dhcpcd started here exits on its
+            own -t timeout, after which nothing is asking for a lease at all
+            and watching for an address is pointless.
+        Re-issuing the request covers both without having to know which
+        mode this Pi is in.
+
+        The failure reason carries dhcpcd's own log lines for this
+        interface, so the result says whether a DISCOVER went out and
+        whether an OFFER ever came back - i.e. whether to look at this Pi's
+        dhcpcd or at the AP's DHCP server/client cap.
+        """
+        outputs = []
+        for attempt in range(1, self.DHCP_ATTEMPTS + 1):
+            # detach_output: dhcpcd daemonizes, and a daemon holding our
+            # stdout/stderr pipes open kept communicate() waiting out the
+            # full timeout on calls that had already done their job - see
+            # proc.run_hard.
+            dhcp_ret = await proc.run_hard(
+                ["dhcpcd", "-n", "-t", str(self.DHCP_ATTEMPT_TIMEOUT_SECONDS), interface],
+                timeout=self.DHCP_ATTEMPT_TIMEOUT_SECONDS + 5, detach_output=True,
+            )
+            output = (dhcp_ret.stdout or dhcp_ret.stderr).strip()
+            if output:
+                outputs.append(output)
+            # Not a single read: dhcpcd returning does not mean a lease is
+            # in place - see _wait_for_interface_ip.
+            ip_address = await self._wait_for_interface_ip(interface)
+            if ip_address:
+                return ip_address, " | ".join(outputs), None
+            if attempt < self.DHCP_ATTEMPTS:
+                print(f"[pi_agent] {interface}: no IPv4 address after DHCP attempt {attempt}, retrying")
+
+        mode = (
+            "system dhcpcd daemon"
+            if any("sending commands to dhcpcd process" in o for o in outputs)
+            else "per-interface dhcpcd"
+        )
+        detail = await self._recent_dhcpcd_log(interface)
+        return None, " | ".join(outputs), (
+            f"associated but no IPv4 address after {self.DHCP_ATTEMPTS} DHCP attempts "
+            f"({mode}) - DHCP did not complete"
+            + (f"; dhcpcd log: {detail}" if detail else "")
+        )
+
+    async def _recent_dhcpcd_log(self, interface, lines=6):
+        """dhcpcd's last few journal lines for this interface, joined, or ""
+        if the journal can't be read. Only called on a DHCP failure, so it
+        costs nothing on a normal connect."""
+        ret = await proc.run(
+            ["journalctl", "-t", "dhcpcd", "--since", "-3min", "--no-pager", "-o", "cat"],
+            timeout=5,
+        )
+        if ret.returncode != 0:
+            return ""
+        matching = [l.strip() for l in ret.stdout.splitlines() if l.strip().startswith(f"{interface}:")]
+        return " / ".join(matching[-lines:])
 
     async def _wait_for_interface_ip(self, interface, timeout=None):
         """Poll until `interface` has an IPv4 address, or `timeout` elapses.
@@ -741,31 +1056,36 @@ class WifiMixin:
             await self._wpa_cli(interface, "select_network", net_id)
             await self._wpa_cli(interface, "save_config")
 
-            associated = await self._wait_for_wpa_state(interface, "COMPLETED", timeout=60, expected_bssid=bssid)
+            associated = await self._wait_for_wpa_state(
+                interface, "COMPLETED", timeout=60, max_timeout=self.WPA_ASSOC_MAX_SECONDS,
+                expected_bssid=bssid,
+                scan_target={
+                    "ssid": ssid, "bssid": bssid, "secured": bool(password),
+                    "freq": self._freq_for_channel(channel) if channel else None,
+                },
+            )
+            if not associated:
+                # Take this attempt's network back out. Left in place, the
+                # network stays selected and wpa_supplicant keeps scanning
+                # for it after we have already reported failure - and when it
+                # does get there, the system dhcpcd picks the interface up
+                # too, so the radio ends up connected behind a
+                # `connected: false` result. Removing it makes the reported
+                # outcome the real one (and stops network blocks from
+                # piling up in the config across failed attempts).
+                await self._wpa_cli(interface, "remove_network", net_id)
+                await self._wpa_cli(interface, "save_config")
             ip_address = None
             dhcp_output = ""
             if associated:
-                # detach_output: dhcpcd daemonizes, and a daemon holding our
-                # stdout/stderr pipes open kept communicate() waiting out the
-                # full timeout below on calls that had already done their job
-                # - see proc.run_hard.
-                dhcp_ret = await proc.run_hard(
-                    ["dhcpcd", "-n", "-t", "30", interface], timeout=35, detach_output=True,
-                )
-                dhcp_output = (dhcp_ret.stdout or dhcp_ret.stderr).strip()
-                # Not a single read: dhcpcd returning does not mean a lease
-                # is in place - see _wait_for_interface_ip.
-                ip_address = await self._wait_for_interface_ip(interface)
+                ip_address, dhcp_output, dhcp_failure = await self._obtain_dhcp_lease(interface)
                 if not ip_address:
                     # Association worked, DHCP did not. Worth naming
                     # explicitly: it is the one failure here that says the
                     # radio and the PSK were both fine, so the next place to
                     # look is the AP's DHCP server (or a client cap it
                     # enforces by handing out no lease), not the wifi config.
-                    self.last_wpa_failure = (
-                        f"associated but no IPv4 address after "
-                        f"{self.DHCP_IP_WAIT_SECONDS}s - DHCP did not complete"
-                    )
+                    self.last_wpa_failure = dhcp_failure
 
         connected = associated and bool(ip_address)
 
