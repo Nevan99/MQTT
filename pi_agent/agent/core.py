@@ -184,11 +184,11 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
         # asked the same question moments ago.
         self._link_info_cache = {}
 
-        # wifi7_capable()'s cache - see that method (wifi.py). phy name ->
-        # bool. A radio's capabilities never change while it's plugged in,
+        # max_standard_capable()'s cache - see that method (wifi.py). phy
+        # name -> standard. A radio's capabilities never change while it's plugged in,
         # and a replugged dongle comes back as a new phyN, so there's no
         # invalidation to do.
-        self._wifi7_capable_cache = {}
+        self._max_standard_cache = {}
 
     # --- MQTT plumbing ---------------------------------------------------
 

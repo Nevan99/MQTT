@@ -42,7 +42,7 @@ class WifiMixin:
             result = {
                 "interface": interface,
                 "connected": False,
-                "wifi7_capable": await self.wifi7_capable(interface),
+                **(await self._radio_capability_fields(interface)),
             }
             self._cache_link_info(interface, result)
             return result
@@ -74,31 +74,51 @@ class WifiMixin:
         }
         result.update(await self._wpa_link_extras(interface))
         result["radio_type"] = self._radio_type(result.get("wifi_generation"), out, result.get("band"))
-        result["wifi7_capable"] = await self.wifi7_capable(interface)
+        result.update(await self._radio_capability_fields(interface))
         self._cache_link_info(interface, result)
         return result
 
-    async def wifi7_capable(self, interface):
-        """Whether this interface's radio can associate as a Wi-Fi 7
-        (802.11be/EHT) station - i.e. some band of its wiphy lists `managed`
-        under "EHT Iftypes" in `iw phy <phy> info`. This is the radio's
+    async def _radio_capability_fields(self, interface):
+        max_standard = await self.max_standard_capable(interface)
+        return {
+            "max_standard_capable": max_standard,
+            # Kept for consumers that predate max_standard_capable.
+            "wifi7_capable": None if max_standard is None else max_standard == "be",
+        }
+
+    async def max_standard_capable(self, interface):
+        """Highest 802.11 standard this interface's radio can associate at
+        as a station - "be", "ax", "ac", "n" or "legacy" (a/b/g only) -
+        from `iw phy <phy> info`: `managed` listed under "EHT Iftypes" /
+        "HE Iftypes" for be/ax, any band's "VHT Capabilities" for ac, and
+        an HT "Capabilities: 0x.." line for n. This is the radio's
         capability, not what the current association negotiated (that's
-        radio_type/wifi_generation). Requires iw >= 6.x to print EHT
-        iftypes at all; install.sh makes sure of that. None if the interface
-        has no wiphy (not wireless, or gone)."""
+        radio_type/wifi_generation). EHT needs iw >= 6.x to be printed at
+        all; install.sh makes sure of that. None if the interface has no
+        wiphy (not wireless, or gone)."""
         try:
             phy = os.path.basename(os.readlink(f"/sys/class/net/{interface}/phy80211"))
         except OSError:
             return None
-        cached = self._wifi7_capable_cache.get(phy)
+        cached = self._max_standard_cache.get(phy)
         if cached is not None:
             return cached
         ret = await proc.run(["iw", "phy", phy, "info"])
         if ret.returncode != 0:
             return None
-        capable = bool(re.search(r'^\s*EHT Iftypes:.*\bmanaged\b', ret.stdout, re.MULTILINE))
-        self._wifi7_capable_cache[phy] = capable
-        return capable
+        info = ret.stdout
+        if re.search(r'^\s*EHT Iftypes:.*\bmanaged\b', info, re.MULTILINE):
+            standard = "be"
+        elif re.search(r'^\s*HE Iftypes:.*\bmanaged\b', info, re.MULTILINE):
+            standard = "ax"
+        elif re.search(r'^\s*VHT Capabilities', info, re.MULTILINE):
+            standard = "ac"
+        elif re.search(r'^\s*Capabilities: 0x[0-9a-fA-F]+', info, re.MULTILINE):
+            standard = "n"
+        else:
+            standard = "legacy"
+        self._max_standard_cache[phy] = standard
+        return standard
 
     # wpa_supplicant's `wifi_generation` status field (recent wpa_supplicant
     # + driver support only) is the most direct source: it names the PHY

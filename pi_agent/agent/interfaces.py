@@ -318,6 +318,7 @@ class InterfacesMixin:
                 "channel_width": link.get("channel_width"),
                 "radio_type": link.get("radio_type"),
                 "wifi7_capable": link.get("wifi7_capable"),
+                "max_standard_capable": link.get("max_standard_capable"),
             })
         result["command_id"] = str(uuid.uuid4())
         result["action"] = "interface_status"
