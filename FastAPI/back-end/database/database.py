@@ -59,6 +59,7 @@ def _add_missing_columns():
             ("wpa_state", "VARCHAR"), ("address", "VARCHAR"), ("wifi_generation", "VARCHAR"),
             ("noise_dbm", "INTEGER"), ("avg_signal_dbm", "INTEGER"), ("link_speed_mbps", "INTEGER"),
             ("channel_width", "VARCHAR"), ("radio_type", "VARCHAR"), ("wifi7_capable", "BOOLEAN"),
+            ("max_standard_capable", "VARCHAR"),
             ("mlo", "BOOLEAN"), ("mld_address", "VARCHAR"), ("ap_mld_address", "VARCHAR"),
             ("mlo_links_json", "VARCHAR"),
         ):

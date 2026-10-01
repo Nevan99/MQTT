@@ -63,6 +63,7 @@ def get_all_interface_status(session: Session = Depends(get_session)):
             "avg_signal_dbm": r.avg_signal_dbm, "link_speed_mbps": r.link_speed_mbps,
             "channel_width": r.channel_width, "radio_type": r.radio_type,
             "wifi7_capable": r.wifi7_capable,
+            "max_standard_capable": r.max_standard_capable,
             **_wifi7_link_fields(r),
             "updated_at": r.updated_at.isoformat(),
         }
@@ -403,6 +404,7 @@ def get_interface_status(pi_id: str, session: Session = Depends(get_session)):
             "avg_signal_dbm": r.avg_signal_dbm, "link_speed_mbps": r.link_speed_mbps,
             "channel_width": r.channel_width, "radio_type": r.radio_type,
             "wifi7_capable": r.wifi7_capable,
+            "max_standard_capable": r.max_standard_capable,
             **_wifi7_link_fields(r),
             "updated_at": r.updated_at.isoformat(),
         }

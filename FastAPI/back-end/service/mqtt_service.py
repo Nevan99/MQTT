@@ -224,6 +224,7 @@ class MQTTService:
             "key_mgmt", "pairwise_cipher", "group_cipher", "wpa_state",
             "address", "wifi_generation", "noise_dbm", "avg_signal_dbm",
             "link_speed_mbps", "channel_width", "radio_type", "wifi7_capable",
+            "max_standard_capable",
             "mlo", "mld_address", "ap_mld_address",
         ):
             if field in payload:

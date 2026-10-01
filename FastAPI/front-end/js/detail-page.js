@@ -160,17 +160,40 @@ function isWifiInterface(name) {
   return /^(wl|wlan)/.test(name);
 }
 
-// "wifi7" tag shown next to an interface's name when its radio can connect
-// as a Wi-Fi 7 (802.11be) station - pi_agent's wifi7_capable, a radio
-// capability carried on both link_info results and the InterfaceStatus
-// buffer. Left untouched while that's unknown (null/missing) so a reply
-// without the field doesn't flicker an already-shown tag away.
-const WIFI7_TAG_HTML = '<span class="badge wifi7-tag" title="Radio supports Wi-Fi 7 (802.11be) connections">wifi7</span>';
+// "wifiN" tag shown next to an interface's name: the highest standard its
+// radio can connect at as a station - pi_agent's max_standard_capable, a
+// radio capability carried on both link_info results and the
+// InterfaceStatus buffer. Left untouched while that's unknown (null/missing)
+// so a reply without the field doesn't flicker an already-shown tag away.
+// Falls back to the older boolean wifi7_capable from not-yet-updated agents.
+const WIFI_STD_TAGS = {
+  be: ['wifi7', '802.11be (Wi-Fi 7)'],
+  ax: ['wifi6', '802.11ax (Wi-Fi 6)'],
+  ac: ['wifi5', '802.11ac (Wi-Fi 5)'],
+  n: ['wifi4', '802.11n (Wi-Fi 4)'],
+  legacy: ['legacy', '802.11a/b/g only'],
+};
 
-function applyWifi7Tag(card, status) {
-  const tag = card && card.querySelector('.wifi7-tag');
-  if (!tag || !status || status.wifi7_capable == null) return;
-  tag.classList.toggle('hidden', !status.wifi7_capable);
+function maxStandardOf(status) {
+  if (!status) return null;
+  if (status.max_standard_capable) return status.max_standard_capable;
+  return status.wifi7_capable ? 'be' : null;
+}
+
+function wifiStdTagHtml(standard) {
+  const [label, desc] = WIFI_STD_TAGS[standard] || ['', ''];
+  const hidden = label ? '' : ' hidden';
+  return `<span class="badge wifi-std-tag${hidden}" title="Radio supports up to ${desc} connections">${label}</span>`;
+}
+
+function applyWifiStdTag(card, status) {
+  const tag = card && card.querySelector('.wifi-std-tag');
+  const standard = maxStandardOf(status);
+  if (!tag || !WIFI_STD_TAGS[standard]) return;
+  const [label, desc] = WIFI_STD_TAGS[standard];
+  tag.textContent = label;
+  tag.title = `Radio supports up to ${desc} connections`;
+  tag.classList.remove('hidden');
 }
 
 // Info-table rows for a Wi-Fi 7 connection's addressing (see pi_agent
@@ -273,7 +296,7 @@ async function refreshWifiIcon(piId, iface) {
     el.classList.add(connected ? 'wifi-connected' : 'wifi-disconnected');
     el.title = connected ? `Wi-Fi connected${result.ssid ? ' — ' + result.ssid : ''}` : 'Wi-Fi not connected';
     const card = el.closest('.pd-iface-card');
-    applyWifi7Tag(card, result);
+    applyWifiStdTag(card, result);
     const mark = card && card.querySelector('.pd-iface-connected-mark');
     if (mark) {
       mark.classList.toggle('hidden', !connected);
@@ -320,7 +343,7 @@ async function refreshDetailInterfaceStatusBuffer(piId) {
     el.classList.add(connected ? 'wifi-connected' : 'wifi-disconnected');
     el.title = connected ? `Wi-Fi connected${status.ssid ? ' — ' + status.ssid : ''}` : 'Wi-Fi not connected';
     const card = el.closest('.pd-iface-card');
-    applyWifi7Tag(card, status);
+    applyWifiStdTag(card, status);
     const mark = card && card.querySelector('.pd-iface-connected-mark');
     if (mark) {
       mark.classList.toggle('hidden', !connected);
@@ -833,7 +856,7 @@ function renderDetailInterfaceList(piId) {
   list.innerHTML = interfaces.length ? interfaces.map(name => `
     <div class="pd-iface-card" data-iface="${name}">
       <div class="pd-iface-header">
-        <span class="pd-iface-name">${name}${isWifiInterface(name) ? WIFI7_TAG_HTML.replace('wifi7-tag', 'wifi7-tag hidden') : ''}</span>
+        <span class="pd-iface-name">${name}${isWifiInterface(name) ? wifiStdTagHtml(null) : ''}</span>
         ${isWifiInterface(name) ? `
           <span class="wifi-icon wifi-unknown" data-iface="${name}" title="checking…">${WIFI_ICON_SVG}</span>
           <span class="pd-iface-connected-mark badge badge-online hidden" data-iface="${name}"></span>

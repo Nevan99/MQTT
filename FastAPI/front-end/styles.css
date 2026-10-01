@@ -86,7 +86,7 @@
   .pd-iface-card.hidden { display: none; }
   .pd-iface-header { display: flex; align-items: center; gap: 0.4rem; padding: 0.4rem 0.5rem; font-size: 0.85rem; color: #ddd; cursor: pointer; }
   .pd-iface-header:hover { background: #202020; }
-  .pd-iface-name { flex: 1 1 auto; }
+  .pd-iface-name { flex: 1 1 auto; display: inline-flex; align-items: center; }
   .pd-iface-toggle { display: inline-flex; align-items: center; color: #888; }
   .pd-iface-body { padding: 0 0.6rem 0.6rem; border-top: 1px solid #262626; }
   .pd-iface-body.hidden { display: none; border-top: none; }
@@ -233,8 +233,8 @@
   .badge-online { background: #163; }
   .badge-offline { background: #522; }
   .badge-unassigned { background: #333; color: #999; }
-  .wifi7-tag { margin-left: 0.4rem; padding: 0.05rem 0.4rem; font-size: 0.68rem; font-weight: 600; background: #2a3f66; color: #9cf; vertical-align: middle; }
-  .wifi7-tag.hidden { display: none; }
+  .wifi-std-tag { margin-left: 0.4rem; padding: 0.05rem 0.4rem; font-size: 0.68rem; font-weight: 600; line-height: 1.4; background: #2a3f66; color: #9cf; vertical-align: middle; }
+  .wifi-std-tag.hidden { display: none; }
   label { display: block; font-size: 0.8rem; color: #aaa; margin: 0.6rem 0 0.2rem; }
   .field { width: 100%; }
   .row { display: flex; gap: 0.5rem; }

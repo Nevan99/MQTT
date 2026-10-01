@@ -127,6 +127,9 @@ class InterfaceStatus(SQLModel, table=True):
     # Radio capability (EHT station support), not the current link's
     # standard - see pi_agent WifiMixin.wifi7_capable.
     wifi7_capable: Optional[bool] = None
+    # Highest standard the radio supports ("be"/"ax"/"ac"/"n"/"legacy") -
+    # see pi_agent WifiMixin.max_standard_capable.
+    max_standard_capable: Optional[str] = None
     # Wi-Fi 7 MLD/per-link addressing of the current association - see
     # pi_agent WifiMixin._wifi7_link_fields. mlo_links_json holds the
     # per-link list ([{link_id, frequency_mhz, band, sta_address,
