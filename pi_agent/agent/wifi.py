@@ -72,7 +72,7 @@ class WifiMixin:
             "gateway": await self._default_gateway_for(interface),
             "raw_output": out.strip(),
         }
-        result.update(await self._wpa_link_extras(interface))
+        result.update(await self._wpa_link_extras(interface, out))
         result["radio_type"] = self._radio_type(result.get("wifi_generation"), out, result.get("band"))
         result.update(self._wifi7_link_fields(result))
         result.update(await self._radio_capability_fields(interface))
@@ -159,7 +159,7 @@ class WifiMixin:
             return "802.11g"
         return None
 
-    async def _wpa_link_extras(self, interface):
+    async def _wpa_link_extras(self, interface, link_out=""):
         """Fields `iw dev link` doesn't carry, pulled from wpa_supplicant
         instead: security/auth details from `wpa_cli status`, and
         noise/link-speed/average-RSSI from `wpa_cli signal_poll` (driver-
@@ -183,7 +183,7 @@ class WifiMixin:
             # _wifi7_link_fields.
             extras["ap_mld_address"] = status.get("ap_mld_addr")
             if extras["ap_mld_address"]:
-                extras["mlo_links"] = await self._mlo_links(interface)
+                extras["mlo_links"] = await self._mlo_links(interface, link_out)
 
         signal_ret = await self._wpa_cli(interface, "signal_poll")
         if signal_ret.returncode == 0:
@@ -249,13 +249,22 @@ class WifiMixin:
             "mlo_links": links,
         }
 
-    async def _mlo_links(self, interface):
-        """Active links of an MLO association, from wpa_supplicant's
-        `mlo_status` (link_id / freq / ap_link_addr / sta_link_addr blocks),
-        falling back to `iw dev <if> info`'s valid_links section - which has
-        each link's own address and channel but not the AP's side. Only
-        called when STATUS reported an AP MLD address, so a normal
-        single-link connection never pays for the extra call."""
+    async def _mlo_links(self, interface, link_out=""):
+        """Links of an MLO association, from wpa_supplicant's `mlo_status`
+        (link_id / freq / ap_link_addr / sta_link_addr blocks), falling back
+        to `iw dev <if> info`'s valid_links section - which has each link's
+        own address but a channel only for links that are currently active.
+        Whatever is still missing (the AP's side, and the frequency of an
+        idle link) is filled in from `iw dev <if> link`'s per-link
+        "Link N BSSID ... freq: ..." lines (link_out, the output
+        get_link_info already has). Only called when STATUS reported an AP
+        MLD address, so a normal single-link connection never pays for the
+        extra call.
+
+        "active" is only known from the iw fallback: True when the link has
+        its own channel there, False when it's set up but idle. Radios that
+        can only use one link at a time (e.g. RTL8922AU) leave the other
+        links idle - present in the association, carrying no traffic."""
         links = []
         ret = await self._wpa_cli(interface, "mlo_status")
         if ret.returncode == 0:
@@ -284,8 +293,22 @@ class WifiMixin:
                     "link_id": int(m.group(1)),
                     "sta_address": m.group(2).lower(),
                     "frequency_mhz": int(m.group(3)) if m.group(3) else None,
+                    "active": bool(m.group(3)),
                 })
+        iw_links = {
+            int(m.group(1)): (m.group(2).lower(), int(float(m.group(3))))
+            for m in re.finditer(
+                r'Link\s+(\d+)\s+BSSID\s+([0-9a-fA-F:]{17})\s*\n\s*freq:\s*([\d.]+)',
+                link_out or "",
+            )
+        }
         for link in links:
+            ap_address, frequency_mhz = iw_links.get(link["link_id"], (None, None))
+            if not link.get("ap_address"):
+                link["ap_address"] = ap_address
+            if not link.get("frequency_mhz"):
+                link["frequency_mhz"] = frequency_mhz
+            link.setdefault("active", None)
             link.setdefault("frequency_mhz", None)
             link.setdefault("sta_address", None)
             link.setdefault("ap_address", None)
