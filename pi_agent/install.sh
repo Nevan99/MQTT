@@ -12,6 +12,35 @@ if [[ ! -f "$SCRIPT_DIR/.env" ]]; then
     exit 1
 fi
 
+# iw older than 6.7 can't print Wi-Fi 7 (EHT) capabilities, so make sure the
+# iw on PATH is at least IW_MIN_VERSION; otherwise build IW_INSTALL_VERSION
+# from the kernel.org release tarball. It goes into /usr/local/sbin, which
+# comes before /usr/sbin on PATH (systemd's default PATH included), so the
+# distro package's /usr/sbin/iw stays untouched and apt never fights it.
+# Done before the service restart below so the agent comes up on the new iw.
+IW_MIN_VERSION="6.7"
+IW_INSTALL_VERSION="6.9"
+iw_version() {
+    iw --version 2>/dev/null | awk '{print $3}'
+}
+CURRENT_IW="$(iw_version || true)"
+if [[ -n "$CURRENT_IW" ]] && \
+   [[ "$(printf '%s\n%s\n' "$IW_MIN_VERSION" "$CURRENT_IW" | sort -V | head -n1)" == "$IW_MIN_VERSION" ]]; then
+    echo "iw $CURRENT_IW is >= $IW_MIN_VERSION - not upgrading"
+else
+    echo "iw ${CURRENT_IW:-not found} is older than $IW_MIN_VERSION - building iw $IW_INSTALL_VERSION"
+    sudo apt-get install -y build-essential pkg-config libnl-3-dev libnl-genl-3-dev curl xz-utils
+    IW_BUILD_DIR="$(mktemp -d)"
+    trap 'rm -rf "$IW_BUILD_DIR"' EXIT
+    curl -fsSL "https://mirrors.edge.kernel.org/pub/software/network/iw/iw-$IW_INSTALL_VERSION.tar.xz" \
+        | tar -xJ -C "$IW_BUILD_DIR"
+    make -C "$IW_BUILD_DIR/iw-$IW_INSTALL_VERSION" -j"$(nproc)"
+    sudo make -C "$IW_BUILD_DIR/iw-$IW_INSTALL_VERSION" install \
+        PREFIX=/usr/local SBINDIR=/usr/local/sbin MANDIR=/usr/local/share/man
+    hash -r
+    echo "iw is now $(iw_version)"
+fi
+
 VENV_DIR="$(cd "$SCRIPT_DIR/../.venv" && pwd)"
 sed -e "s#__PI_AGENT_DIR__#$SCRIPT_DIR#g" -e "s#__VENV_DIR__#$VENV_DIR#g" \
     "$SCRIPT_DIR/$UNIT_NAME" | sudo tee "/etc/systemd/system/$UNIT_NAME" > /dev/null
