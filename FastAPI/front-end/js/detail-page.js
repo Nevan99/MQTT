@@ -160,6 +160,19 @@ function isWifiInterface(name) {
   return /^(wl|wlan)/.test(name);
 }
 
+// "wifi7" tag shown next to an interface's name when its radio can connect
+// as a Wi-Fi 7 (802.11be) station - pi_agent's wifi7_capable, a radio
+// capability carried on both link_info results and the InterfaceStatus
+// buffer. Left untouched while that's unknown (null/missing) so a reply
+// without the field doesn't flicker an already-shown tag away.
+const WIFI7_TAG_HTML = '<span class="badge wifi7-tag" title="Radio supports Wi-Fi 7 (802.11be) connections">wifi7</span>';
+
+function applyWifi7Tag(card, status) {
+  const tag = card && card.querySelector('.wifi7-tag');
+  if (!tag || !status || status.wifi7_capable == null) return;
+  tag.classList.toggle('hidden', !status.wifi7_capable);
+}
+
 // Best-effort name-based guess for a monitor-mode interface (mon0,
 // wlan0mon, etc.) - used only for the quick synchronous checks (which
 // interfaces get a default band/channel control, the bulk action's fan-out)
@@ -242,6 +255,7 @@ async function refreshWifiIcon(piId, iface) {
     el.classList.add(connected ? 'wifi-connected' : 'wifi-disconnected');
     el.title = connected ? `Wi-Fi connected${result.ssid ? ' — ' + result.ssid : ''}` : 'Wi-Fi not connected';
     const card = el.closest('.pd-iface-card');
+    applyWifi7Tag(card, result);
     const mark = card && card.querySelector('.pd-iface-connected-mark');
     if (mark) {
       mark.classList.toggle('hidden', !connected);
@@ -288,6 +302,7 @@ async function refreshDetailInterfaceStatusBuffer(piId) {
     el.classList.add(connected ? 'wifi-connected' : 'wifi-disconnected');
     el.title = connected ? `Wi-Fi connected${status.ssid ? ' — ' + status.ssid : ''}` : 'Wi-Fi not connected';
     const card = el.closest('.pd-iface-card');
+    applyWifi7Tag(card, status);
     const mark = card && card.querySelector('.pd-iface-connected-mark');
     if (mark) {
       mark.classList.toggle('hidden', !connected);
@@ -799,7 +814,7 @@ function renderDetailInterfaceList(piId) {
   list.innerHTML = interfaces.length ? interfaces.map(name => `
     <div class="pd-iface-card" data-iface="${name}">
       <div class="pd-iface-header">
-        <span class="pd-iface-name">${name}</span>
+        <span class="pd-iface-name">${name}${isWifiInterface(name) ? WIFI7_TAG_HTML.replace('wifi7-tag', 'wifi7-tag hidden') : ''}</span>
         ${isWifiInterface(name) ? `
           <span class="wifi-icon wifi-unknown" data-iface="${name}" title="checking…">${WIFI_ICON_SVG}</span>
           <span class="pd-iface-connected-mark badge badge-online hidden" data-iface="${name}"></span>

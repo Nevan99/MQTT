@@ -124,6 +124,9 @@ class InterfaceStatus(SQLModel, table=True):
     link_speed_mbps: Optional[int] = None
     channel_width: Optional[str] = None
     radio_type: Optional[str] = None
+    # Radio capability (EHT station support), not the current link's
+    # standard - see pi_agent WifiMixin.wifi7_capable.
+    wifi7_capable: Optional[bool] = None
     updated_at: datetime = Field(default_factory=utcnow)
 
 

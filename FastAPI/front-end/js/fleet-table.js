@@ -936,6 +936,7 @@ async function fetchInterfaceStatusBuffer(piId) {
 
 function applyWifiIconStatus(cardState, status) {
   if (!isWifiInterface(cardState.iface) || !cardState.wifiIconEl) return;
+  applyWifi7Tag(cardState.card, status);
   const connected = !!(status && status.connected);
   cardState.wifiIconEl.classList.remove('wifi-unknown', 'wifi-connected', 'wifi-disconnected');
   cardState.wifiIconEl.classList.add(connected ? 'wifi-connected' : 'wifi-disconnected');
@@ -972,6 +973,7 @@ async function refreshFleetWifiIcon(piId, entry, cardState) {
     const data = await res.json();
     const result = await awaitCommandResult(data.command_id, 10);
     entry.linkInfoCache[cardState.iface] = result;
+    applyWifi7Tag(cardState.card, result);
     const connected = !!(result && result.connected);
     cardState.wifiIconEl.classList.remove('wifi-unknown', 'wifi-connected', 'wifi-disconnected');
     cardState.wifiIconEl.classList.add(connected ? 'wifi-connected' : 'wifi-disconnected');
@@ -1018,7 +1020,7 @@ function buildFleetIfaceCard(piId, entry, iface) {
   card.innerHTML = `
     <div class="pd-iface-header">
       <input type="checkbox" class="fleet-iface-primary-checkbox" title="Use as primary interface for multi-target actions">
-      <span class="pd-iface-name">${iface}</span>
+      <span class="pd-iface-name">${iface}${isWifi ? WIFI7_TAG_HTML.replace('wifi7-tag', 'wifi7-tag hidden') : ''}</span>
       ${isWifi ? `
         <span class="wifi-icon wifi-unknown" title="checking…">${WIFI_ICON_SVG}</span>
         <span class="pd-iface-connected-mark badge badge-online hidden"></span>

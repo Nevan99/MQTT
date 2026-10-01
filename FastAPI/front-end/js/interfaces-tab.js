@@ -107,7 +107,7 @@ function applyInterfacesFilter() {
   const sorted = interfacesSortRows(filtered);
   body.innerHTML = sorted.map(r => `
     <tr>${INTERFACES_TAB_COLUMNS.map(([key, get]) =>
-      `<td>${interfacesTabCellValue(get ? get(r) : r[key])}</td>`
+      `<td>${interfacesTabCellValue(get ? get(r) : r[key])}${key === 'interface' && r.wifi7_capable ? ' ' + WIFI7_TAG_HTML : ''}</td>`
     ).join('')}</tr>
   `).join('');
 }

@@ -233,6 +233,8 @@
   .badge-online { background: #163; }
   .badge-offline { background: #522; }
   .badge-unassigned { background: #333; color: #999; }
+  .wifi7-tag { margin-left: 0.4rem; padding: 0.05rem 0.4rem; font-size: 0.68rem; font-weight: 600; background: #2a3f66; color: #9cf; vertical-align: middle; }
+  .wifi7-tag.hidden { display: none; }
   label { display: block; font-size: 0.8rem; color: #aaa; margin: 0.6rem 0 0.2rem; }
   .field { width: 100%; }
   .row { display: flex; gap: 0.5rem; }

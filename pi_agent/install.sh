@@ -12,14 +12,16 @@ if [[ ! -f "$SCRIPT_DIR/.env" ]]; then
     exit 1
 fi
 
-# iw older than 6.7 can't print Wi-Fi 7 (EHT) capabilities, so make sure the
-# iw on PATH is at least IW_MIN_VERSION; otherwise build IW_INSTALL_VERSION
+# iw older than 6.17 can't decode the Wi-Fi 7 (EHT capabilities/operation,
+# Multi-Link) elements in scan results - 6.9 only prints the local phy's EHT
+# capabilities and hides the APs' EHT elements as unknown extension IDs. So
+# make sure the iw on PATH is at least IW_MIN_VERSION; otherwise build IW_INSTALL_VERSION
 # from the kernel.org release tarball. It goes into /usr/local/sbin, which
 # comes before /usr/sbin on PATH (systemd's default PATH included), so the
 # distro package's /usr/sbin/iw stays untouched and apt never fights it.
 # Done before the service restart below so the agent comes up on the new iw.
-IW_MIN_VERSION="6.7"
-IW_INSTALL_VERSION="6.9"
+IW_MIN_VERSION="6.17"
+IW_INSTALL_VERSION="6.17"
 iw_version() {
     iw --version 2>/dev/null | awk '{print $3}'
 }

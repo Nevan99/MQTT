@@ -39,7 +39,11 @@ class WifiMixin:
         )).stdout
 
         if out.startswith("Not connected"):
-            result = {"interface": interface, "connected": False}
+            result = {
+                "interface": interface,
+                "connected": False,
+                "wifi7_capable": await self.wifi7_capable(interface),
+            }
             self._cache_link_info(interface, result)
             return result
 
@@ -70,8 +74,31 @@ class WifiMixin:
         }
         result.update(await self._wpa_link_extras(interface))
         result["radio_type"] = self._radio_type(result.get("wifi_generation"), out, result.get("band"))
+        result["wifi7_capable"] = await self.wifi7_capable(interface)
         self._cache_link_info(interface, result)
         return result
+
+    async def wifi7_capable(self, interface):
+        """Whether this interface's radio can associate as a Wi-Fi 7
+        (802.11be/EHT) station - i.e. some band of its wiphy lists `managed`
+        under "EHT Iftypes" in `iw phy <phy> info`. This is the radio's
+        capability, not what the current association negotiated (that's
+        radio_type/wifi_generation). Requires iw >= 6.x to print EHT
+        iftypes at all; install.sh makes sure of that. None if the interface
+        has no wiphy (not wireless, or gone)."""
+        try:
+            phy = os.path.basename(os.readlink(f"/sys/class/net/{interface}/phy80211"))
+        except OSError:
+            return None
+        cached = self._wifi7_capable_cache.get(phy)
+        if cached is not None:
+            return cached
+        ret = await proc.run(["iw", "phy", phy, "info"])
+        if ret.returncode != 0:
+            return None
+        capable = bool(re.search(r'^\s*EHT Iftypes:.*\bmanaged\b', ret.stdout, re.MULTILINE))
+        self._wifi7_capable_cache[phy] = capable
+        return capable
 
     # wpa_supplicant's `wifi_generation` status field (recent wpa_supplicant
     # + driver support only) is the most direct source: it names the PHY

@@ -223,7 +223,7 @@ class MQTTService:
             "signal_dbm", "rx_bitrate_mbps", "tx_bitrate_mbps", "gateway",
             "key_mgmt", "pairwise_cipher", "group_cipher", "wpa_state",
             "address", "wifi_generation", "noise_dbm", "avg_signal_dbm",
-            "link_speed_mbps", "channel_width", "radio_type",
+            "link_speed_mbps", "channel_width", "radio_type", "wifi7_capable",
         ):
             if field in payload:
                 setattr(row, field, payload[field])
