@@ -319,6 +319,14 @@ class InterfacesMixin:
                 "radio_type": link.get("radio_type"),
                 "wifi7_capable": link.get("wifi7_capable"),
                 "max_standard_capable": link.get("max_standard_capable"),
+                # Wi-Fi 7 MLD/per-link addressing - see
+                # WifiMixin._wifi7_link_fields. Sent as None (not omitted)
+                # when not applicable, so the backend clears them on a
+                # disconnect or a move to a non-Wi-Fi-7 AP.
+                "mlo": link.get("mlo"),
+                "mld_address": link.get("mld_address"),
+                "ap_mld_address": link.get("ap_mld_address"),
+                "mlo_links": link.get("mlo_links"),
             })
         result["command_id"] = str(uuid.uuid4())
         result["action"] = "interface_status"

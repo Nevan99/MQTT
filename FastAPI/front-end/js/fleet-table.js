@@ -719,6 +719,7 @@ function renderFleetIfaceBody(entry, cardState) {
     if (link.gateway) rows.push(['Gateway', link.gateway]);
     if (link.key_mgmt) rows.push(['Key mgmt', link.key_mgmt]);
     if (link.radio_type) rows.push(['Radio type', link.radio_type]);
+    rows.push(...wifi7LinkRows(link));
   }
   cardState.infoEl.innerHTML = rows.length
     ? `<table class="result-table">${rows.map(([k, v]) =>

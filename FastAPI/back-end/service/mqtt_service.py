@@ -224,9 +224,13 @@ class MQTTService:
             "key_mgmt", "pairwise_cipher", "group_cipher", "wpa_state",
             "address", "wifi_generation", "noise_dbm", "avg_signal_dbm",
             "link_speed_mbps", "channel_width", "radio_type", "wifi7_capable",
+            "mlo", "mld_address", "ap_mld_address",
         ):
             if field in payload:
                 setattr(row, field, payload[field])
+        if "mlo_links" in payload:
+            links = payload["mlo_links"]
+            row.mlo_links_json = json.dumps(links) if links is not None else None
         row.updated_at = datetime.now(timezone.utc)
         session.add(row)
 

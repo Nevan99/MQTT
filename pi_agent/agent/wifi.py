@@ -74,6 +74,7 @@ class WifiMixin:
         }
         result.update(await self._wpa_link_extras(interface))
         result["radio_type"] = self._radio_type(result.get("wifi_generation"), out, result.get("band"))
+        result.update(self._wifi7_link_fields(result))
         result.update(await self._radio_capability_fields(interface))
         self._cache_link_info(interface, result)
         return result
@@ -178,6 +179,11 @@ class WifiMixin:
             extras["ip_address"] = status.get("ip_address")
             extras["address"] = status.get("address")
             extras["wifi_generation"] = status.get("wifi_generation")
+            # Only present on a multi-link (MLO) association - see
+            # _wifi7_link_fields.
+            extras["ap_mld_address"] = status.get("ap_mld_addr")
+            if extras["ap_mld_address"]:
+                extras["mlo_links"] = await self._mlo_links(interface)
 
         signal_ret = await self._wpa_cli(interface, "signal_poll")
         if signal_ret.returncode == 0:
@@ -202,6 +208,89 @@ class WifiMixin:
             extras["channel_width"] = signal.get("WIDTH")
 
         return extras
+
+    @staticmethod
+    def _wifi7_link_fields(link):
+        """MLD/per-link addressing for a Wi-Fi 7 association.
+
+        A multi-link (MLO) client has one MLD address - what DHCP, ARP and
+        the AP's client list know it by, and what this interface's own MAC
+        is - plus one address per link, which is what actually appears over
+        the air on that link. The AP side mirrors it: one AP MLD address,
+        one BSSID per link. wpa_supplicant only reports ap_mld_addr for an
+        MLO association, so that is what "mlo" keys off.
+
+        Fields (all None unless the connection is 802.11be or MLO):
+          mlo            - True for a multi-link association, False for a
+                           Wi-Fi 7 single-link one
+          mld_address    - this client's MLD address (MLO only)
+          ap_mld_address - the AP's MLD address (MLO only)
+          mlo_links      - [{link_id, frequency_mhz, band, sta_address,
+                           ap_address}], one per active link; a single-link
+                           Wi-Fi 7 connection reports its one link here too,
+                           so the UI always has a per-link view to show.
+        """
+        mlo = bool(link.get("ap_mld_address"))
+        if not mlo and link.get("radio_type") != "802.11be":
+            return {"mlo": None, "mld_address": None, "ap_mld_address": None, "mlo_links": None}
+        links = link.get("mlo_links") or []
+        if not links:
+            links = [{
+                "link_id": None,
+                "frequency_mhz": link.get("frequency_mhz"),
+                "band": link.get("band"),
+                "sta_address": link.get("address"),
+                "ap_address": link.get("bssid"),
+            }]
+        return {
+            "mlo": mlo,
+            "mld_address": link.get("address") if mlo else None,
+            "ap_mld_address": link.get("ap_mld_address") if mlo else None,
+            "mlo_links": links,
+        }
+
+    async def _mlo_links(self, interface):
+        """Active links of an MLO association, from wpa_supplicant's
+        `mlo_status` (link_id / freq / ap_link_addr / sta_link_addr blocks),
+        falling back to `iw dev <if> info`'s valid_links section - which has
+        each link's own address and channel but not the AP's side. Only
+        called when STATUS reported an AP MLD address, so a normal
+        single-link connection never pays for the extra call."""
+        links = []
+        ret = await self._wpa_cli(interface, "mlo_status")
+        if ret.returncode == 0:
+            current = None
+            for line in ret.stdout.splitlines():
+                key, sep, value = line.strip().partition("=")
+                if not sep:
+                    continue
+                if key == "link_id":
+                    current = {"link_id": int(value) if value.isdigit() else value}
+                    links.append(current)
+                elif current is not None:
+                    if key == "freq":
+                        current["frequency_mhz"] = int(value) if value.isdigit() else None
+                    elif key == "ap_link_addr":
+                        current["ap_address"] = value
+                    elif key == "sta_link_addr":
+                        current["sta_address"] = value
+        if not links:
+            info = (await proc.run(["iw", "dev", interface, "info"])).stdout
+            for m in re.finditer(
+                r'link ID\s+(\d+)\s+link addr\s+([0-9a-fA-F:]{17})(?:\s*\n\s*channel\s+\d+\s+\((\d+)\s*MHz\))?',
+                info,
+            ):
+                links.append({
+                    "link_id": int(m.group(1)),
+                    "sta_address": m.group(2).lower(),
+                    "frequency_mhz": int(m.group(3)) if m.group(3) else None,
+                })
+        for link in links:
+            link.setdefault("frequency_mhz", None)
+            link.setdefault("sta_address", None)
+            link.setdefault("ap_address", None)
+            link["band"] = self._band_label(link["frequency_mhz"]) if link["frequency_mhz"] else None
+        return links
 
     def _cache_link_info(self, interface, result):
         self._link_info_cache[interface] = (asyncio.get_running_loop().time(), result)
@@ -964,6 +1053,14 @@ class WifiMixin:
         "legacy": {"disable_eht": "1", "disable_he": "1", "disable_vht": "1", "disable_ht": "1"},
     }
 
+    # key_mgmt values connect_wifi tries for a password-protected network,
+    # most capable first - see the comment where it's used.
+    PSK_KEY_MGMT_CHAIN = (
+        "WPA-PSK WPA-PSK-SHA256 SAE SAE-EXT-KEY",
+        "WPA-PSK WPA-PSK-SHA256 SAE",
+        "WPA-PSK",
+    )
+
     async def connect_wifi(self, ssid, password=None, interface=None, bssid=None, channel=None,
                             max_standard=None):
         """Connect to a wifi hotspot via wpa_supplicant + dhcpcd - see the
@@ -1068,13 +1165,32 @@ class WifiMixin:
                 # - it's a global setting, not per-network. A build without
                 # SAE support rejects the key_mgmt (FAIL, not an error), in
                 # which case fall back to plain WPA-PSK.
+                #
+                # SAE-EXT-KEY (AKM 24) is listed first for Wi-Fi 7: it is the
+                # AKM Wi-Fi 7 APs use for multi-link (MLO) associations,
+                # paired with GCMP-256, so without it an MLO-capable radio
+                # falls back to a single link (or, on an AP that only offers
+                # AKM 24 on its MLD, doesn't connect at all). wpa_supplicant
+                # sets up the extra links itself when the radio/driver and
+                # the AP both support MLO - there is no per-link config to
+                # add here. Each step down the chain is for a build that
+                # rejects the newer AKM (SAE-EXT-KEY needs 2.11+).
                 await self._wpa_cli(interface, "set", "sae_pwe", "2")
-                key_mgmt_ret = await self._wpa_cli(
-                    interface, "set_network", net_id, "key_mgmt", "WPA-PSK WPA-PSK-SHA256 SAE",
-                )
-                outputs.append(key_mgmt_ret.stdout.strip())
-                if key_mgmt_ret.stdout.strip() != "OK":
-                    outputs.append((await self._wpa_cli(interface, "set_network", net_id, "key_mgmt", "WPA-PSK")).stdout.strip())
+                for key_mgmt in self.PSK_KEY_MGMT_CHAIN:
+                    key_mgmt_ret = await self._wpa_cli(interface, "set_network", net_id, "key_mgmt", key_mgmt)
+                    outputs.append(key_mgmt_ret.stdout.strip())
+                    if key_mgmt_ret.stdout.strip() == "OK":
+                        break
+                if "SAE-EXT-KEY" in key_mgmt and key_mgmt_ret.stdout.strip() == "OK":
+                    # wpa_supplicant's default ciphers (CCMP TKIP) can't
+                    # negotiate the GCMP-256 that AKM 24 normally comes
+                    # with. Widening the list only adds options - the AP's
+                    # strongest mutually supported cipher still wins - and a
+                    # FAIL just leaves the defaults in place.
+                    for param in ("pairwise", "group"):
+                        outputs.append((await self._wpa_cli(
+                            interface, "set_network", net_id, param, "CCMP GCMP-256 GCMP TKIP",
+                        )).stdout.strip())
                 outputs.append((await self._wpa_cli(interface, "set_network", net_id, "ieee80211w", "1")).stdout.strip())
             else:
                 outputs.append((await self._wpa_cli(interface, "set_network", net_id, "key_mgmt", "NONE")).stdout.strip())

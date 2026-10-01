@@ -59,6 +59,8 @@ def _add_missing_columns():
             ("wpa_state", "VARCHAR"), ("address", "VARCHAR"), ("wifi_generation", "VARCHAR"),
             ("noise_dbm", "INTEGER"), ("avg_signal_dbm", "INTEGER"), ("link_speed_mbps", "INTEGER"),
             ("channel_width", "VARCHAR"), ("radio_type", "VARCHAR"), ("wifi7_capable", "BOOLEAN"),
+            ("mlo", "BOOLEAN"), ("mld_address", "VARCHAR"), ("ap_mld_address", "VARCHAR"),
+            ("mlo_links_json", "VARCHAR"),
         ):
             if iface_status_cols and col not in iface_status_cols:
                 conn.execute(text(f"ALTER TABLE interfacestatus ADD COLUMN {col} {coltype}"))

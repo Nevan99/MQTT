@@ -28,6 +28,16 @@ const INTERFACES_TAB_COLUMNS = [
   ['gateway'],
   ['key_mgmt'],
   ['radio_type'],
+  // Wi-Fi 7 addressing - see wifi7LinkRows (detail-page.js) and pi_agent
+  // WifiMixin._wifi7_link_fields. All empty for a pre-Wi-Fi 7 connection.
+  ['mlo', r => r.mlo == null ? null : (r.mlo ? 'yes' : 'no')],
+  ['mld_address'],
+  ['ap_mld_address'],
+  ['mlo_links', r => (r.mlo_links && r.mlo_links.length)
+    ? r.mlo_links.map((l, i) =>
+        `${l.link_id ?? i}${l.band ? ` (${l.band})` : ''}: ${l.sta_address || '—'} ↔ ${l.ap_address || '—'}`
+      ).join('; ')
+    : null],
 ];
 
 // Last-fetched, unfiltered rows - kept so typing into a filter (or the next

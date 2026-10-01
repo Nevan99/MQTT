@@ -28,6 +28,20 @@ def list_pis(session: Session = Depends(get_session)):
     return [_to_out(p) for p in pis]
 
 
+def _wifi7_link_fields(r: InterfaceStatus) -> dict:
+    """Wi-Fi 7 MLD/per-link fields of an InterfaceStatus row, with
+    mlo_links decoded back from its JSON column - same names as the Pi's own
+    link_info result, so the UI can treat either one as the link."""
+    try:
+        links = json.loads(r.mlo_links_json) if r.mlo_links_json else None
+    except ValueError:
+        links = None
+    return {
+        "mlo": r.mlo, "mld_address": r.mld_address,
+        "ap_mld_address": r.ap_mld_address, "mlo_links": links,
+    }
+
+
 @router.get("/interface-status", response_model=list[dict])
 def get_all_interface_status(session: Session = Depends(get_session)):
     """Fleet-wide flat view of every managed Pi's every interface's buffered
@@ -49,6 +63,7 @@ def get_all_interface_status(session: Session = Depends(get_session)):
             "avg_signal_dbm": r.avg_signal_dbm, "link_speed_mbps": r.link_speed_mbps,
             "channel_width": r.channel_width, "radio_type": r.radio_type,
             "wifi7_capable": r.wifi7_capable,
+            **_wifi7_link_fields(r),
             "updated_at": r.updated_at.isoformat(),
         }
         for r in rows
@@ -388,6 +403,7 @@ def get_interface_status(pi_id: str, session: Session = Depends(get_session)):
             "avg_signal_dbm": r.avg_signal_dbm, "link_speed_mbps": r.link_speed_mbps,
             "channel_width": r.channel_width, "radio_type": r.radio_type,
             "wifi7_capable": r.wifi7_capable,
+            **_wifi7_link_fields(r),
             "updated_at": r.updated_at.isoformat(),
         }
         for r in rows

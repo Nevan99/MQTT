@@ -173,6 +173,24 @@ function applyWifi7Tag(card, status) {
   tag.classList.toggle('hidden', !status.wifi7_capable);
 }
 
+// Info-table rows for a Wi-Fi 7 connection's addressing (see pi_agent
+// WifiMixin._wifi7_link_fields): the client/AP MLD addresses when the
+// association is multi-link, and one row per link with that link's own
+// client and AP addresses. Nothing for a pre-Wi-Fi 7 connection - mlo is
+// null there. Shared by the detail page and the fleet table's cards.
+function wifi7LinkRows(link) {
+  if (!link || link.mlo == null) return [];
+  const rows = [['Multi-link (MLO)', link.mlo ? 'yes' : 'no (single link)']];
+  if (link.mld_address) rows.push(['MLD address', link.mld_address]);
+  if (link.ap_mld_address) rows.push(['AP MLD address', link.ap_mld_address]);
+  (link.mlo_links || []).forEach((l, i) => {
+    const label = `Link ${l.link_id ?? i}${l.band ? ` (${l.band})` : ''}`;
+    const freq = l.frequency_mhz != null ? ` @ ${l.frequency_mhz} MHz` : '';
+    rows.push([label, `STA ${l.sta_address || '—'} ↔ AP ${l.ap_address || '—'}${freq}`]);
+  });
+  return rows;
+}
+
 // Best-effort name-based guess for a monitor-mode interface (mon0,
 // wlan0mon, etc.) - used only for the quick synchronous checks (which
 // interfaces get a default band/channel control, the bulk action's fan-out)
@@ -342,6 +360,7 @@ function renderDetailIfaceBody(body, name) {
     if (link.frequency_mhz != null) rows.push(['Frequency', `${link.frequency_mhz} MHz`]);
     if (link.band) rows.push(['Band', link.band]);
     if (link.radio_type) rows.push(['Radio type', link.radio_type]);
+    rows.push(...wifi7LinkRows(link));
     if (link.key_mgmt) rows.push(['Key mgmt', link.key_mgmt]);
     if (link.signal_dbm != null) rows.push(['Signal', `${link.signal_dbm} dBm`]);
     if (link.rx_bitrate_mbps != null) rows.push(['RX bitrate', `${link.rx_bitrate_mbps} Mbps`]);
