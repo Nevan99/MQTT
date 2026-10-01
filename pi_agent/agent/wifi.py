@@ -696,6 +696,24 @@ class WifiMixin:
                 outputs.append((await self._wpa_cli(interface, "set_network", net_id, "bssid", bssid)).stdout.strip())
             if password:
                 outputs.append((await self._wpa_cli(interface, "set_network", net_id, "psk", f'"{password}"')).stdout.strip())
+                # Allow WPA3 (SAE) alongside WPA2: wpa_supplicant's default
+                # key_mgmt (WPA-PSK WPA-EAP) can't join a WPA3-only AP and
+                # joins a transition-mode AP as WPA2. With SAE listed it
+                # picks SAE whenever the AP offers it. ieee80211w 1 = PMF
+                # optional (WPA3 requires PMF; WPA2-only APs without it
+                # still work). sae_pwe 2 = accept both hunting-and-pecking
+                # and hash-to-element, so H2E-only (e.g. 6GHz) APs work too
+                # - it's a global setting, not per-network. A build without
+                # SAE support rejects the key_mgmt (FAIL, not an error), in
+                # which case fall back to plain WPA-PSK.
+                await self._wpa_cli(interface, "set", "sae_pwe", "2")
+                key_mgmt_ret = await self._wpa_cli(
+                    interface, "set_network", net_id, "key_mgmt", "WPA-PSK WPA-PSK-SHA256 SAE",
+                )
+                outputs.append(key_mgmt_ret.stdout.strip())
+                if key_mgmt_ret.stdout.strip() != "OK":
+                    outputs.append((await self._wpa_cli(interface, "set_network", net_id, "key_mgmt", "WPA-PSK")).stdout.strip())
+                outputs.append((await self._wpa_cli(interface, "set_network", net_id, "ieee80211w", "1")).stdout.strip())
             else:
                 outputs.append((await self._wpa_cli(interface, "set_network", net_id, "key_mgmt", "NONE")).stdout.strip())
             if channel:
