@@ -242,17 +242,21 @@ class InterfacesMixin:
     async def _interface_status_loop(self):
         while True:
             await asyncio.sleep(self.INTERFACE_STATUS_INTERVAL_SECONDS)
-            try:
-                details_list = await self.get_cached_interface_details()
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                print(f"[pi_agent] interface status: failed to list interfaces: {e}")
-                continue
-            outcomes = await asyncio.gather(
-                *(self._publish_interface_status(d) for d in details_list),
-                return_exceptions=True,
-            )
+            # Quiet: this fires every 5s for every interface, forever - see
+            # proc.quiet for why it's excluded from the command/subprocess
+            # logging everything else gets.
+            with proc.quiet():
+                try:
+                    details_list = await self.get_cached_interface_details()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    print(f"[pi_agent] interface status: failed to list interfaces: {e}")
+                    continue
+                outcomes = await asyncio.gather(
+                    *(self._publish_interface_status(d) for d in details_list),
+                    return_exceptions=True,
+                )
             for details, outcome in zip(details_list, outcomes):
                 if isinstance(outcome, asyncio.CancelledError):
                     raise outcome

@@ -43,7 +43,7 @@ else
     echo "iw is now $(iw_version)"
 fi
 
-VENV_DIR="$(cd "$SCRIPT_DIR/../.venv" && pwd)"
+VENV_DIR="$(cd "$SCRIPT_DIR/.venv" && pwd)"
 sed -e "s#__PI_AGENT_DIR__#$SCRIPT_DIR#g" -e "s#__VENV_DIR__#$VENV_DIR#g" \
     "$SCRIPT_DIR/$UNIT_NAME" | sudo tee "/etc/systemd/system/$UNIT_NAME" > /dev/null
 sudo systemctl daemon-reload

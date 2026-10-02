@@ -713,6 +713,20 @@ class WifiMixin:
                 # re-read at the end of every slice regardless.
                 async for line in listener.events(timeout=min(self.WPA_STATE_RECHECK_SECONDS, remaining)):
                     name, fields = wpa_events.parse_event(line)
+                    # The raw wpa_supplicant narration (association, auth/
+                    # assoc reject reason codes, scan results) - nothing
+                    # else in the agent ever prints these, and they're the
+                    # detail a status poll can't show (see the module
+                    # docstring in wpa_events.py). BSS-ADDED/-REMOVED are
+                    # excluded: one fires per *other* network the scan
+                    # happens to see (every neighbor's AP), not per anything
+                    # this connect attempt did - in a crowded RF environment
+                    # that's 100+ lines with no diagnostic value, and they
+                    # carry no fields anyway (CTRL-EVENT-BSS-ADDED's payload
+                    # is positional - "<id> <bssid>" - not key=value, so
+                    # parse_event's generic parser never captures it).
+                    if name not in ("CTRL-EVENT-BSS-ADDED", "CTRL-EVENT-BSS-REMOVED"):
+                        print(f"[pi_agent] {interface}: wpa event: {name} {fields}")
                     if name == "CTRL-EVENT-SCAN-RESULTS":
                         scans["completed"] += 1
                     elif name == "CTRL-EVENT-SCAN-FAILED":
@@ -1023,7 +1037,12 @@ class WifiMixin:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + (self.DHCP_IP_WAIT_SECONDS if timeout is None else timeout)
         while True:
-            ip_address = await self.get_interface_ip(interface)
+            # Quiet: this is a verification poll, not new information -
+            # dhcpcd's own native log lines already said the lease landed,
+            # and connect_wifi's result (ip_address/connected) reports the
+            # outcome this is only confirming.
+            with proc.quiet():
+                ip_address = await self.get_interface_ip(interface)
             if ip_address:
                 return ip_address
             if loop.time() >= deadline:
@@ -1648,6 +1667,11 @@ class WifiMixin:
         return task
 
     async def _run_dispatched_command(self, action, command_id, interface, fn, args):
+        # Brackets the whole connect/disconnect/mode-switch workflow with a
+        # start line - the individual wpa_cli/iw/dhcpcd calls it makes log
+        # themselves (see agent/proc.py), this just marks where one begins
+        # and what it was waiting on (the lock) before it even got to run.
+        print(f"[pi_agent] wifi action start: {action} interface={interface} command_id={command_id}")
         if interface:
             # The pending mark covers the wait for the lock as well as the
             # run - the point is to stop *new* scans starting while we queue.

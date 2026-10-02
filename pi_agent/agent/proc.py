@@ -11,18 +11,106 @@ the sync code returned, so callers only had to grow an `await`.
 
 This module is also the single seam the test suite fakes: patching
 agent.proc.run replaces the CLI layer for every mixin at once.
+
+It is also, for the same reason, the single place that logs every CLI
+invocation (iw/wpa_cli/dhcpcd/ip/nmcli/...) - one line per call, tagged by
+the tool that actually ran (`[iw] ...`, `[wpa_cli] ...`, etc., not a
+generic `[pi_agent]`) so it reads like that tool's own output and sits
+naturally alongside dhcpcd's native journal lines - with the elapsed time,
+return code, and the command's actual stdout/stderr, so the full
+wpa_supplicant/iw/dhcpcd back-and-forth behind a connect/disconnect (or
+any other action) shows up in `journalctl -u pi-agent.service` without
+each mixin having to log its own subprocess calls.
 """
 import asyncio
+import contextlib
+import contextvars
 import os
 import signal
 import subprocess
 import tempfile
+import time
 
 # Matches the old sync default: calls that pass no timeout used to be able
 # to hang forever. Under asyncio a hung call no longer blocks a thread, but
 # it does hold whatever interface lock its caller took, so a ceiling still
 # matters.
 DEFAULT_TIMEOUT = 30
+
+# Commands whose next argument is a secret (currently only wpa_cli's
+# `set_network <id> psk "<password>"`, from WifiMixin.connect_wifi) - masked
+# before a command ever reaches the log, since journald persists this
+# output far longer than the connect attempt it came from.
+_REDACT_AFTER = {"psk"}
+
+# Trimmed into the log line so one huge `iw scan` dump doesn't dominate the
+# journal - the full output is still in the CompletedProcess the caller got
+# back, this is only for the human skimming `journalctl -f`.
+_LOG_OUTPUT_LIMIT = 2000
+
+
+def _redact(cmd):
+    out = list(cmd)
+    for i, tok in enumerate(out):
+        if tok in _REDACT_AFTER and i + 1 < len(out):
+            out[i + 1] = "***"
+    return out
+
+
+def _trim(text):
+    text = (text or "").strip().replace("\n", " \\n ")
+    if len(text) > _LOG_OUTPUT_LIMIT:
+        text = text[:_LOG_OUTPUT_LIMIT] + "...(truncated)"
+    return text
+
+
+_QUIET = contextvars.ContextVar("pi_agent_proc_quiet", default=False)
+
+
+@contextlib.contextmanager
+def quiet():
+    """Suppress the run()/run_hard() command log for every call made while
+    this context is active.
+
+    For the periodic background loops only (interface-status every 5s,
+    wifi scan every 20s, each fanning out over every interface) - logged
+    at the volume everything else here gets, those two alone would fill
+    the journal with the same `iw ... link`/`ip -o addr show`/`scan
+    trigger` lines every cycle and bury the connect/disconnect/action
+    logging they were added for. A user-triggered command never runs
+    inside this context, so it is always logged regardless of what a
+    background loop happens to be doing concurrently - this suppresses by
+    call-tree (contextvars propagate to the tasks asyncio.gather spawns
+    from inside the `with` block), not by command name, so a plain `iw`/
+    `ip` call made *because* of a real action still logs normally.
+    """
+    token = _QUIET.set(True)
+    try:
+        yield
+    finally:
+        _QUIET.reset(token)
+
+
+def _log_done(cmd, result, started_at):
+    if _QUIET.get():
+        return
+    elapsed_ms = int((time.monotonic() - started_at) * 1000)
+    tool = cmd[0] if cmd else "?"
+    line = f"[{tool}] ({elapsed_ms}ms, rc={result.returncode}): {' '.join(_redact(cmd))}"
+    # dhcpcd writes its own narration straight to the journal regardless of
+    # how its stdout is captured (confirmed: the native `dhcpcd[PID]:`
+    # lines and this stdout are the same text) - echoing it here would just
+    # duplicate every line it already wrote natively. stderr isn't subject
+    # to that: it's where our own timeout/kill message goes (see run_hard),
+    # which has no native counterpart.
+    if tool != "dhcpcd":
+        stdout = _trim(result.stdout)
+        if stdout:
+            line += f" | stdout: {stdout}"
+    stderr = _trim(result.stderr)
+    if stderr:
+        line += f" | stderr: {stderr}"
+    print(line)
 
 
 async def run(cmd, timeout=DEFAULT_TIMEOUT):
@@ -34,6 +122,7 @@ async def run(cmd, timeout=DEFAULT_TIMEOUT):
     never as an exception to propagate to the MQTT loop.
     """
     cmd = [str(c) for c in cmd]
+    started_at = time.monotonic()
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -41,19 +130,25 @@ async def run(cmd, timeout=DEFAULT_TIMEOUT):
     except (FileNotFoundError, PermissionError, OSError) as e:
         # A missing binary (iw/nmcli not installed on this image) is a
         # reportable result, not an agent-level crash.
-        return subprocess.CompletedProcess(cmd, 127, "", str(e))
+        result = subprocess.CompletedProcess(cmd, 127, "", str(e))
+        _log_done(cmd, result, started_at)
+        return result
 
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout)
     except asyncio.TimeoutError:
         await _kill(proc)
-        return subprocess.CompletedProcess(
+        result = subprocess.CompletedProcess(
             cmd, -9, "", f"[pi_agent] {cmd[0]} killed after exceeding {timeout}s",
         )
+        _log_done(cmd, result, started_at)
+        return result
 
-    return subprocess.CompletedProcess(
+    result = subprocess.CompletedProcess(
         cmd, proc.returncode, _decode(stdout), _decode(stderr),
     )
+    _log_done(cmd, result, started_at)
+    return result
 
 
 async def run_hard(cmd, timeout, detach_output=False):
@@ -82,6 +177,7 @@ async def run_hard(cmd, timeout, detach_output=False):
     captured, just read back afterwards rather than streamed.
     """
     cmd = [str(c) for c in cmd]
+    started_at = time.monotonic()
     kwargs = {}
     if hasattr(os, "killpg"):
         kwargs["start_new_session"] = True
@@ -100,7 +196,9 @@ async def run_hard(cmd, timeout, detach_output=False):
     except (FileNotFoundError, PermissionError, OSError) as e:
         if out_file is not None:
             out_file.close()
-        return subprocess.CompletedProcess(cmd, 127, "", str(e))
+        result = subprocess.CompletedProcess(cmd, 127, "", str(e))
+        _log_done(cmd, result, started_at)
+        return result
 
     if out_file is not None:
         try:
@@ -111,13 +209,17 @@ async def run_hard(cmd, timeout, detach_output=False):
                 await asyncio.wait_for(proc.wait(), 5)
             except asyncio.TimeoutError:
                 pass
-            return subprocess.CompletedProcess(
+            result = subprocess.CompletedProcess(
                 cmd, -9, _read_and_close(out_file),
                 f"[pi_agent] {cmd[0]} killed after exceeding {timeout}s (process group)",
             )
-        return subprocess.CompletedProcess(
+            _log_done(cmd, result, started_at)
+            return result
+        result = subprocess.CompletedProcess(
             cmd, proc.returncode, _read_and_close(out_file), "",
         )
+        _log_done(cmd, result, started_at)
+        return result
 
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout)
@@ -128,14 +230,18 @@ async def run_hard(cmd, timeout, detach_output=False):
             stdout, stderr = await asyncio.wait_for(proc.communicate(), 5)
         except (asyncio.TimeoutError, Exception):
             pass
-        return subprocess.CompletedProcess(
+        result = subprocess.CompletedProcess(
             cmd, -9, _decode(stdout),
             _decode(stderr) + f"\n[pi_agent] {cmd[0]} killed after exceeding {timeout}s (process group)",
         )
+        _log_done(cmd, result, started_at)
+        return result
 
-    return subprocess.CompletedProcess(
+    result = subprocess.CompletedProcess(
         cmd, proc.returncode, _decode(stdout), _decode(stderr),
     )
+    _log_done(cmd, result, started_at)
+    return result
 
 
 def _read_and_close(out_file):

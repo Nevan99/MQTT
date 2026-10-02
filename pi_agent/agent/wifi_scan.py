@@ -674,31 +674,35 @@ class WifiScanMixin:
     async def _wifi_background_scan_loop(self):
         while True:
             await asyncio.sleep(self.WIFI_BACKGROUND_SCAN_INTERVAL_SECONDS)
-            try:
-                # Name-based, not d["type"] == "wifi" - see the matching
-                # comment in _publish_interface_status for why: type is a
-                # driver-dependent classification that can disagree with the
-                # frontend's own name-based isWifiInterface() check, which
-                # decides whether the "Nearby Hotspot" button even exists.
-                wifi_interfaces = [
-                    d["name"] for d in await self.get_cached_interface_details()
-                    if d["name"].startswith("wl") and self.is_scannable(d)
-                ]
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                print(f"[pi_agent] background wifi scan: failed to list interfaces: {e}")
-                continue
-            if not wifi_interfaces:
-                continue
-            # One task per interface, run concurrently and awaited together:
-            # four radios' cycles overlap in the time one used to take, and
-            # unlike the old detached threads a failure here is visible
-            # rather than dying silently in a thread nobody joins.
-            results = await asyncio.gather(
-                *(self._wifi_background_scan_one(i) for i in wifi_interfaces),
-                return_exceptions=True,
-            )
+            # Quiet: this fires every 20s for every radio, forever - see
+            # proc.quiet for why it's excluded from the command/subprocess
+            # logging everything else gets.
+            with proc.quiet():
+                try:
+                    # Name-based, not d["type"] == "wifi" - see the matching
+                    # comment in _publish_interface_status for why: type is a
+                    # driver-dependent classification that can disagree with the
+                    # frontend's own name-based isWifiInterface() check, which
+                    # decides whether the "Nearby Hotspot" button even exists.
+                    wifi_interfaces = [
+                        d["name"] for d in await self.get_cached_interface_details()
+                        if d["name"].startswith("wl") and self.is_scannable(d)
+                    ]
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    print(f"[pi_agent] background wifi scan: failed to list interfaces: {e}")
+                    continue
+                if not wifi_interfaces:
+                    continue
+                # One task per interface, run concurrently and awaited together:
+                # four radios' cycles overlap in the time one used to take, and
+                # unlike the old detached threads a failure here is visible
+                # rather than dying silently in a thread nobody joins.
+                results = await asyncio.gather(
+                    *(self._wifi_background_scan_one(i) for i in wifi_interfaces),
+                    return_exceptions=True,
+                )
             for interface, outcome in zip(wifi_interfaces, results):
                 if isinstance(outcome, asyncio.CancelledError):
                     raise outcome

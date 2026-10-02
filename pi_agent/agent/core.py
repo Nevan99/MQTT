@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import time
 from datetime import datetime, timezone
 
 import aiomqtt
@@ -274,6 +275,15 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
         action = payload.get("action")
         at = payload.get("at")
 
+        # One line per incoming command, password redacted - the connect/
+        # disconnect/mode-switch actions below log their own start/end
+        # around the dispatched task (see _run_dispatched_command), so this
+        # also covers every other action (syslog, ping, tcpdump, etc.) that
+        # handle_command runs inline and previously logged nothing at all.
+        safe_payload = {k: ("***" if k == "password" else v) for k, v in payload.items()}
+        print(f"[pi_agent] command received: {action} {safe_payload}")
+        started_at = time.monotonic()
+
         if at:
             await self.wait_until(at)
 
@@ -407,6 +417,11 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
             raise
         except Exception as e:
             result = {"error": str(e)}
+
+        elapsed_ms = int((time.monotonic() - started_at) * 1000)
+        error = result.get("error") if isinstance(result, dict) else None
+        print(f"[pi_agent] command done ({elapsed_ms}ms): {action}"
+              + (f" -> error: {error}" if error else " -> ok"))
 
         result["command_id"] = payload.get("command_id")
         result["action"] = action
