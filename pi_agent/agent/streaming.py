@@ -291,14 +291,14 @@ class StreamingMixin:
 
     # --- syslog live view --------------------------------------------------
 
-    async def _stream_syslog_socket(self, interface, process):
+    async def _stream_syslog_socket(self, process):
         """Pump journalctl -f's output to the backend over a socket
         connection tagged kind=stream_syslog - relayed live as text lines,
         never persisted (same "view only" contract as stream_tcpdump)."""
         writer = None
         try:
             _, writer = await self._open_capture_socket({
-                "kind": "stream_syslog", "pi_id": self.pi_id, "interface": interface,
+                "kind": "stream_syslog", "pi_id": self.pi_id,
             })
             while True:
                 line = await process.stdout.readline()
@@ -321,23 +321,16 @@ class StreamingMixin:
                 if self._syslog_proc is process:
                     self._streaming_started = False
                     self._syslog_proc = None
-                    self._syslog_interface = None
 
-    async def start_syslog_stream(self, interface=None):
-        """Start the syslog streaming task for the given interface filter."""
-        cmd = ["journalctl", "-u", "NetworkManager", "-n", "50", "-f"]
-        if interface:
-            cmd += ["-g", interface]
+    async def start_syslog_stream(self):
+        """Start the syslog streaming task: the pi-agent daemon's own
+        journal, whole-daemon (not per interface)."""
+        cmd = ["journalctl", "-u", "pi-agent.service", "-l", "-f", "--no-pager"]
 
-        old_proc = None
         async with self._streaming_lock:
-            if self._streaming_started and self._syslog_interface == interface:
-                return False
             if self._streaming_started:
-                old_proc = self._syslog_proc
+                return False
             self._streaming_started = True
-            self._syslog_interface = interface
-        await self._terminate(old_proc)
 
         # StreamReader.readline yields each journal line as soon as
         # journalctl writes it - the asyncio equivalent of the bufsize=1
@@ -349,7 +342,7 @@ class StreamingMixin:
         async with self._streaming_lock:
             self._syslog_proc = process
         task = asyncio.create_task(
-            self._stream_syslog_socket(interface, process), name="syslog-stream",
+            self._stream_syslog_socket(process), name="syslog-stream",
         )
         self._track(self._background_tasks, task)
         return True
@@ -360,7 +353,6 @@ class StreamingMixin:
             if not self._streaming_started:
                 return False
             self._streaming_started = False
-            self._syslog_interface = None
             process = self._syslog_proc
             self._syslog_proc = None
         await self._terminate(process)

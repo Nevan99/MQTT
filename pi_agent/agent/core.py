@@ -87,7 +87,6 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
         self._streaming_started = False
         self._streaming_lock = asyncio.Lock()
         self._syslog_proc = None
-        self._syslog_interface = None
 
         self._tcpdump_running = set()
         self._tcpdump_procs = {}
@@ -370,12 +369,8 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
             elif action == "syslog":
                 result = {"logs": await self.get_syslog(payload.get("lines", 100))}
             elif action == "stream_logs":
-                interface = payload.get("interface")
-                if not interface:
-                    result = {"error": "interface is required"}
-                else:
-                    started = await self.start_syslog_stream(interface)
-                    result = {"streaming": True, "already_running": not started, "interface": interface}
+                started = await self.start_syslog_stream()
+                result = {"streaming": True, "already_running": not started}
             elif action == "tcpdump":
                 interface = payload.get("interface")
                 if not interface:
