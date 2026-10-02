@@ -1367,26 +1367,106 @@ class WifiMixin:
         await proc.run(["systemctl", "restart", "hostapd"])
         return {"restarted": True, "channel": channel}
 
-    async def set_monitor_channel(self, interface, channel):
-        """Sets a monitor-mode interface's capture channel via `iw`. A
-        monitor-mode interface has no SSID/association to manage - NM
-        doesn't touch it, same as connect_wifi/disconnect_wifi/scan don't
-        touch NM any more either - and `iw` is the only tool that can set
-        its channel. Band isn't a separate parameter -
-        `iw ... set channel` infers it from the channel number, same as
-        connect_wifi's own inference."""
+    # Accepted spellings of the 6GHz band (the UI/backend use "6").
+    _BAND_6G = ("6", "6g", "6ghz", "6e")
+
+    @staticmethod
+    def _monitor_freq(channel, band):
+        """Control frequency (MHz) for a channel. 6GHz must be explicit:
+        its channel numbers (1, 5, 9 ... 233) overlap 2.4/5GHz ones, so a
+        bare channel number can never select it."""
+        channel = int(channel)
+        if band and str(band).lower() in WifiMixin._BAND_6G:
+            if channel == 2:
+                return 5935
+            if 1 <= channel <= 233 and channel % 4 == 1:
+                return 5950 + channel * 5
+            raise ValueError(f"{channel} is not a 6GHz channel (use 1, 5, 9 ... 233, or 2)")
+        if channel == 14:
+            return 2484
+        if 1 <= channel <= 13:
+            return 2407 + channel * 5
+        if 32 <= channel <= 177:
+            return 5000 + channel * 5
+        raise ValueError(f"unknown channel {channel}")
+
+    @staticmethod
+    def _center_freq_6g(channel, width):
+        """Center frequency of the 40/80/160MHz block a 6GHz 20MHz channel
+        sits in (6GHz blocks are fixed: 40MHz = channels 1-5 -> 3,
+        80MHz = 1-13 -> 7, 160MHz = 1-29 -> 15, then every 8/16/32)."""
+        span = {40: 8, 80: 16, 160: 32}[width]
+        center_ch = ((int(channel) - 1) // span) * span + 1 + (span // 2 - 2)
+        return 5950 + center_ch * 5
+
+    async def set_monitor_channel(self, interface, channel, band=None, width=None):
+        """Tunes a monitor-mode interface for capture via `iw`.
+
+        2.4/5GHz: `iw dev <if> set channel <n>` (band implied by number).
+        6GHz (band="6"): `iw dev <if> set freq <MHz> [<width> <center>]`,
+        since channel numbers alone can't select 6GHz. width is 20 (default),
+        40, 80 or 160 MHz.
+
+        Before tuning 6GHz, checks the phy actually lists that frequency and
+        it isn't disabled - the usual reasons capture fails there are a USB
+        adapter with no 6GHz radio, or a regulatory domain (`iw reg get`)
+        that doesn't enable 6GHz. The error says which."""
         if not interface:
             return {"error": "interface is required"}
         if not channel:
             return {"error": "channel is required"}
-        ret = await proc.run(
-            ["iw", "dev", interface, "set", "channel", str(channel)], timeout=30,
-        )
+        is_6g = bool(band) and str(band).lower() in self._BAND_6G
+        width = int(width) if width else 20
+        if width not in (20, 40, 80, 160):
+            return {"error": "width must be 20, 40, 80 or 160"}
+
+        if not is_6g:
+            cmd = ["iw", "dev", interface, "set", "channel", str(channel)]
+            if width != 20:
+                cmd.append({40: "HT40+", 80: "80MHz", 160: "160MHz"}[width])
+            ret = await proc.run(cmd, timeout=30)
+            return {
+                "interface": interface, "channel": channel, "band": band, "width": width,
+                "applied": ret.returncode == 0,
+                "output": (ret.stdout or ret.stderr).strip(),
+            }
+
+        try:
+            freq = self._monitor_freq(channel, band)
+        except ValueError as e:
+            return {"error": str(e)}
+        if int(channel) == 2 and width != 20:
+            return {"error": "6GHz channel 2 is 20MHz only"}
+
+        info = await self.get_band_channel_info(interface)
+        listed = {c["frequency_mhz"]: c for b in info.get("bands", []) for c in b["channels"]}
+        reg = (await proc.run(["iw", "reg", "get"], timeout=10)).stdout.strip()
+        if freq not in listed:
+            return {
+                "interface": interface, "channel": channel, "band": "6GHz", "frequency_mhz": freq,
+                "applied": False,
+                "error": f"{interface} ({info.get('wiphy')}) has no 6GHz radio - "
+                         f"{freq} MHz isn't in its channel list. Use a 6GHz-capable adapter "
+                         "(e.g. MT7921AU/MT7922 or Intel AX210/BE200).",
+            }
+        if listed[freq].get("disabled"):
+            return {
+                "interface": interface, "channel": channel, "band": "6GHz", "frequency_mhz": freq,
+                "applied": False,
+                "error": f"{freq} MHz is disabled by the regulatory domain - set a country "
+                         "that allows 6GHz (e.g. `iw reg set US`).",
+                "regdom": reg,
+            }
+
+        cmd = ["iw", "dev", interface, "set", "freq", str(freq)]
+        if width != 20:
+            cmd += [str(width), str(self._center_freq_6g(channel, width))]
+        ret = await proc.run(cmd, timeout=30)
         return {
-            "interface": interface,
-            "channel": channel,
-            "applied": ret.returncode == 0,
+            "interface": interface, "channel": channel, "band": "6GHz", "width": width,
+            "frequency_mhz": freq, "applied": ret.returncode == 0,
             "output": (ret.stdout or ret.stderr).strip(),
+            "regdom": reg,
         }
 
     async def _current_interface_type(self, interface):

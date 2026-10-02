@@ -343,7 +343,10 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
                 # the cost of results up to one background cycle stale.
                 result = await self.get_wifi_scan_detail(payload.get("interface"), use_cache=True)
             elif action == "set_monitor_channel":
-                result = await self.set_monitor_channel(payload.get("interface"), payload.get("channel"))
+                result = await self.set_monitor_channel(
+                    payload.get("interface"), payload.get("channel"),
+                    payload.get("band"), payload.get("width"),
+                )
             elif action == "set_interface_mode":
                 # Dispatched as its own task like connect_wifi/
                 # disconnect_wifi (see _dispatch_wifi_command) - deleting and
