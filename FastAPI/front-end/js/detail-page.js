@@ -20,20 +20,9 @@ function renderDetailParamFields(container, actionSelectEl, piId) {
     if (f.type === 'interface') {
       return `<label>${f.label}</label><div class="iface-dropdown-mount" data-param="${f.name}"></div>`;
     }
-    if (f.type === 'password') {
-      return `
-        <label>${f.label}</label>
-        <div class="password-wrap">
-          <input class="field" data-param="${f.name}" type="password" ${f.default !== undefined ? `value="${f.default}"` : ''}>
-          <button type="button" class="password-toggle" title="Show password">${EYE_ICON_SVG}</button>
-        </div>
-      `;
-    }
-    return `
-      <label>${f.label}</label>
-      <input class="field" data-param="${f.name}" type="${f.type}" ${f.default !== undefined ? `value="${f.default}"` : ''}>
-    `;
+    return paramFieldHtml(f);
   }).join('');
+  applyShowIf(container);
 
   container.querySelectorAll('.iface-dropdown-mount[data-param]').forEach(mount => {
     const box = buildIfaceDropdown();
@@ -46,6 +35,7 @@ function renderDetailParamFields(container, actionSelectEl, piId) {
 function collectDetailParams(container) {
   const params = {};
   container.querySelectorAll('[data-param]').forEach(el => {
+    if (isHiddenParam(el)) return;
     const name = el.dataset.param;
     if (el.classList.contains('iface-dropdown')) {
       const selected = getDropdownSelected(el);

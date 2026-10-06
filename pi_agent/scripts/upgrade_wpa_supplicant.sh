@@ -13,6 +13,16 @@ REQUIRED_CONFIG_FLAGS=(
     CONFIG_IEEE80211AX=y
     CONFIG_HE_OVERRIDES=y
     CONFIG_IEEE80211BE=y
+    # Security modes connect_wifi uses (security=...):
+    CONFIG_SAE=y          # WPA3-Personal
+    CONFIG_SAE_PK=y       # sae_pk
+    CONFIG_OWE=y          # owe (Enhanced Open)
+    CONFIG_SUITEB=y       # enterprise (WPA-EAP-SHA256)
+    CONFIG_SUITEB192=y    # enterprise_192 (WPA3-Enterprise 192-bit)
+    CONFIG_EAP_PEAP=y
+    CONFIG_EAP_TTLS=y
+    CONFIG_EAP_TLS=y
+    CONFIG_EAP_PWD=y
 )
 
 echo "==> Installing build dependencies"
@@ -51,7 +61,7 @@ build_and_verify() {
     make -j"$(nproc)"
 
     echo "==> Verifying the build actually has the fields we need"
-    for field in disable_ht disable_vht disable_he disable_eht; do
+    for field in disable_ht disable_vht disable_he disable_eht sae_pk rsn_overriding; do
         if ! strings wpa_supplicant | grep -qw "$field"; then
             return 1
         fi

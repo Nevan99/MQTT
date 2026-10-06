@@ -1103,8 +1103,114 @@ class WifiMixin:
         "WPA-PSK",
     )
 
+    # connect_wifi's `security` modes. "auto" is the PSK/SAE/open behaviour
+    # (WPA2 / WPA3-Personal / transition / PCM, or open with no password).
+    SECURITY_MODES = ("auto", "owe", "sae_pk", "enterprise", "enterprise_192")
+    EAP_METHODS = ("PEAP", "TTLS", "TLS", "PWD")
+    # Where enterprise certificates sent with the command are written.
+    CERT_DIR = "/etc/pi-agent/certs"
+
+    def _validate_security(self, security, password, eap):
+        if security not in self.SECURITY_MODES:
+            return f"security must be one of {list(self.SECURITY_MODES)}"
+        if security == "sae_pk" and not password:
+            return "sae_pk needs the SAE-PK password (the AP's a.b.c.d-style SAE-PK password)"
+        if security in ("enterprise", "enterprise_192"):
+            method = (eap.get("eap_method") or "").upper()
+            if method not in self.EAP_METHODS:
+                return f"eap_method must be one of {list(self.EAP_METHODS)}"
+            if security == "enterprise_192" and method != "TLS":
+                return "WPA3-Enterprise 192-bit only allows EAP-TLS"
+            if not eap.get("identity"):
+                return "identity is required for enterprise"
+            if method == "TLS" and not (eap.get("client_cert_pem") and eap.get("private_key_pem")):
+                return "EAP-TLS needs client_cert_pem and private_key_pem"
+            if method != "TLS" and not eap.get("eap_password"):
+                return f"EAP-{method} needs eap_password"
+        return None
+
+    async def _set_net(self, interface, net_id, key, value, quote=False):
+        val = f'"{value}"' if quote else str(value)
+        return (await self._wpa_cli(interface, "set_network", net_id, key, val)).stdout.strip()
+
+    def _write_cert(self, interface, kind, pem):
+        """PEM text from the command -> a root-only file wpa_supplicant can
+        read. One file per interface+kind, overwritten each connect."""
+        os.makedirs(self.CERT_DIR, mode=0o700, exist_ok=True)
+        path = os.path.join(self.CERT_DIR, f"{interface}-{kind}.pem")
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(pem.strip() + "\n")
+        return path
+
+    async def _configure_owe(self, interface, net_id):
+        """Enhanced Open: unauthenticated but encrypted. Uses the open SSID;
+        on an OWE-transition AP wpa_supplicant follows the transition
+        element to the hidden OWE BSS itself (so don't pin the open BSS's
+        BSSID). OWE always uses PMF."""
+        return [
+            await self._set_net(interface, net_id, "key_mgmt", "OWE"),
+            await self._set_net(interface, net_id, "ieee80211w", "2"),
+        ]
+
+    async def _configure_sae_pk(self, interface, net_id, password):
+        """SAE-PK: SAE where the password also authenticates the AP's public
+        key. sae_pk=1 means SAE-PK only (no fallback to plain SAE), so a
+        connect succeeds only if the AP really proves the key. Needs a
+        wpa_supplicant built with CONFIG_SAE_PK (upgrade_wpa_supplicant.sh);
+        an older build answers FAIL to sae_pk."""
+        await self._wpa_cli(interface, "set", "sae_pwe", "2")
+        return [
+            await self._set_net(interface, net_id, "key_mgmt", "SAE"),
+            await self._set_net(interface, net_id, "sae_password", password, quote=True),
+            await self._set_net(interface, net_id, "sae_pk", "1"),
+            await self._set_net(interface, net_id, "ieee80211w", "2"),
+        ]
+
+    async def _configure_enterprise(self, interface, net_id, security, eap):
+        """WPA3-Enterprise.
+        enterprise:     WPA-EAP / WPA-EAP-SHA256 with PMF required.
+        enterprise_192: 192-bit mode - WPA-EAP-SUITE-B-192, GCMP-256,
+                        BIP-GMAC-256, EAP-TLS only. Needs CONFIG_SUITEB192.
+        Certificates arrive as PEM text and are written under CERT_DIR.
+        Without ca_cert_pem the server certificate is NOT validated - fine
+        on a test bench, reported in the output."""
+        out = []
+        method = eap["eap_method"].upper()
+        if security == "enterprise_192":
+            out.append(await self._set_net(interface, net_id, "key_mgmt", "WPA-EAP-SUITE-B-192"))
+            for key, val in (("pairwise", "GCMP-256"), ("group", "GCMP-256"), ("group_mgmt", "BIP-GMAC-256")):
+                out.append(await self._set_net(interface, net_id, key, val))
+        else:
+            out.append(await self._set_net(interface, net_id, "key_mgmt", "WPA-EAP WPA-EAP-SHA256"))
+        out.append(await self._set_net(interface, net_id, "ieee80211w", "2"))
+        out.append(await self._set_net(interface, net_id, "eap", method))
+        out.append(await self._set_net(interface, net_id, "identity", eap["identity"], quote=True))
+        if eap.get("anonymous_identity"):
+            out.append(await self._set_net(interface, net_id, "anonymous_identity", eap["anonymous_identity"], quote=True))
+        if method != "TLS":
+            out.append(await self._set_net(interface, net_id, "password", eap["eap_password"], quote=True))
+        if method in ("PEAP", "TTLS"):
+            phase2 = eap.get("phase2") or ("MSCHAPV2" if method == "PEAP" else "PAP")
+            out.append(await self._set_net(interface, net_id, "phase2", f"auth={phase2.upper()}", quote=True))
+        if eap.get("ca_cert_pem"):
+            path = self._write_cert(interface, "ca", eap["ca_cert_pem"])
+            out.append(await self._set_net(interface, net_id, "ca_cert", path, quote=True))
+        else:
+            out.append("no ca_cert_pem: server certificate not validated")
+        if eap.get("domain_suffix_match"):
+            out.append(await self._set_net(interface, net_id, "domain_suffix_match", eap["domain_suffix_match"], quote=True))
+        if method == "TLS":
+            cert = self._write_cert(interface, "client", eap["client_cert_pem"])
+            key = self._write_cert(interface, "key", eap["private_key_pem"])
+            out.append(await self._set_net(interface, net_id, "client_cert", cert, quote=True))
+            out.append(await self._set_net(interface, net_id, "private_key", key, quote=True))
+            if eap.get("private_key_passwd"):
+                out.append(await self._set_net(interface, net_id, "private_key_passwd", eap["private_key_passwd"], quote=True))
+        return out
+
     async def connect_wifi(self, ssid, password=None, interface=None, bssid=None, channel=None,
-                            max_standard=None, rsn_overriding=None):
+                            max_standard=None, rsn_overriding=None, security=None, eap=None):
         """Connect to a wifi hotspot via wpa_supplicant + dhcpcd - see the
         module-level comment above for why NetworkManager is never involved.
 
@@ -1140,6 +1246,11 @@ class WifiMixin:
             return {"error": "ssid is required"}
         if max_standard is not None and max_standard not in self.MAX_STANDARD_NETWORK_FLAGS:
             return {"error": f"max_standard must be one of {sorted(self.MAX_STANDARD_NETWORK_FLAGS)}"}
+        security = (security or "auto").lower()
+        eap = {k: v for k, v in (eap or {}).items() if v not in (None, "")}
+        security_error = self._validate_security(security, password, eap)
+        if security_error:
+            return {"error": security_error}
 
         if bssid and not ssid:
             # Cache first (milliseconds, no radio), falling back to a real
@@ -1196,7 +1307,13 @@ class WifiMixin:
             outputs.append((await self._wpa_cli(interface, "set_network", net_id, "ssid", f'"{ssid}"')).stdout.strip())
             if bssid:
                 outputs.append((await self._wpa_cli(interface, "set_network", net_id, "bssid", bssid)).stdout.strip())
-            if password:
+            if security in ("enterprise", "enterprise_192"):
+                outputs += await self._configure_enterprise(interface, net_id, security, eap)
+            elif security == "owe":
+                outputs += await self._configure_owe(interface, net_id)
+            elif security == "sae_pk":
+                outputs += await self._configure_sae_pk(interface, net_id, password)
+            elif password:
                 outputs.append((await self._wpa_cli(interface, "set_network", net_id, "psk", f'"{password}"')).stdout.strip())
                 # Allow WPA3 (SAE) alongside WPA2: wpa_supplicant's default
                 # key_mgmt (WPA-PSK WPA-EAP) can't join a WPA3-only AP and
@@ -1334,6 +1451,9 @@ class WifiMixin:
             # build). False: this build has no RSN overriding - run
             # scripts/upgrade_wpa_supplicant.sh. None: open network.
             "rsn_overriding_applied": rsn_overriding_applied,
+            "security": security,
+            # EAP progress, for enterprise failures (e.g. SUCCESS / FAILURE).
+            "eap_state": status.get("EAP state") if status else None,
             # Populated from the control socket when association was
             # rejected - the reason/status code a status poll never showed.
             "failure_reason": getattr(self, "last_wpa_failure", None),

@@ -13,6 +13,14 @@ from service.auth import get_current_user
 router = APIRouter(tags=["commands"], dependencies=[Depends(get_current_user)])
 
 
+# Never written to command history (the Pi still gets them).
+SECRET_PARAMS = {"eap_password", "private_key_pem", "private_key_passwd"}
+
+
+def _stored_params(params: dict) -> str:
+    return json.dumps({k: ("***" if k in SECRET_PARAMS and v else v) for k, v in params.items()})
+
+
 def _dispatch(pi_id: str, req: CommandRequest, session: Session) -> CommandOut:
     command_id = str(uuid.uuid4())
 
@@ -50,7 +58,7 @@ def _dispatch(pi_id: str, req: CommandRequest, session: Session) -> CommandOut:
         command_id=command_id,
         pi_id=pi_id,
         action=req.action,
-        params_json=json.dumps(req.params),
+        params_json=_stored_params(req.params),
     )
     session.add(command)
     session.commit()

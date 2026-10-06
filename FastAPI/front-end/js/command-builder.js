@@ -49,6 +49,32 @@ const ACTION_PARAMS = {
         { value: 'legacy', label: '802.11a/g max' },
       ],
     },
+    {
+      name: 'security', label: 'Security', type: 'select',
+      options: [
+        { value: '', label: 'auto: open / WPA2 / WPA3-Personal / PCM (by password)' },
+        { value: 'owe', label: 'OWE (Enhanced Open)' },
+        { value: 'sae_pk', label: 'WPA3-Personal SAE-PK (Password = SAE-PK password)' },
+        { value: 'enterprise', label: 'WPA3-Enterprise' },
+        { value: 'enterprise_192', label: 'WPA3-Enterprise 192-bit (EAP-TLS)' },
+      ],
+    },
+    {
+      name: 'eap_method', label: 'Enterprise: EAP method', type: 'select', showIf: { security: ['enterprise', 'enterprise_192'] },
+      options: [{ value: 'PEAP', label: 'PEAP' }, { value: 'TTLS', label: 'TTLS' }, { value: 'TLS', label: 'TLS (certificate)' }, { value: 'PWD', label: 'PWD' }],
+    },
+    { name: 'identity', label: 'Enterprise: identity', type: 'text', showIf: { security: ['enterprise', 'enterprise_192'] } },
+    { name: 'anonymous_identity', label: 'Enterprise: anonymous identity (optional)', type: 'text', showIf: { security: ['enterprise', 'enterprise_192'] } },
+    { name: 'eap_password', label: 'Enterprise: password (PEAP/TTLS/PWD)', type: 'password', showIf: { security: ['enterprise'] } },
+    {
+      name: 'phase2', label: 'Enterprise: inner auth (PEAP/TTLS)', type: 'select', showIf: { security: ['enterprise'] },
+      options: [{ value: '', label: 'default (PEAP: MSCHAPV2, TTLS: PAP)' }, { value: 'MSCHAPV2', label: 'MSCHAPV2' }, { value: 'PAP', label: 'PAP' }, { value: 'GTC', label: 'GTC' }],
+    },
+    { name: 'domain_suffix_match', label: 'Enterprise: server domain (optional)', type: 'text', showIf: { security: ['enterprise', 'enterprise_192'] } },
+    { name: 'ca_cert_pem', label: 'Enterprise: CA certificate PEM (optional - blank = server not validated)', type: 'textarea', showIf: { security: ['enterprise', 'enterprise_192'] } },
+    { name: 'client_cert_pem', label: 'Enterprise: client certificate PEM (TLS)', type: 'textarea', showIf: { security: ['enterprise', 'enterprise_192'] } },
+    { name: 'private_key_pem', label: 'Enterprise: private key PEM (TLS)', type: 'textarea', showIf: { security: ['enterprise', 'enterprise_192'] } },
+    { name: 'private_key_passwd', label: 'Enterprise: private key password (optional)', type: 'password', showIf: { security: ['enterprise', 'enterprise_192'] } },
     // WPA3-Personal Compatibility Mode: the WPA3 part is in the AP's RSN
     // Override elements, only read with rsn_overriding on (agent default: force).
     {
@@ -218,6 +244,8 @@ const ACTION_RESULT_FIELDS = {
     { name: 'key_mgmt', type: 'text' },
     { name: 'pairwise_cipher', type: 'text' },
     { name: 'rsn_overriding_applied', type: 'boolean' },
+    { name: 'security', type: 'text' },
+    { name: 'eap_state', type: 'text' },
     { name: 'failure_reason', type: 'text' },
     { name: 'output', type: 'text' },
   ],
@@ -279,6 +307,63 @@ function currentTargetInterfaces() {
   return (pi && pi.metadata && Array.isArray(pi.metadata.interfaces)) ? pi.metadata.interfaces : [];
 }
 
+// Shared by the Action panel and the Pi detail page's action bar.
+function paramFieldHtml(f) {
+  const value = f.default !== undefined ? `value="${f.default}"` : '';
+  let html;
+  if (f.type === 'password') {
+    html = `
+      <label>${f.label}</label>
+      <div class="password-wrap">
+        <input class="field" data-param="${f.name}" type="password" ${value}>
+        <button type="button" class="password-toggle" title="Show password">${EYE_ICON_SVG}</button>
+      </div>
+    `;
+  } else if (f.type === 'select') {
+    html = `
+      <label>${f.label}</label>
+      <select class="field" data-param="${f.name}">
+        ${f.options.map(o => `<option value="${o.value}">${o.label}</option>`).join('')}
+      </select>
+    `;
+  } else if (f.type === 'textarea') {
+    html = `
+      <label>${f.label}</label>
+      <textarea class="field param-textarea" data-param="${f.name}" rows="4" spellcheck="false" placeholder="-----BEGIN ...-----"></textarea>
+    `;
+  } else {
+    html = `
+      <label>${f.label}</label>
+      <input class="field" data-param="${f.name}" type="${f.type}" ${value}>
+    `;
+  }
+  // showIf: { otherParam: [values...] } - only shown (and only sent) while
+  // that other field has one of those values. See applyShowIf.
+  return f.showIf
+    ? `<div class="param-field" data-show-if='${JSON.stringify(f.showIf)}'>${html}</div>`
+    : html;
+}
+
+function applyShowIf(container) {
+  container.querySelectorAll('.param-field[data-show-if]').forEach(wrap => {
+    const cond = JSON.parse(wrap.dataset.showIf);
+    const visible = Object.entries(cond).every(([name, values]) => {
+      const el = container.querySelector(`[data-param="${name}"]`);
+      return el && values.includes(el.value);
+    });
+    wrap.classList.toggle('hidden', !visible);
+  });
+  if (!container.dataset.showIfBound) {
+    container.dataset.showIfBound = '1';
+    container.addEventListener('change', () => applyShowIf(container));
+  }
+}
+
+// Hidden showIf fields keep whatever was typed, but aren't sent.
+function isHiddenParam(el) {
+  return !!el.closest('.param-field.hidden');
+}
+
 function renderParamFields() {
   const fields = ACTION_PARAMS[actionSelect.value] || [];
   const interfaces = currentTargetInterfaces();
@@ -293,29 +378,16 @@ function renderParamFields() {
       }
       return `<label>${f.label}</label><div class="iface-dropdown-mount" data-param="${f.name}"></div>`;
     }
-    if (f.type === 'password') {
+    if (f.pingTargetPicker) {
       return `
         <label>${f.label}</label>
-        <div class="password-wrap">
-          <input class="field" data-param="${f.name}" type="password" ${f.default !== undefined ? `value="${f.default}"` : ''}>
-          <button type="button" class="password-toggle" title="Show password">${EYE_ICON_SVG}</button>
-        </div>
+        <input class="field" data-param="${f.name}" type="${f.type}" ${f.default !== undefined ? `value="${f.default}"` : ''}>
+        <select class="field ping-target-picker"><option value="">— or pick a Pi radio to ping —</option></select>
       `;
     }
-    if (f.type === 'select') {
-      return `
-        <label>${f.label}</label>
-        <select class="field" data-param="${f.name}">
-          ${f.options.map(o => `<option value="${o.value}">${o.label}</option>`).join('')}
-        </select>
-      `;
-    }
-    return `
-      <label>${f.label}</label>
-      <input class="field" data-param="${f.name}" type="${f.type}" ${f.default !== undefined ? `value="${f.default}"` : ''}>
-      ${f.pingTargetPicker ? `<select class="field ping-target-picker"><option value="">— or pick a Pi radio to ping —</option></select>` : ''}
-    `;
+    return paramFieldHtml(f);
   }).join('');
+  applyShowIf(paramFields);
 
   // set_interface_defaults has no "interface" field of its own (see
   // ACTION_PARAMS) - it always applies to every wifi interface of whichever
@@ -415,6 +487,7 @@ renderParamFields();
 function collectParams() {
   const params = {};
   paramFields.querySelectorAll('[data-param]').forEach(el => {
+    if (isHiddenParam(el)) return;
     const name = el.dataset.param;
     if (el.classList.contains('iface-dropdown')) {
       const selected = getDropdownSelected(el);

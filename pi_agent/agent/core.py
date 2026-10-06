@@ -275,6 +275,15 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
     # command's result to be published back first.
     POWER_ACTION_DELAY_SECONDS = 3
 
+    # connect_wifi's enterprise fields, passed through as one dict.
+    EAP_PAYLOAD_KEYS = (
+        "eap_method", "identity", "anonymous_identity", "eap_password", "phase2",
+        "ca_cert_pem", "client_cert_pem", "private_key_pem", "private_key_passwd",
+        "domain_suffix_match",
+    )
+    # Never printed to the journal.
+    SECRET_PAYLOAD_KEYS = {"password", "eap_password", "private_key_pem", "private_key_passwd"}
+
     async def schedule_power_action(self, action):
         """restart_agent: `systemctl restart pi-agent.service`.
         reboot_pi: `systemctl reboot`.
@@ -302,7 +311,7 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
         # around the dispatched task (see _run_dispatched_command), so this
         # also covers every other action (syslog, ping, tcpdump, etc.) that
         # handle_command runs inline and previously logged nothing at all.
-        safe_payload = {k: ("***" if k == "password" else v) for k, v in payload.items()}
+        safe_payload = {k: ("***" if k in self.SECRET_PAYLOAD_KEYS else v) for k, v in payload.items()}
         print(f"[pi_agent] command received: {action} {safe_payload}")
         started_at = time.monotonic()
 
@@ -326,7 +335,8 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
                     action, payload.get("command_id"), interface, self.connect_wifi,
                     payload.get("ssid"), payload.get("password"), interface,
                     payload.get("bssid"), payload.get("channel"), payload.get("max_standard"),
-                    payload.get("rsn_overriding"),
+                    payload.get("rsn_overriding"), payload.get("security"),
+                    {k: payload.get(k) for k in self.EAP_PAYLOAD_KEYS},
                 )
                 return
             elif action == "disconnect_wifi":
