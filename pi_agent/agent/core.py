@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import aiomqtt
 from dotenv import load_dotenv
 
+from . import proc
 from .interfaces import InterfacesMixin
 from .streaming import StreamingMixin
 from .webui_proxy import WebUiProxyMixin
@@ -270,6 +271,28 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
         if delay > 0:
             await asyncio.sleep(delay)
 
+    # Seconds before a restart/reboot fires - long enough for this
+    # command's result to be published back first.
+    POWER_ACTION_DELAY_SECONDS = 3
+
+    async def schedule_power_action(self, action):
+        """restart_agent: `systemctl restart pi-agent.service`.
+        reboot_pi: `systemctl reboot`.
+        Scheduled through systemd-run as a transient timer, so it runs
+        outside this service's cgroup - a plain subprocess would be killed
+        along with the agent mid-restart - and fires after the result has
+        gone out."""
+        cmd = (["/bin/systemctl", "restart", "pi-agent.service"] if action == "restart_agent"
+               else ["/bin/systemctl", "reboot"])
+        ret = await proc.run([
+            "systemd-run", "--collect", f"--on-active={self.POWER_ACTION_DELAY_SECONDS}",
+            "--unit", f"pi-agent-{action.replace('_', '-')}", *cmd,
+        ], timeout=10)
+        if ret.returncode != 0:
+            return {"error": f"could not schedule {action}: {(ret.stderr or ret.stdout).strip()}"}
+        print(f"[pi_agent] {action} in {self.POWER_ACTION_DELAY_SECONDS}s")
+        return {"scheduled": action, "in_seconds": self.POWER_ACTION_DELAY_SECONDS}
+
     async def handle_command(self, payload):
         action = payload.get("action")
         at = payload.get("at")
@@ -365,6 +388,8 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
             elif action == "list_interfaces":
                 await self.publish_registration()
                 result = {"interfaces": await self.get_interface_details()}
+            elif action in ("restart_agent", "reboot_pi"):
+                result = await self.schedule_power_action(action)
             elif action == "ping":
                 result = await self.ping_internet(
                     payload.get("interface"), payload.get("target"), payload.get("count"),

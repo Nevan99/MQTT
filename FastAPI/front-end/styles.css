@@ -130,6 +130,16 @@
   #captures { padding: 1rem; }
   #interfaces { padding: 1rem; }
   .captures-panel { flex: 1 1 auto; min-height: 0; }
+  .pi-power-actions { display: flex; gap: 0.4rem; margin-left: auto; flex: 0 0 auto !important; }
+  .fleet-power-bar { justify-content: flex-end; margin-bottom: 0.5rem; }
+  .pi-power-btn { padding: 0.2rem 0.6rem; font-size: 0.75rem; }
+  .pi-power-btn.danger { border-color: #844; color: #f99; }
+  .pi-power-btn.danger:hover:not(:disabled) { background: #3a1c1c; }
+  .capture-filters { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-end; margin-bottom: 0.6rem; }
+  .capture-filters label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.75rem; color: #aaa; }
+  .capture-filters input[type="number"] { width: 5.5rem; }
+  .capture-filters input[type="datetime-local"] { color-scheme: dark; }
+  .capture-filter-count { font-size: 0.75rem; color: #888; margin-left: auto; align-self: center; }
   #fleet.dragging { user-select: none; cursor: col-resize; }
   .panel { background: #1a1a1a; border: 1px solid #333; border-radius: 6px; padding: 0.75rem; overflow-y: auto; overflow-x: auto; min-width: 0; }
   .gutter { width: 6px; margin: 0 -0.5rem; border-radius: 3px; background: #2a2a2a; cursor: col-resize; }
@@ -180,6 +190,10 @@
   .pi-log-panel.wireshark-table-wrap { display: flex; flex-direction: column; padding: 0; overflow: hidden; max-height: 320px; }
   #piDetailGrid .pd-log-block .pi-log-panel.wireshark-table-wrap { max-height: none; }
   .fleet-iface-list .pd-log-block .pi-log-panel { max-height: 240px; }
+  /* Pi-wide syslog: styled as one more card in the expanded row, same as the interface cards above it */
+  .fleet-syslog-block { background: #141414; border: 1px solid #333; border-radius: 6px; margin-bottom: 0.5rem; overflow: hidden; }
+  .fleet-syslog-block .pi-log-heading { padding: 0.4rem 0.5rem; font-size: 0.85rem; color: #ddd; }
+  .fleet-syslog-block .pi-log-panel { max-height: 320px; margin: 0 0.5rem 0.5rem; }
   .fleet-iface-list .pd-log-block .pi-log-panel.wireshark-table-wrap { max-height: 320px; }
   .wireshark-pause-banner { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; background: #3a2f10; color: #e8c766; border-bottom: 1px solid #6a5420; padding: 0.3rem 0.6rem; font-size: 0.73rem; }
   .wireshark-pause-banner.hidden { display: none; }

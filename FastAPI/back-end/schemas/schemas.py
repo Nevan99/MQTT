@@ -54,6 +54,13 @@ class CaptureRequest(BaseModel):
     category: str
     name: str
     lines: list[Any] = []
+    started_at: Optional[datetime] = None
+    stopped_at: Optional[datetime] = None
+
+
+class LogRecordingStart(BaseModel):
+    pi_id: str
+    name: str
 
 
 class CaptureOut(BaseModel):
@@ -63,6 +70,8 @@ class CaptureOut(BaseModel):
     name: str
     created_at: datetime
     line_count: int
+    started_at: Optional[datetime] = None
+    stopped_at: Optional[datetime] = None
 
 
 class TestCaseStepExpected(BaseModel):

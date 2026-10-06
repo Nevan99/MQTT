@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <title>Pi Fleet Controller</title>
 <link rel="icon" type="image/png" href="assets/favicon-512-clean.png">
-<link rel="stylesheet" href="styles.css?v=4">
+<link rel="stylesheet" href="styles.css?v=3">
 </head>
 <body>
 <div id="loginOverlay">
@@ -505,9 +505,21 @@
 
 <section id="captures" class="view">
   <div class="panel captures-panel">
+    <div class="capture-filters">
+      <label>Pi<select id="capFilterPi"><option value="">all</option></select></label>
+      <label>Category<select id="capFilterCategory"><option value="">all</option><option value="logs">logs</option><option value="pcap">pcap</option></select></label>
+      <label>Name<input id="capFilterName" type="search" placeholder="contains…"></label>
+      <label>Log text<input id="capFilterText" type="search" placeholder="search inside logs…"></label>
+      <label>Lines ≥<input id="capFilterLinesMin" type="number" min="0"></label>
+      <label>Lines ≤<input id="capFilterLinesMax" type="number" min="0"></label>
+      <label>Start from<input id="capFilterFrom" type="datetime-local"></label>
+      <label>Stop until<input id="capFilterTo" type="datetime-local"></label>
+      <button id="capFilterReset" type="button" class="icon-btn" title="Clear filters">&#10005;</button>
+      <span id="capFilterCount" class="capture-filter-count"></span>
+    </div>
     <table>
       <thead>
-        <tr><th>Pi</th><th>Category</th><th>Name</th><th>Lines</th><th>Created</th><th></th></tr>
+        <tr><th>Pi</th><th>Category</th><th>Name</th><th>Lines</th><th>Start</th><th>Stop</th><th>Duration</th><th></th></tr>
       </thead>
       <tbody id="capturesTableBody"></tbody>
     </table>
@@ -536,6 +548,7 @@
     <div class="row" style="align-items:center;">
       <button id="piDetailBack" type="button" style="flex: 0 0 auto; padding: 0.2rem 0.5rem; font-size: 0.75rem;" title="Back to fleet">&larr; Back</button>
       <h2 id="piDetailTitle" style="margin:0 0 0 0.75rem; font-size:1rem;"></h2>
+      <span class="pi-power-actions" id="piDetailPower"></span>
     </div>
   </div>
   <div id="piDetailGrid">
@@ -558,7 +571,7 @@
         <div class="pi-log-heading">
           <span>syslog / stream_logs</span>
           <span class="pi-log-actions">
-            <select class="pi-stream-iface"><option value="">select interface</option></select>
+            <button class="pi-log-stream icon-btn" type="button" title="Start streaming"><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><polygon points="6 4 20 12 6 20"/></svg></button>
             <button class="pi-log-capture icon-btn" type="button" title="Start Capture">&#9210;</button>
             <button class="pi-log-clear icon-btn" type="button" title="Clear">&#128465;</button>
             <button class="pi-log-collapse icon-btn" type="button" title="Collapse"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform: rotate(-90deg);"><polyline points="9 6 15 12 9 18"/></svg></button>
@@ -636,11 +649,11 @@
      later files call functions defined in earlier ones. -->
 <script src="js/auth.js?v=2"></script>
 <script src="js/layout.js"></script>
-<script src="js/fleet-table.js"></script>
+<script src="js/fleet-table.js?v=3"></script>
 <script src="js/interfaces-tab.js"></script>
-<script src="js/captures.js"></script>
+<script src="js/captures.js?v=2"></script>
 <script src="js/history.js"></script>
-<script src="js/command-builder.js?v=4"></script>
+<script src="js/command-builder.js?v=6"></script>
 <!-- ?v= busts the browser's cache on each edit - these three change often
      during active development and have no other cache-busting (StaticFiles
      serves them with only Last-Modified/ETag, which Chrome's heuristic
@@ -655,6 +668,6 @@
 <script src="js/wifi-info-modal.js?v=2"></script>
 <script src="js/log-rendering.js"></script>
 <script src="js/wireshark-table.js"></script>
-<script src="js/detail-page.js?v=5"></script>
+<script src="js/detail-page.js?v=7"></script>
 </body>
 </html>

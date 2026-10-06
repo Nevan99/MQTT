@@ -190,11 +190,10 @@ function connectPiLog(piId, entry) {
     const payload = msg.payload !== undefined ? msg.payload : msg;
     const lines = Array.isArray(payload) ? payload : [payload];
 
-    const selectedIface = entry[msg.category + 'ActiveIface'];
-    if (!selectedIface) return;
-
     const panel = entry[panelKey];
     if (msg.category === 'tcpdump') {
+      const selectedIface = entry.tcpdumpActiveIface;
+      if (!selectedIface) return;
       const tbody = panel.querySelector('tbody');
       if (tbody) {
         lines.filter(line => line && line.interface === selectedIface)
@@ -202,15 +201,11 @@ function connectPiLog(piId, entry) {
       }
       return;
     }
+    if (msg.category === 'logs' && !entry.logsStreaming) return;
 
     const empty = panel.querySelector('.pi-log-empty');
     if (empty) empty.remove();
     lines.forEach(line => appendLineTo(panel, line));
-
-    // Nothing is persisted server-side for these streams, so a capture in
-    // progress buffers lines here, live, as they arrive.
-    const active = entry.captureState && entry.captureState[msg.category];
-    if (active) lines.forEach(line => active.lines.push(line));
   };
 
   return ws;
@@ -236,6 +231,14 @@ async function awaitCommandResult(commandId, maxAttempts = 30) {
   throw new Error('timed out waiting for the Pi');
 }
 
+function setCaptureBtn(btn, recording) {
+  btn.innerHTML = recording ? '&#9209;' : '&#9210;';
+  btn.title = recording ? 'Stop Capture' : 'Start Capture';
+  btn.classList.toggle('recording', recording);
+}
+
+// Log recording runs on the backend (it saves the Pi's syslog stream as it
+// arrives), so it survives a page reload - see restoreRecordingState.
 async function toggleCapture(piId, spec, entry, btn) {
   if (spec.kind === 'tcpdump') return togglePcapCapture(piId, entry, btn);
 
@@ -245,37 +248,110 @@ async function toggleCapture(piId, spec, entry, btn) {
   if (!active) {
     const name = prompt('Capture name:', `${piId}-${spec.kind}-${new Date().toISOString().slice(0, 19)}`);
     if (!name) return;
-    entry.captureState[spec.kind] = { name, lines: [] };
-    btn.innerHTML = '&#9209;';
-    btn.title = 'Stop Capture';
-    btn.classList.add('recording');
+    btn.disabled = true;
+    try {
+      const res = await apiFetch(`${API}/captures/recordings/logs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pi_id: piId, name }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(`Failed to start recording: ${err.detail || res.status}`);
+        return;
+      }
+    } catch (err) {
+      alert(`Failed to start recording: ${err.message}`);
+      return;
+    } finally {
+      btn.disabled = false;
+    }
+    entry.captureState[spec.kind] = { name };
+    setCaptureBtn(btn, true);
     return;
   }
 
   entry.captureState[spec.kind] = null;
-  btn.innerHTML = '&#9210;';
-  btn.title = 'Start Capture';
-  btn.classList.remove('recording');
+  setCaptureBtn(btn, false);
   btn.disabled = true;
   try {
-    if (!active.lines.length) {
+    const res = await apiFetch(`${API}/captures/recordings/logs/${encodeURIComponent(piId)}/stop`, { method: 'POST' });
+    if (res.status === 422) {
       alert('No logs arrived during that capture window.');
       return;
     }
-    const res = await apiFetch(`${API}/captures`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pi_id: piId, category: spec.kind, name: active.name, lines: active.lines }),
-    });
-    if (!res.ok) {
-      alert('Captured the logs but failed to save the file on the server.');
+    if (!res.ok && res.status !== 404) {
+      alert('Failed to stop the recording on the server.');
       return;
     }
     await loadCaptures();
   } catch {
-    alert('Failed to save the capture.');
+    alert('Failed to stop the recording.');
   } finally {
     btn.disabled = false;
+  }
+}
+
+// The backend is the source of truth for recordings - the page that
+// started one may have been reloaded, and another tab may have stopped it.
+// applyRecordingState sets each button to match, both on and off.
+// targets: [{ state, logsBtn, pcapBtn, iface, onPcapIface }] - one per
+// panel set (detail page) or per Pi / interface card (fleet).
+function applyRecordingState(piId, active, targets) {
+  const mine = active.filter(r => r.pi_id === piId);
+  const logs = mine.find(r => r.category === 'logs');
+  targets.forEach(t => {
+    if (t.logsBtn && !t.logsBtn.disabled) {   // disabled = start/stop in flight
+      t.state.captureState = t.state.captureState || {};
+      t.state.captureState.logs = logs ? { name: logs.name } : null;
+      setCaptureBtn(t.logsBtn, !!logs);
+    }
+    if (t.pcapBtn && !t.pcapBtn.disabled) {
+      const want = t.iface || (t.state.pcapState && t.state.pcapState.interface);
+      const pcap = mine.find(r => r.category === 'pcap' && (!want || r.interface === want));
+      if (pcap && !t.state.pcapState) {
+        t.state.pcapState = { name: pcap.name, interface: pcap.interface };
+        setCaptureBtn(t.pcapBtn, true);
+        if (t.onPcapIface) t.onPcapIface(pcap.interface);
+      } else if (!pcap && t.state.pcapState) {
+        t.state.pcapState = null;
+        setCaptureBtn(t.pcapBtn, false);
+      }
+    }
+  });
+}
+
+async function fetchActiveRecordings(piId) {
+  try {
+    const q = piId ? `?pi_id=${encodeURIComponent(piId)}` : '';
+    const res = await apiFetch(`${API}/captures/recordings${q}`);
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+async function restoreRecordingState(piId, targets) {
+  const active = await fetchActiveRecordings(piId);
+  if (active) applyRecordingState(piId, active, targets);
+}
+
+function fleetRecordingTargets(entry) {
+  const targets = [{ state: entry, logsBtn: entry.logRow.querySelector('.pi-log-capture') }];
+  entry.ifaceCards.forEach(cardState => targets.push({
+    state: cardState, iface: cardState.iface,
+    pcapBtn: cardState.card.querySelector('.pi-log-capture'),
+  }));
+  return targets;
+}
+
+// Runs on every 5s refresh so all open tabs converge on the backend's view.
+async function syncRecordingButtons() {
+  const active = await fetchActiveRecordings();
+  if (!active) return;
+  piRows.forEach((entry, piId) => applyRecordingState(piId, active, fleetRecordingTargets(entry)));
+  if (typeof detailLogEntry !== 'undefined' && detailLogEntry && detailPiId) {
+    applyRecordingState(detailPiId, active, detailRecordingTargets(detailLogEntry));
   }
 }
 
@@ -348,6 +424,43 @@ function clearPanel(piId, spec, panel) {
   resetLogPanel(panel, spec);
 }
 
+// Restart pi-agent / reboot the Pi. The agent replies first, then systemd
+// runs it a few seconds later (see PiAgent.schedule_power_action), so the
+// command shows "complete" and the Pi then goes offline briefly.
+const POWER_ACTIONS = {
+  restart_agent: { label: '\u21bb Restart agent', confirm: 'Restart the pi-agent service on {pi}? Running streams and recordings on it will stop.' },
+  reboot_pi: { label: '\u23fb Reboot Pi', confirm: 'Reboot {pi}? It will be offline for about a minute and running streams and recordings on it will stop.' },
+};
+
+function renderPowerButtons(container, piId) {
+  container.innerHTML = Object.entries(POWER_ACTIONS).map(([action, a]) =>
+    `<button type="button" class="pi-power-btn${action === 'reboot_pi' ? ' danger' : ''}" data-action="${action}">${a.label}</button>`
+  ).join('');
+  container.querySelectorAll('.pi-power-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const a = POWER_ACTIONS[btn.dataset.action];
+      if (!confirm(a.confirm.replace('{pi}', piId))) return;
+      btn.disabled = true;
+      const original = btn.textContent;
+      btn.textContent = 'sending…';
+      try {
+        const res = await postCmd(piId, btn.dataset.action, {});
+        if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+        const data = await res.json();
+        const result = await awaitCommandResult(data.command_id, 20);
+        if (!result || result.error) throw new Error((result && result.error) || 'no reply from the Pi');
+        btn.textContent = btn.dataset.action === 'reboot_pi' ? 'rebooting…' : 'restarting…';
+        setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 15000);
+      } catch (err) {
+        alert(`${original.slice(2)} failed on ${piId}: ${err.message}`);
+        btn.textContent = original;
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
 function postCmd(piId, action, params) {
   return apiFetch(`${API}/pis/${encodeURIComponent(piId)}/cmd`, {
     method: 'POST',
@@ -357,24 +470,25 @@ function postCmd(piId, action, params) {
 }
 function bandMatchesChannel(band, channel) {
   if (!band || !channel) return true;
+  // 6GHz channels overlap 2.4/5GHz numbers - only check it's a real one.
+  if (band === '6') return channel === 2 || (channel <= 233 && channel % 4 === 1);
   return band === (channel <= 14 ? 'bg' : 'a');
 }
 
 function renderInterfaceDefaultControl(container, piId, iface, current, onSaved, isMonitor) {
   const wrap = document.createElement('div');
   wrap.className = 'wifi-connect-row';
-  // Monitor interfaces have no band field at all - iw's own "set channel"
-  // has no separate band flag, band is just implied by the channel number,
-  // so a band control here couldn't do anything but mislead.
+  // Monitor interfaces get a 6GHz option: its channel numbers overlap
+  // 2.4/5GHz ones, so set_monitor_channel needs the band to tune by
+  // frequency. Station (connect_wifi) defaults stay 2.4/5GHz.
   wrap.innerHTML = `
-    <label style="width:100%;">Default channel${isMonitor ? ' (applied immediately)' : '/band for connect_wifi'}</label>
-    ${isMonitor ? '' : `
-      <select class="field iface-default-band" style="flex:0 0 6.5rem;">
-        <option value="">any band</option>
-        <option value="bg">2.4GHz</option>
-        <option value="a">5GHz</option>
-      </select>
-    `}
+    <label style="width:100%;">Default channel/band${isMonitor ? ' (applied immediately)' : ' for connect_wifi'}</label>
+    <select class="field iface-default-band" style="flex:0 0 6.5rem;">
+      <option value="">${isMonitor ? 'auto (2.4/5)' : 'any band'}</option>
+      <option value="bg">2.4GHz</option>
+      <option value="a">5GHz</option>
+      ${isMonitor ? '<option value="6">6GHz</option>' : ''}
+    </select>
     <input class="field iface-default-channel" type="number" min="1" placeholder="channel" style="flex:0 0 6.5rem;">
     <button type="button" class="iface-default-save">Save</button>
     <button type="button" class="iface-default-clear">Clear</button>
@@ -392,7 +506,7 @@ function renderInterfaceDefaultControl(container, piId, iface, current, onSaved,
   [bandEl, channelEl].forEach(el => el && el.addEventListener('click', stop));
 
   function describeBandChannel(band, channel) {
-    const bandLabel = band === 'bg' ? '2.4GHz' : band === 'a' ? '5GHz' : null;
+    const bandLabel = band === 'bg' ? '2.4GHz' : band === 'a' ? '5GHz' : band === '6' ? '6GHz' : null;
     if (bandLabel && channel) return `${bandLabel}, channel ${channel}`;
     if (channel) return `channel ${channel}`;
     if (bandLabel) return bandLabel;
@@ -402,8 +516,9 @@ function renderInterfaceDefaultControl(container, piId, iface, current, onSaved,
   async function save(band, channel) {
     successEl.textContent = '';
     if (!bandMatchesChannel(band, channel)) {
-      const inferred = channel <= 14 ? '2.4GHz' : '5GHz';
-      errorEl.textContent = `Channel ${channel} is ${inferred} - pick a matching band, "any band", or a different channel.`;
+      errorEl.textContent = band === '6'
+        ? `Channel ${channel} is not a 6GHz channel - use 1, 5, 9 ... 233, or 2.`
+        : `Channel ${channel} is ${channel <= 14 ? '2.4GHz' : '5GHz'} - pick a matching band, "any band", or a different channel.`;
       return;
     }
     errorEl.textContent = '';
@@ -433,12 +548,12 @@ function renderInterfaceDefaultControl(container, piId, iface, current, onSaved,
       // its confirmation is "the radio is actually on that channel now"
       // rather than just "the default was saved".
       if (isMonitor && channel) {
-        const cmdRes = await postCmd(piId, 'set_monitor_channel', { interface: iface, channel });
+        const cmdRes = await postCmd(piId, 'set_monitor_channel', { interface: iface, channel, band: band || undefined });
         if (!cmdRes.ok) throw new Error(`${cmdRes.status} ${await cmdRes.text()}`);
         const data = await cmdRes.json();
         const result = await awaitCommandResult(data.command_id, 30);
         if (!result || !result.applied) {
-          errorEl.textContent = `Saved as default, but applying it now failed: ${(result && result.output) || 'unknown error'}`;
+          errorEl.textContent = `Saved as default, but applying it now failed: ${(result && (result.error || result.output)) || 'unknown error'}`;
         } else {
           successEl.textContent = `Applied: ${describeBandChannel(band, channel)}.`;
         }
@@ -509,21 +624,25 @@ async function performToggleTcpdumpStream(piId, iface, btn, panel) {
   return starting;
 }
 
-async function setStreamInterface(piId, entry, spec, interface_) {
-  const panel = entry[spec.panelKey];
-  resetLogPanel(panel, spec);
-  const prevIfaceKey = spec.kind + 'ActiveIface';
-  const prevIface = entry[prevIfaceKey];
+// Syslog stream is the whole pi-agent daemon's journal (not per
+// interface), so it's a plain start/stop toggle.
+async function toggleLogsStream(piId, entry, btn) {
+  const starting = !entry.logsStreaming;
+  if (!starting && entry.captureState && entry.captureState.logs &&
+      !confirm('A log recording is running. Stopping the stream also stops lines reaching the recording. Stop anyway?')) return;
+  btn.disabled = true;
   try {
-    if (prevIface && (spec.kind === 'tcpdump' ? prevIface !== interface_ : !interface_)) {
-      await postCmd(piId, STREAM_STOP_ACTION[spec.kind], { interface: prevIface });
-    }
-    entry[prevIfaceKey] = interface_ || null;
-    if (!interface_) return; // no interface selected - stream stays stopped
-    await postCmd(piId, STREAM_START_ACTION[spec.kind], { interface: interface_ });
-  } catch {
-    // backend unreachable; panel is cleared locally regardless, next refresh will retry
+    await postCmd(piId, starting ? STREAM_START_ACTION.logs : STREAM_STOP_ACTION.logs, {});
+  } catch (err) {
+    alert(`Failed to ${starting ? 'start' : 'stop'} streaming: ${err.message}`);
+    return;
+  } finally {
+    btn.disabled = false;
   }
+  entry.logsStreaming = starting;
+  btn.classList.toggle('streaming', starting);
+  btn.innerHTML = starting ? STOP_ICON_SVG : PLAY_ICON_SVG;
+  btn.title = starting ? 'Stop streaming' : 'Start streaming';
 }
 
 function connectFleetPiLog(piId, entry) {
@@ -547,8 +666,6 @@ function connectFleetPiLog(piId, entry) {
       const empty = panel.querySelector('.pi-log-empty');
       if (empty) empty.remove();
       cardLines.forEach(line => appendLineTo(panel, line));
-      const active = cardState.captureState && cardState.captureState[msg.category];
-      if (active) cardLines.forEach(line => active.lines.push(line));
     };
 
     if (msg.category === 'tcpdump') {
@@ -564,54 +681,88 @@ function connectFleetPiLog(piId, entry) {
         const tbody = cardState[panelKey].querySelector('tbody');
         if (tbody) ifaceLines.forEach(line => appendPacketRow(tbody, line));
       });
-    } else {
-      let target = null;
-      entry.ifaceCards.forEach(cardState => { if (cardState.logExpanded) target = cardState; });
-      if (target) appendTo(target, lines);
+    } else if (entry.logExpanded) {
+      appendTo(entry, lines);
     }
   };
 
   return ws;
 }
 
-async function toggleFleetIfaceLogPanel(piId, entry, cardState, spec) {
-  const expanding = !cardState[spec.expandedKey];
+function fleetAnyStreamOpen(entry) {
+  return entry.logExpanded || [...entry.ifaceCards.values()].some(c => c.tcpdumpStreaming);
+}
 
-  if (spec.kind === 'logs' && expanding) {
-    entry.ifaceCards.forEach((other) => {
-      if (other !== cardState && other.logExpanded) {
-        other.logExpanded = false;
-        other.logRow.classList.add('pd-log-collapsed');
-        other.logToggle.innerHTML = chevronIconSvg('down');
-        other.logToggle.title = 'Expand';
-      }
-    });
-  }
-
-  cardState[spec.expandedKey] = expanding;
-  cardState[spec.rowKey].classList.toggle('pd-log-collapsed', !expanding);
-  cardState[spec.toggleKey].innerHTML = chevronIconSvg(expanding ? 'up' : 'down');
-  cardState[spec.toggleKey].title = expanding ? 'Collapse' : 'Expand';
-
-  if (expanding && !cardState[spec.panelKey].children.length) {
-    cardState[spec.panelKey].innerHTML = '<div class="pi-log-empty">waiting for messages…</div>';
-  }
-
-  if (spec.kind === 'logs') {
-    try {
-      await postCmd(piId, expanding ? STREAM_START_ACTION.logs : STREAM_STOP_ACTION.logs, { interface: cardState.iface });
-    } catch {
-      // backend unreachable; UI still reflects the toggle, next attempt will retry
-    }
-  }
-
-  const anyOpen = [...entry.ifaceCards.values()].some(c => c.logExpanded || c.tcpdumpStreaming);
+function syncFleetWs(piId, entry) {
+  const anyOpen = fleetAnyStreamOpen(entry);
   if (anyOpen && !entry.ws) {
     entry.ws = connectFleetPiLog(piId, entry);
   } else if (!anyOpen && entry.ws) {
     entry.ws.close();
     entry.ws = null;
   }
+}
+
+// Per-interface tcpdump block: expand/collapse is view-only, the stream
+// itself is started/stopped by its own button.
+function toggleFleetIfaceLogPanel(piId, entry, cardState, spec) {
+  const expanding = !cardState[spec.expandedKey];
+  cardState[spec.expandedKey] = expanding;
+  cardState[spec.rowKey].classList.toggle('pd-log-collapsed', !expanding);
+  cardState[spec.toggleKey].innerHTML = chevronIconSvg(expanding ? 'up' : 'down');
+  cardState[spec.toggleKey].title = expanding ? 'Collapse' : 'Expand';
+}
+
+// The Pi-wide syslog block at the bottom of the expanded row (the stream
+// is the whole pi-agent journal, not per interface). Expanding starts the
+// stream; collapsing stops it unless a recording is using it.
+async function toggleFleetSyslogPanel(piId, entry) {
+  const expanding = !entry.logExpanded;
+  entry.logExpanded = expanding;
+  entry.logRow.classList.toggle('pd-log-collapsed', !expanding);
+  entry.logToggle.innerHTML = chevronIconSvg(expanding ? 'up' : 'down');
+  entry.logToggle.title = expanding ? 'Collapse' : 'Expand';
+  if (expanding && !entry.logPanel.children.length) {
+    entry.logPanel.innerHTML = '<div class="pi-log-empty">waiting for messages…</div>';
+  }
+
+  const recordingLogs = entry.captureState && entry.captureState.logs;
+  if (expanding || !recordingLogs) {
+    try {
+      await postCmd(piId, expanding ? STREAM_START_ACTION.logs : STREAM_STOP_ACTION.logs, {});
+    } catch {
+      // backend unreachable; UI still reflects the toggle, next attempt will retry
+    }
+  }
+  syncFleetWs(piId, entry);
+}
+
+function buildFleetSyslogBlock(piId, entry) {
+  const spec = PANELS.find(p => p.kind === 'logs');
+  const row = document.createElement('div');
+  row.className = 'pd-log-block pd-log-collapsed fleet-syslog-block';
+  row.innerHTML = `
+    <div class="pi-log-heading">
+      <span>${spec.label}</span>
+      <span class="pi-log-actions">
+        <button class="pi-log-capture icon-btn" type="button" title="Start Capture">&#9210;</button>
+        <button class="pi-log-clear icon-btn" type="button" title="Clear">&#128465;</button>
+        <button class="pi-log-collapse icon-btn" type="button" title="Expand">${chevronIconSvg('down')}</button>
+      </span>
+    </div>
+    <div class="pi-log-panel"></div>
+  `;
+  entry.logRow = row;
+  entry.logPanel = row.querySelector('.pi-log-panel');
+  entry.logToggle = row.querySelector('.pi-log-collapse');
+  entry.logExpanded = false;
+
+  const captureBtn = row.querySelector('.pi-log-capture');
+  entry.logToggle.addEventListener('click', () => toggleFleetSyslogPanel(piId, entry));
+  captureBtn.addEventListener('click', () => toggleCapture(piId, spec, entry, captureBtn));
+  row.querySelector('.pi-log-clear').addEventListener('click', () => clearPanel(piId, spec, entry.logPanel));
+  restoreRecordingState(piId, [{ state: entry, logsBtn: captureBtn }]);
+  return row;
 }
 
 async function toggleFleetTcpdumpStream(piId, entry, cardState, btn) {
@@ -626,7 +777,7 @@ async function toggleFleetTcpdumpStream(piId, entry, cardState, btn) {
     cardState.tcpdumpToggle.title = 'Collapse';
   }
 
-  const anyOpen = [...entry.ifaceCards.values()].some(c => c.logExpanded || c.tcpdumpStreaming);
+  const anyOpen = fleetAnyStreamOpen(entry);
   if (anyOpen && !entry.ws) {
     entry.ws = connectFleetPiLog(piId, entry);
   } else if (!anyOpen && entry.ws) {
@@ -1046,7 +1197,7 @@ function buildFleetIfaceCard(piId, entry, iface) {
     tcpdumpIfaceSelect: { value: iface },
   };
 
-  PANELS.forEach(spec => {
+  PANELS.filter(spec => spec.kind === 'tcpdump').forEach(spec => {
     const isTcpdump = spec.kind === 'tcpdump';
     const row = document.createElement('div');
     row.className = 'pd-log-block pd-log-collapsed';
@@ -1103,6 +1254,10 @@ function buildFleetIfaceCard(piId, entry, iface) {
 
   card.querySelector('.pd-iface-header').addEventListener('click', () => toggleFleetIfaceCard(piId, entry, cardState));
 
+  restoreRecordingState(piId, [{
+    state: cardState, iface, pcapBtn: card.querySelector('.pi-log-capture'),
+  }]);
+
   return cardState;
 }
 
@@ -1125,6 +1280,7 @@ function rebuildFleetIfaceCards(piId, entry, interfaces) {
       console.error(`[fleet] failed to build interface card for ${piId}/${iface}:`, err);
     }
   });
+  if (entry.rowExpanded) syncFleetWs(piId, entry);
 }
 
 function toggleRow(piId) {
@@ -1135,11 +1291,17 @@ function toggleRow(piId) {
   entry.mainToggle.innerHTML = chevronIconSvg(entry.rowExpanded ? 'down' : 'right');
 
   if (entry.rowExpanded) {
-    const anyActive = [...entry.ifaceCards.values()].some(c => c.logExpanded || c.tcpdumpStreaming);
+    const anyActive = fleetAnyStreamOpen(entry);
     if (anyActive && !entry.ws) entry.ws = connectFleetPiLog(piId, entry);
     return;
   }
 
+  if (entry.logExpanded) {
+    entry.logExpanded = false;
+    entry.logRow.classList.add('pd-log-collapsed');
+    entry.logToggle.innerHTML = chevronIconSvg('down');
+    entry.logToggle.title = 'Expand';
+  }
   entry.ifaceCards.forEach(cardState => {
     cardState.card.querySelector('.pd-iface-body').classList.add('hidden');
     cardState.card.querySelector('.pd-iface-toggle').innerHTML = chevronIconSvg('right');
@@ -1208,6 +1370,10 @@ function createPiRow(piId) {
   ifacesCell.colSpan = 7;
   const ifacesListEl = document.createElement('div');
   ifacesListEl.className = 'fleet-iface-list';
+  const powerBar = document.createElement('div');
+  powerBar.className = 'pi-power-actions fleet-power-bar';
+  renderPowerButtons(powerBar, piId);
+  ifacesCell.appendChild(powerBar);
   ifacesCell.appendChild(ifacesListEl);
   ifacesRow.appendChild(ifacesCell);
 
@@ -1216,7 +1382,9 @@ function createPiRow(piId) {
     rowExpanded: false, ws: null,
     ifaceCards: new Map(),
     ifaceDetailsCache: null, ifaceDetailsPromise: null, linkInfoCache: {},
+    captureState: null,
   };
+  ifacesCell.appendChild(buildFleetSyslogBlock(piId, entry));
 
   return entry;
 }
@@ -1306,6 +1474,7 @@ async function refreshPis() {
     if (!res.ok) return;
     pis = await res.json();
     renderPis();
+    syncRecordingButtons();
   } catch {
     // backend unreachable; keep last known list
   }

@@ -26,8 +26,10 @@ const ACTION_PARAMS = {
   ],
   set_channel: [{ name: 'channel', label: 'Channel', type: 'number' }],
   syslog: [{ name: 'lines', label: 'Lines', type: 'number', default: 100 }],
-  stream_logs: [{ name: 'interface', label: 'Interface', type: 'interface', required: true }],
+  stream_logs: [],
   stop_logs: [],
+  restart_agent: [],
+  reboot_pi: [],
   tcpdump: [{ name: 'interface', label: 'Interface', type: 'interface', required: true }],
   stop_tcpdump: [{ name: 'interface', label: 'Interface', type: 'interface', required: true }],
   connect_wifi: [
@@ -77,12 +79,20 @@ const ACTION_PARAMS = {
       ],
     },
   ],
-  // Monitor-mode's own channel setter (via iw, not nmcli - see
-  // pi_agent.set_monitor_channel) - no band field, since iw's "set channel"
-  // infers band from the channel number, same as connect_wifi's own default.
+  // Monitor-mode's own channel setter (via iw - see
+  // pi_agent.set_monitor_channel). Band only matters for 6GHz, whose
+  // channel numbers overlap 2.4/5GHz; otherwise it's implied by the channel.
   set_monitor_channel: [
     { name: 'interface', label: 'Interface', type: 'interface', required: true },
     { name: 'channel', label: 'Channel', type: 'number', required: true },
+    {
+      name: 'band', label: 'Band', type: 'select',
+      options: [{ value: '', label: 'auto (2.4/5GHz)' }, { value: '6', label: '6GHz' }],
+    },
+    {
+      name: 'width', label: 'Width (MHz)', type: 'select',
+      options: [{ value: '', label: '20' }, { value: '40', label: '40' }, { value: '80', label: '80' }, { value: '160', label: '160' }],
+    },
   ],
   // Switches an interface in place between managed and monitor mode (via
   // `iw ... set type` on the Pi - see pi_agent.set_interface_mode), instead
@@ -169,8 +179,9 @@ const ACTION_RESULT_FIELDS = {
   stream_logs: [
     { name: 'streaming', type: 'boolean' },
     { name: 'already_running', type: 'boolean' },
-    { name: 'interface', type: 'text' },
   ],
+  restart_agent: [{ name: 'scheduled', type: 'text' }, { name: 'in_seconds', type: 'number' }],
+  reboot_pi: [{ name: 'scheduled', type: 'text' }, { name: 'in_seconds', type: 'number' }],
   stop_logs: [
     { name: 'streaming', type: 'boolean' },
     { name: 'stopped', type: 'boolean' },

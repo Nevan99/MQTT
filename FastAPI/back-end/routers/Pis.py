@@ -110,11 +110,16 @@ def set_interface_default(
     known = pi.metadata_dict.get("interfaces", [])
     if interface not in known:
         raise HTTPException(status_code=400, detail=f"Not one of this Pi's known interfaces: {interface}")
-    if req.band is not None and req.band not in ("bg", "a"):
-        raise HTTPException(status_code=400, detail='band must be "bg" (2.4GHz), "a" (5GHz), or omitted')
+    if req.band is not None and req.band not in ("bg", "a", "6"):
+        raise HTTPException(status_code=400, detail='band must be "bg" (2.4GHz), "a" (5GHz), "6" (6GHz, monitor only), or omitted')
     if req.channel is not None and req.channel <= 0:
         raise HTTPException(status_code=400, detail="channel must be a positive number")
-    if req.band is not None and req.channel is not None:
+    if req.band == "6" and req.channel is not None:
+        # 6GHz channel numbers overlap 2.4/5GHz ones, so the band can't be
+        # inferred - just check it's a real 6GHz 20MHz channel.
+        if not (req.channel == 2 or (req.channel <= 233 and req.channel % 4 == 1)):
+            raise HTTPException(status_code=400, detail=f"channel {req.channel} is not a 6GHz channel (1, 5, 9 ... 233, or 2)")
+    elif req.band is not None and req.channel is not None:
         # Same convention connect_wifi/set_monitor_channel already use to
         # infer a band from a bare channel number - reject the pair up
         # front instead of silently saving a default that can never apply

@@ -1390,6 +1390,18 @@ class WifiMixin:
             return 5000 + channel * 5
         raise ValueError(f"unknown channel {channel}")
 
+    # Every 2.4/5GHz channel number; anything else that fits the 6GHz plan
+    # can only mean 6GHz.
+    _CHANNELS_2G_5G = set(range(1, 15)) | {
+        32, 36, 40, 44, 48, 52, 56, 60, 64, 68, 96, 100, 104, 108, 112, 116, 120,
+        124, 128, 132, 136, 140, 144, 149, 153, 157, 161, 165, 169, 173, 177,
+    }
+
+    @classmethod
+    def _is_6g_only_channel(cls, channel):
+        channel = int(channel)
+        return channel not in cls._CHANNELS_2G_5G and 1 <= channel <= 233 and channel % 4 == 1
+
     @staticmethod
     def _center_freq_6g(channel, width):
         """Center frequency of the 40/80/160MHz block a 6GHz 20MHz channel
@@ -1419,6 +1431,12 @@ class WifiMixin:
         width = int(width) if width else 20
         if width not in (20, 40, 80, 160):
             return {"error": "width must be 20, 40, 80 or 160"}
+
+        # No band given but the number only exists on 6GHz (e.g. 93, 101):
+        # 2.4/5GHz `set channel` would just fail with "Unknown channel".
+        if not is_6g and not band and self._is_6g_only_channel(channel):
+            is_6g = True
+            band = "6"
 
         if not is_6g:
             cmd = ["iw", "dev", interface, "set", "channel", str(channel)]
@@ -1450,11 +1468,16 @@ class WifiMixin:
                          "(e.g. MT7921AU/MT7922 or Intel AX210/BE200).",
             }
         if listed[freq].get("disabled"):
+            usable = sorted(c["channel"] for f, c in listed.items()
+                            if c["band"] == "6GHz" and not c.get("disabled"))
+            hint = (f"6GHz channels usable on {info.get('wiphy')} now: {usable}" if usable else
+                    f"no 6GHz channel is enabled on {info.get('wiphy')} - its regulatory "
+                    "domain (see regdom, the phy's own section if it has one) allows no 6GHz")
             return {
                 "interface": interface, "channel": channel, "band": "6GHz", "frequency_mhz": freq,
                 "applied": False,
-                "error": f"{freq} MHz is disabled by the regulatory domain - set a country "
-                         "that allows 6GHz (e.g. `iw reg set US`).",
+                "error": f"{freq} MHz (6GHz ch {channel}) is disabled by the regulatory domain. {hint}.",
+                "usable_6ghz_channels": usable,
                 "regdom": reg,
             }
 

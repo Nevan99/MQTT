@@ -924,13 +924,13 @@ function renderDetailInterfaceList(piId) {
 
 // Middle panel: syslog/tcpdump log windows, built once per visit to the
 // detail page and reusing the same connectPiLog/toggleCapture/
-// setStreamInterface functions the fleet table's inline rows use - those
+// toggleLogsStream functions the fleet table's inline rows use - those
 // only ever touch the entry object by key, so a plain object standing in
 // for a table row's state works without any changes to that logic. Unlike
 // the fleet table, both windows are always "expanded" here (no toggle),
 // so the socket opens immediately and closes when leaving the page.
 function buildDetailLogEntry(piId) {
-  const entry = { captureState: null, pcapState: null, ws: null, tcpdumpStreaming: false };
+  const entry = { captureState: null, pcapState: null, ws: null, tcpdumpStreaming: false, logsStreaming: false };
   document.querySelectorAll('#pdLogPanel .pd-log-block').forEach(block => {
     const kind = block.dataset.kind;
     const spec = PANELS.find(p => p.kind === kind);
@@ -944,29 +944,25 @@ function buildDetailLogEntry(piId) {
     resetLogPanel(entry[spec.panelKey], spec);
     if (kind === 'tcpdump') setupWiresharkTable(entry[spec.panelKey]);
 
-    const ifaceSelect = block.querySelector('.pi-stream-iface');
-    entry[kind + 'IfaceSelect'] = ifaceSelect;
-    ifaceSelect.value = '';
-
-    // Explicit start/stop for tcpdump only - opening/expanding the panel
-    // never auto-starts a capture (see performToggleTcpdumpStream).
+    // Explicit start/stop - opening the page never auto-starts a stream
+    // (see performToggleTcpdumpStream / toggleLogsStream).
     const streamBtn = block.querySelector('.pi-log-stream');
-    if (streamBtn) {
-      streamBtn.classList.remove('streaming');
-      streamBtn.innerHTML = PLAY_ICON_SVG;
-      streamBtn.title = 'Start streaming';
-      streamBtn.onclick = () => toggleDetailTcpdumpStream(piId, entry, streamBtn);
-    }
+    streamBtn.classList.remove('streaming');
+    streamBtn.innerHTML = PLAY_ICON_SVG;
+    streamBtn.title = 'Start streaming';
+    streamBtn.onclick = kind === 'tcpdump'
+      ? () => toggleDetailTcpdumpStream(piId, entry, streamBtn)
+      : () => toggleLogsStream(piId, entry, streamBtn);
 
-    // Switching the interface dropdown never used to have any effect for
-    // tcpdump (unlike logs, which restarts its stream via
-    // setStreamInterface) - so picking a new interface while a stream was
-    // running left the button stuck showing "streaming" for an interface
-    // that was no longer selected, and the panel kept showing packets from
-    // the old interface instead of the newly picked one.
-    ifaceSelect.onchange = kind === 'tcpdump'
-      ? (e) => onDetailTcpdumpIfaceChange(piId, entry, streamBtn, e.target.value)
-      : (e) => setStreamInterface(piId, entry, spec, e.target.value);
+    // tcpdump only - syslog is the whole daemon's journal, no interface.
+    // Switching interface stops any running stream so the button never
+    // shows "streaming" for an interface that's no longer selected.
+    if (kind === 'tcpdump') {
+      const ifaceSelect = block.querySelector('.pi-stream-iface');
+      entry.tcpdumpIfaceSelect = ifaceSelect;
+      ifaceSelect.value = '';
+      ifaceSelect.onchange = (e) => onDetailTcpdumpIfaceChange(piId, entry, streamBtn, e.target.value);
+    }
 
     const captureBtn = block.querySelector('.pi-log-capture');
     captureBtn.innerHTML = '&#9210;';
@@ -1059,6 +1055,19 @@ function refreshDetailLogIfaceOptions(piId, entry) {
   });
 }
 
+function detailRecordingTargets(logEntry) {
+  return [{
+    state: logEntry,
+    logsBtn: document.querySelector('#pdLogPanel .pd-log-block[data-kind="logs"] .pi-log-capture'),
+    pcapBtn: document.querySelector('#pdLogPanel .pd-log-block[data-kind="tcpdump"] .pi-log-capture'),
+    // The pcap stop command needs the interface, so show which one it is.
+    onPcapIface: (iface) => {
+      const select = logEntry.tcpdumpIfaceSelect;
+      if (select && [...select.options].some(o => o.value === iface)) select.value = iface;
+    },
+  }];
+}
+
 function closeDetailLogEntry() {
   if (detailLogEntry && detailLogEntry.ws) detailLogEntry.ws.close();
   detailLogEntry = null;
@@ -1109,6 +1118,7 @@ function showPiDetail(piId) {
   views.forEach(v => v.classList.remove('active'));
   document.getElementById('piDetail').classList.add('active');
   document.getElementById('piDetailTitle').textContent = piId;
+  renderPowerButtons(document.getElementById('piDetailPower'), piId);
 
   renderDetailInfo(piId);
   renderDetailInterfaceList(piId);
@@ -1116,6 +1126,7 @@ function showPiDetail(piId) {
   detailLogEntry = buildDetailLogEntry(piId);
   refreshDetailLogIfaceOptions(piId, detailLogEntry);
   detailLogEntry.ws = connectPiLog(piId, detailLogEntry);
+  restoreRecordingState(piId, detailRecordingTargets(detailLogEntry));
 
   setupDetailBar(
     document.getElementById('pdAction'), document.getElementById('pdActionParams'),

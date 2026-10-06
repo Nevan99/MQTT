@@ -67,6 +67,12 @@ def _add_missing_columns():
                 conn.execute(text(f"ALTER TABLE interfacestatus ADD COLUMN {col} {coltype}"))
                 conn.commit()
 
+        capture_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(capture)"))}
+        for col in ("started_at", "stopped_at"):
+            if capture_cols and col not in capture_cols:
+                conn.execute(text(f"ALTER TABLE capture ADD COLUMN {col} DATETIME"))
+                conn.commit()
+
 
 def get_session():
     with Session(engine) as session:

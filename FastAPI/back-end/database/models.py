@@ -55,6 +55,9 @@ class Capture(SQLModel, table=True):
     filename: str           # name of the file under CAPTURES_DIR holding the lines
     line_count: int = 0
     created_at: datetime = Field(default_factory=utcnow)
+    # Capture window (UTC). Null on rows saved before these columns existed.
+    started_at: Optional[datetime] = None
+    stopped_at: Optional[datetime] = None
 
 
 class WifiScanHistory(SQLModel, table=True):

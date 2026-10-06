@@ -9,6 +9,7 @@ from pathlib import Path
 
 from database.database import get_session_direct
 from database.models import Capture
+from service import recordings
 from service.pcap_decoder import PcapStreamDecoder
 from src.connection_manager import manager
 
@@ -70,18 +71,27 @@ class _CaptureHandler(socketserver.StreamRequestHandler):
 
         filename = f"{uuid.uuid4().hex}.pcap"
         dest = CAPTURES_DIR / filename
+        started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        interface = header.get("interface") or ""
+        recordings.register_pcap(pi_id, interface, name, started_at)
 
         byte_count = 0
-        with dest.open("wb") as f:
-            while True:
-                chunk = self.rfile.read(65536)
-                if not chunk:
-                    break
-                byte_count += len(chunk)
-                f.write(chunk)
+        try:
+            with dest.open("wb") as f:
+                while True:
+                    chunk = self.rfile.read(65536)
+                    if not chunk:
+                        break
+                    byte_count += len(chunk)
+                    f.write(chunk)
+        finally:
+            recordings.unregister_pcap(pi_id, interface)
 
         with get_session_direct() as session:
-            capture = Capture(pi_id=pi_id, category="pcap", name=name, filename=filename, line_count=0)
+            capture = Capture(
+                pi_id=pi_id, category="pcap", name=name, filename=filename, line_count=0,
+                started_at=started_at, stopped_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            )
             session.add(capture)
             session.commit()
             session.refresh(capture)
@@ -127,6 +137,7 @@ class _CaptureHandler(socketserver.StreamRequestHandler):
             line = raw_line.decode(errors="replace").rstrip("\n")
             if not line:
                 continue
+            recordings.append_log_line(pi_id, line)
             _relay(pi_id, "logs", line)
 
     def _relay_packets(self, pi_id, interface, decoded):
