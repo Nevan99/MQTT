@@ -49,6 +49,16 @@ const ACTION_PARAMS = {
         { value: 'legacy', label: '802.11a/g max' },
       ],
     },
+    // WPA3-Personal Compatibility Mode: the WPA3 part is in the AP's RSN
+    // Override elements, only read with rsn_overriding on (agent default: force).
+    {
+      name: 'rsn_overriding', label: 'WPA3-PCM / RSN overriding', type: 'select',
+      options: [
+        { value: '', label: 'force on (default)' },
+        { value: '1', label: 'auto (driver capability)' },
+        { value: '0', label: 'off (join PCM AP as WPA2)' },
+      ],
+    },
   ],
   disconnect_wifi: [{ name: 'interface', label: 'Interface', type: 'interface', required: true }],
   list_interfaces: [],
@@ -205,6 +215,9 @@ const ACTION_RESULT_FIELDS = {
     { name: 'interface', type: 'text' },
     { name: 'max_standard', type: 'text' },
     { name: 'max_standard_applied', type: 'boolean' },
+    { name: 'key_mgmt', type: 'text' },
+    { name: 'pairwise_cipher', type: 'text' },
+    { name: 'rsn_overriding_applied', type: 'boolean' },
     { name: 'failure_reason', type: 'text' },
     { name: 'output', type: 'text' },
   ],

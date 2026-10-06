@@ -326,6 +326,7 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
                     action, payload.get("command_id"), interface, self.connect_wifi,
                     payload.get("ssid"), payload.get("password"), interface,
                     payload.get("bssid"), payload.get("channel"), payload.get("max_standard"),
+                    payload.get("rsn_overriding"),
                 )
                 return
             elif action == "disconnect_wifi":

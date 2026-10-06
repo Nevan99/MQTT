@@ -1104,7 +1104,7 @@ class WifiMixin:
     )
 
     async def connect_wifi(self, ssid, password=None, interface=None, bssid=None, channel=None,
-                            max_standard=None):
+                            max_standard=None, rsn_overriding=None):
         """Connect to a wifi hotspot via wpa_supplicant + dhcpcd - see the
         module-level comment above for why NetworkManager is never involved.
 
@@ -1183,6 +1183,7 @@ class WifiMixin:
                     "output": f"failed to start wpa_supplicant: {err}",
                 }
 
+            rsn_overriding_applied = None
             add_ret = await self._wpa_cli(interface, "add_network")
             net_id = add_ret.stdout.strip().splitlines()[-1].strip() if add_ret.returncode == 0 else ""
             if not net_id.isdigit():
@@ -1234,6 +1235,20 @@ class WifiMixin:
                             interface, "set_network", net_id, param, "CCMP GCMP-256 GCMP TKIP",
                         )).stdout.strip())
                 outputs.append((await self._wpa_cli(interface, "set_network", net_id, "ieee80211w", "1")).stdout.strip())
+
+                # WPA3-Personal Compatibility Mode (WPA3-PCM): the AP's
+                # normal RSNE says WPA2-PSK; the WPA3 parameters (SAE /
+                # SAE-EXT-KEY, PMF required, GCMP-256) are in RSN Override
+                # elements, which wpa_supplicant ignores unless
+                # rsn_overriding is on. Upstream defaults it to 0, and 1
+                # ("auto") needs a driver capability flag mt76/brcmfmac
+                # don't set - so it's forced (2) by default here. On an AP
+                # without override elements it changes nothing. Old builds
+                # (no RSN overriding support) answer FAIL.
+                rsn_value = "2" if rsn_overriding is None else str(int(rsn_overriding))
+                rsn_ret = await self._wpa_cli(interface, "set_network", net_id, "rsn_overriding", rsn_value)
+                outputs.append(rsn_ret.stdout.strip())
+                rsn_overriding_applied = rsn_ret.stdout.strip() == "OK"
             else:
                 outputs.append((await self._wpa_cli(interface, "set_network", net_id, "key_mgmt", "NONE")).stdout.strip())
             if channel:
@@ -1293,6 +1308,9 @@ class WifiMixin:
                     self.last_wpa_failure = dhcp_failure
 
         connected = associated and bool(ip_address)
+        # What was actually negotiated - on a WPA3-PCM AP, "WPA2-PSK" here
+        # means the RSN override (WPA3) part wasn't used.
+        status = await self._current_wpa_status(interface) if associated else None
 
         return {
             "ssid": ssid,
@@ -1310,6 +1328,12 @@ class WifiMixin:
             ),
             "connected": connected,
             "ip_address": ip_address,
+            "key_mgmt": status.get("key_mgmt") if status else None,
+            "pairwise_cipher": status.get("pairwise_cipher") if status else None,
+            # True: wpa_supplicant accepted rsn_overriding (WPA3-PCM capable
+            # build). False: this build has no RSN overriding - run
+            # scripts/upgrade_wpa_supplicant.sh. None: open network.
+            "rsn_overriding_applied": rsn_overriding_applied,
             # Populated from the control socket when association was
             # rejected - the reason/status code a status poll never showed.
             "failure_reason": getattr(self, "last_wpa_failure", None),
