@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlmodel import Session, select
 
 from database.database import get_session, get_session_direct
-from database.models import TestCase, TestRun, Command, Pi
+from database.models import TestCase, TestRun, Command, Pi, InterfaceStatus
 from schemas.schemas import (
     TestCaseRequest, TestCaseOut, TestRunOut, CommandRequest,
     TestCaseBulkRequest, TestCaseBulkTagRequest,
@@ -726,6 +726,39 @@ def _result_summary(result) -> str:
     return dumped if len(dumped) <= 200 else dumped[:197] + "..."
 
 
+# A step param written as "pi:<pi_id>/<interface>" (e.g. ping's target
+# "pi:pi03/wlan2") means "that radio's current IP". Resolved when the step
+# runs, not when it's saved: radios get a new DHCP lease on every
+# reconnect, so a stored IP would go stale between runs.
+PI_ADDR_PREFIX = "pi:"
+
+
+def _resolve_pi_addresses(params: dict) -> tuple[dict, dict, str | None]:
+    """(params with every pi:<pi>/<iface> replaced by its current IPv4,
+    {token: ip} for the log, error or None)."""
+    resolved, seen = {}, {}
+    for key, value in params.items():
+        if not (isinstance(value, str) and value.startswith(PI_ADDR_PREFIX)):
+            resolved[key] = value
+            continue
+        pi_id, _, iface = value[len(PI_ADDR_PREFIX):].partition("/")
+        if not pi_id or not iface:
+            return params, seen, f"{key}={value!r}: expected pi:<pi_id>/<interface>"
+        with get_session_direct() as session:
+            row = session.exec(
+                select(InterfaceStatus)
+                .where(InterfaceStatus.pi_id == pi_id, InterfaceStatus.interface == iface)
+                .order_by(InterfaceStatus.id.desc())
+            ).first()
+        ip = row.ip_address if row else None
+        if not ip:
+            return params, seen, (f"{key}={value!r}: {pi_id}/{iface} has no IP right now "
+                                  "(not connected, or no status reported yet)")
+        resolved[key] = ip
+        seen[value] = ip
+    return resolved, seen, None
+
+
 def _run_step_once(step: dict, step_index: int = 0, iteration: int = 1) -> dict:
     """Runs one step against every one of its resolved targets - one entry
     per target, each with its own dispatched command's result and pass/fail
@@ -759,6 +792,20 @@ def _run_step_once(step: dict, step_index: int = 0, iteration: int = 1) -> dict:
             "duration_ms": 0, "log": log,
             "entries": [{"status": "failed", "error": "no target resolved"}],
         }
+
+    params, pi_addrs, addr_error = _resolve_pi_addresses(params)
+    if addr_error:
+        log.append(_log_line("error", f"{label}: {addr_error}"))
+        return {
+            "action": action, "status": "failed", "target": step.get("target"),
+            "params": params, "iteration": iteration,
+            "started_at": started_at.isoformat(),
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "duration_ms": 0, "log": log,
+            "entries": [{"status": "failed", "error": addr_error}],
+        }
+    for token, ip in pi_addrs.items():
+        log.append(_log_line("info", f"{label}: {token} -> {ip}"))
 
     log.append(_log_line("info", f"{label} -> {len(targets)} target(s): {', '.join(map(str, targets))}"))
     if params:

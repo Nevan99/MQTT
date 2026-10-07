@@ -782,6 +782,25 @@ function tcIfaceFlatSelection(saved, own) {
   return [];
 }
 
+// Every Pi radio as a ping target. Value is the pi:<pi>/<iface> reference,
+// the label shows its IP right now (or that it has none) for orientation.
+async function populateTcClientPicker(picker, current) {
+  let rows = [];
+  try {
+    const res = await apiFetch(`${API}/pis/interface-status`);
+    if (res.ok) rows = await res.json();
+  } catch {
+    // best-effort - the text field still takes a plain IP or pi: reference
+  }
+  const radios = rows.filter(r => r.type !== 'ethernet' && r.type !== 'loopback').sort((a, b) =>
+    a.pi_id === b.pi_id ? a.interface.localeCompare(b.interface) : a.pi_id.localeCompare(b.pi_id));
+  picker.innerHTML = '<option value="">— or ping another client (Pi radio) —</option>' + radios.map(r => {
+    const ref = `pi:${r.pi_id}/${r.interface}`;
+    const now = r.ip_address ? `now ${r.ip_address}` : 'no IP now';
+    return `<option value="${ref}" ${ref === current ? 'selected' : ''}>${r.pi_id} / ${r.interface} — ${now}${r.ssid ? ` (${r.ssid})` : ''}</option>`;
+  }).join('');
+}
+
 function renderTcStepParamFields(container, step) {
   const fields = ACTION_PARAMS[step.action] || [];
   const targetPis = tcTargetPis(step);
@@ -818,8 +837,31 @@ function renderTcStepParamFields(container, step) {
       `;
     }
     const value = saved !== undefined ? saved : (f.default !== undefined ? f.default : '');
+    if (f.pingTargetPicker) {
+      // Another client as the target: stored as pi:<pi>/<iface> and turned
+      // into that radio's IP by the backend when the step runs (see
+      // _resolve_pi_addresses) - an IP saved now would go stale on the
+      // next DHCP lease.
+      return `
+        <label>${f.label}</label>
+        <input class="field tc-step-param" data-param="${f.name}" type="text" value="${value}">
+        <select class="field tc-ping-target-picker"><option value="">— or ping another client (Pi radio) —</option></select>
+        <div class="hint">pi:&lt;pi&gt;/&lt;interface&gt; is resolved to that radio's current IP when the step runs</div>
+      `;
+    }
     return `<label>${f.label}</label><input class="field tc-step-param" data-param="${f.name}" type="${f.type}" value="${value}">`;
   }).join('') || '<div class="hint">this action has no parameters</div>';
+
+  container.querySelectorAll('.tc-ping-target-picker').forEach(picker => {
+    const input = picker.previousElementSibling;
+    populateTcClientPicker(picker, input.value);
+    picker.addEventListener('change', () => {
+      if (!picker.value) return;
+      input.value = picker.value;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  });
 
   container.querySelectorAll('.tc-iface-param').forEach(wrap => {
     const saved = step.params[wrap.dataset.param];
