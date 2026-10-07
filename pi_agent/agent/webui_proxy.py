@@ -62,6 +62,11 @@ class _Headers:
 
     def __init__(self):
         self._entries = {}  # lower(name) -> (original_name, value)
+        # Set-Cookie is the one header that legitimately repeats and can't
+        # be comma-joined (cookie dates contain commas) - kept as a list.
+        # Without this a login response setting a session cookie AND a
+        # CSRF cookie lost all but the last one.
+        self.set_cookies = []
 
     def __contains__(self, name):
         return name.lower() in self._entries
@@ -82,7 +87,8 @@ class _Headers:
         del self._entries[name.lower()]
 
     def items(self):
-        return [(original, value) for original, value in self._entries.values()]
+        return ([(original, value) for original, value in self._entries.values()]
+                + [("Set-Cookie", c) for c in self.set_cookies])
 
 
 class WebUiProxyMixin:
@@ -254,6 +260,8 @@ class WebUiProxyMixin:
             self._webui_proxies[interface] = {
                 "port": port, "gateway": gateway, "target_port": target_port, "server": server,
                 "timer": self._arm_webui_proxy_ttl(interface),
+                # name -> value, see _apply_cookie_jar / _absorb_set_cookies
+                "cookies": {},
             }
 
         return {"interface": interface, "port": port, "gateway": gateway,
@@ -313,6 +321,10 @@ class WebUiProxyMixin:
         # see the class docstring) - matches how the upstream connection
         # itself picks TLS vs plain (target_port == 443).
         upstream_scheme = "https" if target_port == 443 else "http"
+
+        entry = self._webui_proxies.get(interface)
+        jar = entry["cookies"] if entry else {}
+        self._apply_cookie_jar(headers, jar)
 
         headers["Host"] = gateway
         for name in ("Origin", "Referer"):
@@ -388,6 +400,7 @@ class WebUiProxyMixin:
                     continue
 
                 if got_101:
+                    self._absorb_set_cookies(resp_headers, jar)
                     # Handshake succeeded - forward the 101 response as-is
                     # (its Connection/Upgrade headers are already correct)
                     # and switch to a raw relay; this owns closing both
@@ -397,9 +410,17 @@ class WebUiProxyMixin:
                     await self._relay_websocket(reader, writer, upstream_reader, upstream_writer)
                     return
 
+                self._absorb_set_cookies(resp_headers, jar)
+                self._strip_browser_blockers(resp_headers)
+
                 if "Location" in resp_headers:
+                    # force http: an https:// redirect to the AP itself
+                    # would otherwise point the browser at TLS on this
+                    # plain-HTTP proxy and fail (classic POST /login ->
+                    # 302 https://<ap>/home).
                     resp_headers["Location"] = self._rewrite_url_host(
                         resp_headers["Location"], client_host, from_host=gateway,
+                        force_scheme="http",
                     )
 
                 if resp_body and self._is_rewritable_text(resp_headers.get("Content-Type", "")):
@@ -419,6 +440,71 @@ class WebUiProxyMixin:
                     await upstream_writer.wait_closed()
                 except Exception:
                     pass
+
+    @staticmethod
+    def _apply_cookie_jar(headers, jar):
+        """Cookie header upstream = proxy's jar + whatever the browser sent
+        (browser wins on a name clash, e.g. after a client-side logout).
+
+        The jar is why REST logins work at all: the AP serves HTTPS, so its
+        session cookies carry Secure / SameSite=None, and the browser sees
+        this proxy as plain HTTP inside a cross-site iframe (the Fleet UI) -
+        it drops or withholds those cookies, so every API call after the
+        login looked unauthenticated. JSON-RPC-over-WebSocket UIs never
+        noticed because their auth lives inside the socket."""
+        if not jar:
+            return
+        cookies = dict(jar)
+        for part in headers.get("Cookie", "").split(";"):
+            name, sep, value = part.strip().partition("=")
+            if sep:
+                cookies[name] = value
+        headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
+
+    @staticmethod
+    def _absorb_set_cookies(resp_headers, jar):
+        """Store every Set-Cookie in the jar (deleted/expired ones removed),
+        and pass a browser-acceptable copy through too - JS that reads a
+        CSRF token from document.cookie still needs it. Secure, Domain and
+        SameSite=None are dropped: none can be honoured on plain HTTP."""
+        passed = []
+        for raw in resp_headers.set_cookies:
+            parts = [p.strip() for p in raw.split(";")]
+            name, sep, value = parts[0].partition("=")
+            if not sep:
+                continue
+            attrs = {p.split("=", 1)[0].lower(): p for p in parts[1:] if p}
+            expired = (attrs.get("max-age", "max-age=1").split("=", 1)[-1].strip() in ("0", "-1")
+                       or value == "" or value.lower() == "deleted")
+            if expired:
+                jar.pop(name, None)
+            else:
+                jar[name] = value
+            kept = [p for p in parts[1:] if p and p.split("=", 1)[0].lower() not in ("secure", "domain", "samesite", "partitioned")]
+            passed.append("; ".join([parts[0], *kept]))
+        resp_headers.set_cookies = passed
+
+    @staticmethod
+    def _strip_browser_blockers(resp_headers):
+        """Headers that make sense for the AP's own HTTPS origin but break
+        the page through this plain-HTTP proxy inside an iframe:
+        X-Frame-Options / CSP frame-ancestors block the iframe,
+        CSP upgrade-insecure-requests turns every fetch() into https://
+        (which this proxy can't serve), HSTS is meaningless here."""
+        for name in ("X-Frame-Options", "Strict-Transport-Security"):
+            if name in resp_headers:
+                del resp_headers[name]
+        for name in ("Content-Security-Policy", "Content-Security-Policy-Report-Only"):
+            csp = resp_headers.get(name)
+            if csp is None:
+                continue
+            directives = [d.strip() for d in csp.split(";")
+                          if d.strip() and d.strip().split()[0].lower() not in
+                          ("frame-ancestors", "upgrade-insecure-requests", "block-all-mixed-content")]
+            if directives:
+                resp_headers[name] = "; ".join(directives)
+            else:
+                del resp_headers[name]
 
     @staticmethod
     async def _relay_websocket(client_reader, client_writer, upstream_reader, upstream_writer):
@@ -494,7 +580,10 @@ class WebUiProxyMixin:
             if not line or ":" not in line:
                 continue
             name, _, value = line.partition(":")
-            headers[name.strip()] = value.strip()
+            if name.strip().lower() == "set-cookie":
+                headers.set_cookies.append(value.strip())
+            else:
+                headers[name.strip()] = value.strip()
 
         body = b""
         content_length = headers.get("Content-Length")
