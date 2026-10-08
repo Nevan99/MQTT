@@ -241,12 +241,10 @@ function pushToPiLogPanel(piId, lines) {
   lines.forEach(line => appendLineTo(entry.logPanel, line));
 }
 
-// connect_wifi/disconnect_wifi report a command status of "complete" as
-// soon as nmcli finishes running, regardless of whether the connect/
-// disconnect itself actually succeeded - a wrong password or an
-// unreachable AP still returns a "complete" command with connected:false
-// in the result. Callers care about that outcome, not just whether nmcli
-// ran without crashing, so the status badge should read as failed here too.
+// The backend now marks connect_wifi/connect_hotspot results with
+// connected:false as "failed" itself (mqtt_service._command_status);
+// disconnect_wifi still reports "complete" whenever it ran, so the badge
+// keeps mapping connected:false to failed here as well.
 const WIFI_CONNECTED_ACTIONS = new Set(['connect_wifi', 'disconnect_wifi', 'connect_hotspot']);
 
 function effectiveCommandStatus(action, status, result) {
@@ -279,7 +277,9 @@ async function pollCommand(commandId, entry, piId, action) {
         // refresh (see refreshFleetInterfaceStatusBuffer in fleet-table.js),
         // which reads as the icon never turning green at all if the user
         // isn't still watching by then.
-        if (data.status === 'complete' && WIFI_CONNECTED_ACTIONS.has(action) && data.result?.interface) {
+        // A failed connect changes state too (the attempt's network is
+        // removed, any previous association is gone), so refresh on both.
+        if (data.status !== 'pending' && WIFI_CONNECTED_ACTIONS.has(action) && data.result?.interface) {
           const entry = piRows.get(piId);
           const cardState = entry && entry.ifaceCards.get(data.result.interface);
           if (entry && cardState) {

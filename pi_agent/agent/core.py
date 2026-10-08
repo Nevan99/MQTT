@@ -337,6 +337,7 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
                     payload.get("bssid"), payload.get("channel"), payload.get("max_standard"),
                     payload.get("rsn_overriding"), payload.get("security"),
                     {k: payload.get(k) for k in self.EAP_PAYLOAD_KEYS},
+                    payload.get("band"),
                 )
                 return
             elif action == "disconnect_wifi":
@@ -364,7 +365,7 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
                     payload.get("ssid"), payload.get("password"),
                     payload.get("bssid"), payload.get("channel"),
                     payload.get("interfaces") or payload.get("interface"),
-                    payload.get("max_standard"),
+                    payload.get("max_standard"), payload.get("band"),
                 )
                 return
             elif action == "wifi_detail_scan":

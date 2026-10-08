@@ -1,0 +1,300 @@
+Oct 07 17:53:32 Alexle python[1460]: [pi_agent] command received: connect_wifi {'command_id': '27ebff0b-3f58-48c5-b24c-0d17fc6ebd04', 'action': 'connect_wifi', 'ssid': 'Kaon-Guest', 'bssid': '2e:70:4e:2b:d8:ef', 'password': '***', 'interface': 'wlan3', 'channel': 64, 'band': 'a'}
+Oct 07 17:53:32 Alexle python[1460]: [pi_agent] wifi action start: connect_wifi interface=wlan3 command_id=27ebff0b-3f58-48c5-b24c-0d17fc6ebd04
+Oct 07 17:53:32 Alexle python[1460]: [iw] (29ms, rc=0): iw dev wlan3 scan dump | stdout: BSS 02:10:18:00:00:09(on wlan3) \n         last seen: 426.828s [boottime] \n         TSF: 94549913971 usec (1d, 02:15:49) \n         freq: 5320.0 \n         beacon interval: 100 TUs \n         capability: ESS Privacy SpectrumMgmt RadioMeasure (0x1111) \n         signal: -46.00 dBm \n         last seen: 744 ms ago \n         Supported rates: 6.0* 9.0 12.0* 18.0 24.0* 36.0 48.0 54.0  \n         TIM: DTIM Count 0 DTIM Period 1 Bitmap Control 0x0 Bitmap[0] 0x0 \n         Country: PL        Environment: bogus \n                 Channels [36 - 64] @ 23 dBm \n                 Channels [100 - 140] @ 30 dBm \n         Power constraint: 0 dB \n         TPC report: TX power: 21 dBm \n         RSN:         * Version: 1 \n                  * Group cipher: CCMP \n                  * Pairwise ciphers: GCMP-256 CCMP \n                  * Authentication suites: SAE SAE-EXT-KEY \n                  * Capabilities: 16-PTKSA-RC 1-GTKSA-RC MFP-required MFP-capable (0x00cc) \n         BSS Load: \n                  * station count: 0 \n                  * channel utilisation: 140/255 \n                  * available admission capacity: 0 [*32us] \n         AP Channel Report: \n                  * operating class: 81 \n                  * channel(s): 3 \n         AP Channel Report: \n                  * operating class: 134 \n                  * channel(s): 69 \n         RM enabled capabilities: \n                 Capabilities: 0x32 0x00 0x00 0x00 0x00 \n                         Neighbor Report \n                         Beacon Passive Measurement \n                         Beacon Active Measurement \n                 Nonoperating Channel Max Measurement Duration: 0 \n                 Measurement Pilot Capability: 0 \n         Supported operating classes: \n                  * current operating class: 129 \n                  * operating class: 1 \n                  * operating class: 2 \n                  * operating class: 3 \n                  * operating class: 5 \n                  * operating class: 6 \n                  * operating class: 7 \n                  * operating class: 8 \n                  * operating class: 9 \n                  * operating class: 10 \n                  * operating class: 115 \n                  * operating class: 116 \n                  * operating class: 117 \n                  * operating class: 118 \n                  * operating class: 119 \n                  * operating class: 120 \n                  * operating class: 121 \n                  * operating class: 122 \n                  * operating class: 123 \n                  * operating class: 128 \n                  * operating class: 129 \n         HT capabilities: \n                 Capabilities: 0x9e3 \n                         RX LDPC \n                         H...(truncated)
+Oct 07 17:53:32 Alexle python[1460]: [iw] (14ms, rc=0): iw dev wlan3 link | stdout: Not connected.
+Oct 07 17:53:32 Alexle python[1460]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan3 add_network | stdout: 0
+Oct 07 17:53:32 Alexle python[1460]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan3 set_network 0 ssid "Kaon-Guest" | stdout: OK
+Oct 07 17:53:32 Alexle python[1460]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan3 set_network 0 bssid 2e:70:4e:2b:d8:ef | stdout: OK
+Oct 07 17:53:32 Alexle python[1460]: [wpa_cli] (11ms, rc=0): wpa_cli -i wlan3 set_network 0 psk *** | stdout: OK
+Oct 07 17:53:32 Alexle python[1460]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan3 set sae_pwe 2 | stdout: OK
+Oct 07 17:53:32 Alexle python[1460]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan3 set_network 0 key_mgmt WPA-PSK WPA-PSK-SHA256 SAE SAE-EXT-KEY | stdout: OK
+Oct 07 17:53:32 Alexle python[1460]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan3 set_network 0 pairwise CCMP GCMP-256 GCMP TKIP | stdout: OK
+Oct 07 17:53:32 Alexle python[1460]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan3 set_network 0 group CCMP GCMP-256 GCMP TKIP | stdout: OK
+Oct 07 17:53:32 Alexle python[1460]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan3 set_network 0 ieee80211w 1 | stdout: OK
+Oct 07 17:53:32 Alexle python[1460]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan3 set_network 0 rsn_overriding 2 | stdout: OK
+Oct 07 17:53:32 Alexle python[1460]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan3 set_network 0 scan_freq 5320 | stdout: OK
+Oct 07 17:53:32 Alexle python[1460]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan3 enable_network 0 | stdout: OK
+Oct 07 17:53:33 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:53:34 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:53:34 Alexle python[1460]: [wpa_cli] (1206ms, rc=0): wpa_cli -i wlan3 select_network 0 | stdout: OK
+Oct 07 17:53:34 Alexle python[1460]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan3 save_config | stdout: OK
+Oct 07 17:53:34 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-SCAN-RESULTS {}
+Oct 07 17:53:34 Alexle python[1460]: [pi_agent] wlan3: wpa event: WPS-AP-AVAILABLE {}
+Oct 07 17:53:34 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-NETWORK-NOT-FOUND {}
+Oct 07 17:53:35 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:53:36 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:53:36 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-SCAN-STARTED {}
+Oct 07 17:53:36 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-SCAN-RESULTS {}
+Oct 07 17:53:36 Alexle python[1460]: [pi_agent] wlan3: wpa event: WPS-AP-AVAILABLE {}
+Oct 07 17:53:36 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-NETWORK-NOT-FOUND {}
+Oct 07 17:53:37 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:53:38 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:53:39 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:53:40 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:53:41 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:53:42 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:53:42 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-SCAN-STARTED {}
+Oct 07 17:53:42 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-SCAN-RESULTS {}
+Oct 07 17:53:42 Alexle python[1460]: [pi_agent] wlan3: wpa event: WPS-AP-AVAILABLE {}
+Oct 07 17:53:42 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-NETWORK-NOT-FOUND {}
+Oct 07 17:53:43 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:53:44 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:53:45 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:53:46 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:53:47 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:53:48 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:53:48 Alexle python[1460]: [pi_agent] wlan4: still no COMPLETED after 60s but the attempt is live (wpa_state=DISCONNECTED), extending the wait
+Oct 07 17:53:49 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:53:49 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-SCAN-STARTED {}
+Oct 07 17:53:49 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-SCAN-RESULTS {}
+Oct 07 17:53:49 Alexle python[1460]: [pi_agent] wlan3: wpa event: WPS-AP-AVAILABLE {}
+Oct 07 17:53:49 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-NETWORK-NOT-FOUND {}
+Oct 07 17:53:50 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:53:51 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:53:52 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:53:53 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:53:54 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:53:55 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:53:55 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-SCAN-STARTED {}
+Oct 07 17:53:55 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-SCAN-RESULTS {}
+Oct 07 17:53:55 Alexle python[1460]: [pi_agent] wlan3: wpa event: WPS-AP-AVAILABLE {}
+Oct 07 17:53:55 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-NETWORK-NOT-FOUND {}
+Oct 07 17:53:56 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:53:57 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:53:58 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:53:59 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:00 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:01 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:02 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-SCAN-STARTED {}
+Oct 07 17:54:02 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:02 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-SCAN-RESULTS {}
+Oct 07 17:54:02 Alexle python[1460]: [pi_agent] wlan3: wpa event: WPS-AP-AVAILABLE {}
+Oct 07 17:54:02 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-NETWORK-NOT-FOUND {}
+Oct 07 17:54:03 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:03 Alexle python[1460]: [pi_agent] wlan4: still no COMPLETED after 75s but the attempt is live (wpa_state=DISCONNECTED), extending the wait
+Oct 07 17:54:04 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:05 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:06 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:07 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:08 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:08 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-SCAN-STARTED {}
+Oct 07 17:54:08 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-SCAN-RESULTS {}
+Oct 07 17:54:08 Alexle python[1460]: [pi_agent] wlan3: wpa event: WPS-AP-AVAILABLE {}
+Oct 07 17:54:08 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-NETWORK-NOT-FOUND {}
+Oct 07 17:54:09 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:10 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:11 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:12 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:13 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:14 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:14 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-SCAN-STARTED {}
+Oct 07 17:54:15 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:15 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-SCAN-RESULTS {}
+Oct 07 17:54:15 Alexle python[1460]: [pi_agent] wlan3: wpa event: WPS-AP-AVAILABLE {}
+Oct 07 17:54:15 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-NETWORK-NOT-FOUND {}
+Oct 07 17:54:16 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:17 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:18 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:18 Alexle python[1460]: [pi_agent] wlan4: still no COMPLETED after 90s but the attempt is live (wpa_state=DISCONNECTED), extending the wait
+Oct 07 17:54:19 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:20 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:21 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:21 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-SCAN-STARTED {}
+Oct 07 17:54:21 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-SCAN-RESULTS {}
+Oct 07 17:54:21 Alexle python[1460]: [pi_agent] wlan3: wpa event: WPS-AP-AVAILABLE {}
+Oct 07 17:54:21 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-NETWORK-NOT-FOUND {}
+Oct 07 17:54:22 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:23 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:24 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:25 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:26 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:27 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:27 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-SCAN-STARTED {}
+Oct 07 17:54:28 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:28 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-SCAN-RESULTS {}
+Oct 07 17:54:28 Alexle python[1460]: [pi_agent] wlan3: wpa event: WPS-AP-AVAILABLE {}
+Oct 07 17:54:28 Alexle python[1460]: [pi_agent] wlan3: wpa event: CTRL-EVENT-NETWORK-NOT-FOUND {}
+Oct 07 17:54:29 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:30 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:31 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:32 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:33 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:33 Alexle python[1460]: [pi_agent] wlan4: still no COMPLETED after 105s but the attempt is live (wpa_state=DISCONNECTED), extending the wait
+Oct 07 17:54:34 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:34 Alexle python[1460]: [wpa_cli] (5ms, rc=0): wpa_cli -i wlan3 remove_network 0 | stdout: OK
+Oct 07 17:54:34 Alexle python[1460]: [wpa_cli] (5ms, rc=0): wpa_cli -i wlan3 save_config | stdout: OK
+Oct 07 17:54:35 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:36 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:37 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:38 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:39 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:40 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:41 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:42 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:43 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:44 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:45 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:46 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:47 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:48 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:48 Alexle python[1460]: [wpa_cli] (4ms, rc=0): wpa_cli -i wlan4 remove_network 0 | stdout: OK
+Oct 07 17:54:49 Alexle python[1460]: [wpa_cli] (4ms, rc=0): wpa_cli -i wlan4 save_config | stdout: OK
+Oct 07 17:54:49 Alexle python[1460]: [pi_agent] command received: connect_wifi {'command_id': '0f88ece0-6175-4a08-8095-69329764e12f', 'action': 'connect_wifi', 'ssid': 'Kaon-Guest', 'bssid': '2e:70:4e:2b:d9:27', 'password': '***', 'interface': 'wlan4', 'channel': 93, 'band': '6'}
+Oct 07 17:54:49 Alexle python[1460]: [pi_agent] wifi action start: connect_wifi interface=wlan4 command_id=0f88ece0-6175-4a08-8095-69329764e12f
+Oct 07 17:54:49 Alexle python[1460]: [iw] (3ms, rc=0): iw dev wlan4 scan dump
+Oct 07 17:54:49 Alexle python[1460]: [iw] (3ms, rc=0): iw dev wlan4 link | stdout: Not connected.
+Oct 07 17:54:49 Alexle python[1460]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 add_network | stdout: 0
+Oct 07 17:54:49 Alexle python[1460]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 ssid "Kaon-Guest" | stdout: OK
+Oct 07 17:54:49 Alexle python[1460]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 bssid 2e:70:4e:2b:d9:27 | stdout: OK
+Oct 07 17:54:49 Alexle python[1460]: [wpa_cli] (12ms, rc=0): wpa_cli -i wlan4 set_network 0 psk *** | stdout: OK
+Oct 07 17:54:49 Alexle python[1460]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set sae_pwe 2 | stdout: OK
+Oct 07 17:54:49 Alexle python[1460]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 key_mgmt WPA-PSK WPA-PSK-SHA256 SAE SAE-EXT-KEY | stdout: OK
+Oct 07 17:54:49 Alexle python[1460]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 pairwise CCMP GCMP-256 GCMP TKIP | stdout: OK
+Oct 07 17:54:49 Alexle python[1460]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 group CCMP GCMP-256 GCMP TKIP | stdout: OK
+Oct 07 17:54:49 Alexle python[1460]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 ieee80211w 1 | stdout: OK
+Oct 07 17:54:49 Alexle python[1460]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 rsn_overriding 2 | stdout: OK
+Oct 07 17:54:49 Alexle python[1460]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 scan_freq 5465 | stdout: OK
+Oct 07 17:54:49 Alexle python[1460]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 enable_network 0 | stdout: OK
+Oct 07 17:54:49 Alexle python[1460]: [wpa_cli] (10ms, rc=0): wpa_cli -i wlan4 select_network 0 | stdout: OK
+Oct 07 17:54:49 Alexle python[1460]: [wpa_cli] (4ms, rc=0): wpa_cli -i wlan4 save_config | stdout: OK
+Oct 07 17:54:50 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:51 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:52 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:53 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:54 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:55 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:56 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:57 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:58 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:54:58 Alexle python[1460]: [pi_agent] command received: stop_logs {'command_id': '76d37cea-c4c8-4783-ae4e-7adf1bd23f70', 'action': 'stop_logs'}
+Oct 07 17:54:58 Alexle python[1460]: [pi_agent] command done (3ms): stop_logs -> ok
+Oct 07 17:54:59 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:55:00 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:55:01 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:55:02 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:55:03 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:55:04 Alexle python[1460]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 17:55:05 Alexle systemd[1]: Stopping pi-agent.service - Pi MQTT Agent...
+Oct 07 17:55:05 Alexle systemd[1]: pi-agent.service: Deactivated successfully.
+Oct 07 17:55:05 Alexle systemd[1]: Stopped pi-agent.service - Pi MQTT Agent.
+Oct 07 17:55:05 Alexle systemd[1]: pi-agent.service: Consumed 11.739s CPU time.
+Oct 07 17:55:21 Alexle systemd[1]: Started pi-agent.service - Pi MQTT Agent.
+Oct 07 17:55:22 Alexle python[5115]: [iptables-save] (6ms, rc=0): iptables-save -t nat | stdout: # Generated by iptables-save v1.8.11 (nf_tables) on Wed Oct  7 17:55:22 2026 \n *nat \n :PREROUTING ACCEPT [0:0] \n :INPUT ACCEPT [0:0] \n :OUTPUT ACCEPT [0:0] \n :POSTROUTING ACCEPT [0:0] \n COMMIT \n # Completed on Wed Oct  7 17:55:22 2026
+Oct 07 17:55:22 Alexle python[5115]: [ip] (4ms, rc=0): ip -4 -o addr show eth0 | stdout: 2: eth0    inet 192.168.150.96/24 brd 192.168.150.255 scope global dynamic noprefixroute eth0\       valid_lft 3082sec preferred_lft 3082sec
+Oct 07 17:55:22 Alexle python[5115]: [pi_agent] MQTT connection bound to eth0 (192.168.150.96)
+Oct 07 17:55:22 Alexle python[5115]: [ip] (4ms, rc=0): ip -o link show | stdout: 1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000\    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00 \n 2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP mode DEFAULT group default qlen 1000\    link/ether 88:a2:9e:80:66:b2 brd ff:ff:ff:ff:ff:ff \n 3: wlan0: <BROADCAST,MULTICAST> mtu 1500 qdisc noop state DOWN mode DEFAULT group default qlen 1000\    link/ether 88:a2:9e:80:66:b3 brd ff:ff:ff:ff:ff:ff \n 5: wlan2: <BROADCAST,MULTICAST> mtu 1500 qdisc noop state DOWN mode DEFAULT group default qlen 1000\    link/ether 3c:78:95:23:ad:64 brd ff:ff:ff:ff:ff:ff \n 6: wlan3: <NO-CARRIER,BROADCAST,MULTICAST,UP> mtu 1500 qdisc noqueue state DOWN mode DEFAULT group default qlen 1000\    link/ether 3c:78:95:23:9f:fa brd ff:ff:ff:ff:ff:ff \n 7: wlan4: <NO-CARRIER,BROADCAST,MULTICAST,UP> mtu 1500 qdisc noqueue state DOWN mode DEFAULT group default qlen 1000\    link/ether 50:3d:d1:ac:e8:de brd ff:ff:ff:ff:ff:ff \n 8: wlan1: <BROADCAST,MULTICAST> mtu 1500 qdisc noop state DOWN mode DEFAULT group default qlen 1000\    link/ether 60:15:6f:36:f6:0e brd ff:ff:ff:ff:ff:ff
+Oct 07 17:58:52 Alexle systemd[1]: Stopping pi-agent.service - Pi MQTT Agent...
+Oct 07 17:58:52 Alexle systemd[1]: pi-agent.service: Deactivated successfully.
+Oct 07 17:58:52 Alexle systemd[1]: Stopped pi-agent.service - Pi MQTT Agent.
+Oct 07 17:58:52 Alexle systemd[1]: pi-agent.service: Consumed 8.671s CPU time.
+Oct 07 17:58:52 Alexle systemd[1]: Started pi-agent.service - Pi MQTT Agent.
+Oct 07 17:58:52 Alexle python[6738]: [iptables-save] (19ms, rc=0): iptables-save -t nat | stdout: # Generated by iptables-save v1.8.11 (nf_tables) on Wed Oct  7 17:58:52 2026 \n *nat \n :PREROUTING ACCEPT [0:0] \n :INPUT ACCEPT [0:0] \n :OUTPUT ACCEPT [0:0] \n :POSTROUTING ACCEPT [0:0] \n COMMIT \n # Completed on Wed Oct  7 17:58:52 2026
+Oct 07 17:58:52 Alexle python[6738]: [ip] (4ms, rc=0): ip -4 -o addr show eth0 | stdout: 2: eth0    inet 192.168.150.96/24 brd 192.168.150.255 scope global dynamic noprefixroute eth0\       valid_lft 2871sec preferred_lft 2871sec
+Oct 07 17:58:52 Alexle python[6738]: [pi_agent] MQTT connection bound to eth0 (192.168.150.96)
+Oct 07 17:58:52 Alexle python[6738]: [ip] (5ms, rc=0): ip -o link show | stdout: 1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000\    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00 \n 2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP mode DEFAULT group default qlen 1000\    link/ether 88:a2:9e:80:66:b2 brd ff:ff:ff:ff:ff:ff \n 3: wlan0: <BROADCAST,MULTICAST> mtu 1500 qdisc noop state DOWN mode DEFAULT group default qlen 1000\    link/ether 88:a2:9e:80:66:b3 brd ff:ff:ff:ff:ff:ff \n 5: wlan2: <BROADCAST,MULTICAST> mtu 1500 qdisc noop state DOWN mode DEFAULT group default qlen 1000\    link/ether 3c:78:95:23:ad:64 brd ff:ff:ff:ff:ff:ff \n 6: wlan3: <NO-CARRIER,BROADCAST,MULTICAST,UP> mtu 1500 qdisc noqueue state DOWN mode DEFAULT group default qlen 1000\    link/ether 3c:78:95:23:9f:fa brd ff:ff:ff:ff:ff:ff \n 7: wlan4: <NO-CARRIER,BROADCAST,MULTICAST,UP> mtu 1500 qdisc noqueue state DOWN mode DEFAULT group default qlen 1000\    link/ether 50:3d:d1:ac:e8:de brd ff:ff:ff:ff:ff:ff \n 8: wlan1: <BROADCAST,MULTICAST> mtu 1500 qdisc noop state DOWN mode DEFAULT group default qlen 1000\    link/ether 60:15:6f:36:f6:0e brd ff:ff:ff:ff:ff:ff
+Oct 07 18:01:00 Alexle python[6738]: [pi_agent] command received: connect_wifi {'command_id': '40092c6e-fc5a-4c5a-8896-2f7544dba026', 'action': 'connect_wifi', 'ssid': 'T-6QNM-WiFi', 'password': '***', 'max_standard': 'be', 'eap_method': 'PEAP', 'interface': 'wlan4', 'channel': 93, 'band': '6'}
+Oct 07 18:01:00 Alexle python[6738]: [pi_agent] wifi action start: connect_wifi interface=wlan4 command_id=40092c6e-fc5a-4c5a-8896-2f7544dba026
+Oct 07 18:01:00 Alexle python[6738]: [ip] (4ms, rc=0): ip link set wlan4 up
+Oct 07 18:01:00 Alexle python[6738]: [wpa_supplicant] (72ms, rc=0): wpa_supplicant -B -i wlan4 -c /tmp/wpa_supplicant-wlan4.conf -D nl80211 | stdout: Successfully initialized wpa_supplicant
+Oct 07 18:01:00 Alexle python[6738]: [wpa_cli] (6ms, rc=0): wpa_cli -i wlan4 add_network | stdout: 0
+Oct 07 18:01:00 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 ssid "T-6QNM-WiFi" | stdout: OK
+Oct 07 18:01:00 Alexle python[6738]: [wpa_cli] (15ms, rc=0): wpa_cli -i wlan4 set_network 0 psk *** | stdout: OK
+Oct 07 18:01:00 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set sae_pwe 2 | stdout: OK
+Oct 07 18:01:00 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 key_mgmt WPA-PSK WPA-PSK-SHA256 SAE SAE-EXT-KEY | stdout: OK
+Oct 07 18:01:00 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 pairwise CCMP GCMP-256 GCMP TKIP | stdout: OK
+Oct 07 18:01:00 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 group CCMP GCMP-256 GCMP TKIP | stdout: OK
+Oct 07 18:01:00 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 ieee80211w 1 | stdout: OK
+Oct 07 18:01:00 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 rsn_overriding 2 | stdout: OK
+Oct 07 18:01:00 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 scan_freq 6415 | stdout: OK
+Oct 07 18:01:00 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 enable_network 0 | stdout: OK
+Oct 07 18:01:00 Alexle python[6738]: [wpa_cli] (11ms, rc=0): wpa_cli -i wlan4 select_network 0 | stdout: OK
+Oct 07 18:01:00 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 save_config | stdout: OK
+Oct 07 18:01:01 Alexle python[6738]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 18:01:02 Alexle python[6738]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 18:01:03 Alexle python[6738]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 18:01:03 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 remove_network 0 | stdout: OK
+Oct 07 18:01:03 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 save_config | stdout: OK
+Oct 07 18:01:03 Alexle python[6738]: [pi_agent] command received: stop_logs {'command_id': '82f1385d-3167-45e5-8e0a-d80c4a068bd8', 'action': 'stop_logs'}
+Oct 07 18:01:03 Alexle python[6738]: [pi_agent] command done (0ms): stop_logs -> ok
+Oct 07 18:01:04 Alexle python[6738]: [pi_agent] command received: link_info {'command_id': '8f945692-db39-4e05-87bd-9f11dd399327', 'action': 'link_info', 'interface': 'wlan4'}
+Oct 07 18:01:04 Alexle python[6738]: [iw] (4ms, rc=0): iw dev wlan4 link | stdout: Not connected.
+Oct 07 18:01:04 Alexle python[6738]: [pi_agent] command done (4ms): link_info -> ok
+Oct 07 18:01:04 Alexle python[6738]: [pi_agent] command received: stream_logs {'command_id': 'dbe39bc3-71e1-49e4-93a3-8250f6a0786b', 'action': 'stream_logs'}
+Oct 07 18:01:04 Alexle python[6738]: [pi_agent] command done (1ms): stream_logs -> ok
+Oct 07 18:01:05 Alexle python[6738]: [pi_agent] command received: ping {'command_id': '3e281c2f-4a49-4c67-ab59-a5e2adcfdf26', 'action': 'ping', 'target': '192.168.1.1', 'count': 5, 'interface': 'wlan4'}
+Oct 07 18:01:05 Alexle python[6738]: [ip] (4ms, rc=0): ip neigh flush dev wlan4
+Oct 07 18:01:19 Alexle python[6738]: [ping] (14125ms, rc=1): ping 192.168.1.1 -I wlan4 -c 5 | stdout: PING 192.168.1.1 (192.168.1.1) from 192.168.150.96 wlan4: 56(84) bytes of data. \n  \n --- 192.168.1.1 ping statistics --- \n 5 packets transmitted, 0 received, 100% packet loss, time 4105ms | stderr: ping: Warning: source address might be selected on device other than: wlan4
+Oct 07 18:01:19 Alexle python[6738]: [pi_agent] command done (14132ms): ping -> ok
+Oct 07 18:01:19 Alexle python[6738]: [pi_agent] command received: disconnect_wifi {'command_id': '1615115b-148d-49a6-b5ec-a31488115298', 'action': 'disconnect_wifi', 'interface': 'wlan4'}
+Oct 07 18:01:19 Alexle python[6738]: [pi_agent] wifi action start: disconnect_wifi interface=wlan4 command_id=1615115b-148d-49a6-b5ec-a31488115298
+Oct 07 18:01:19 Alexle python[6738]: [wpa_cli] (6ms, rc=0): wpa_cli -i wlan4 terminate | stdout: OK
+Oct 07 18:01:19 Alexle dhcpcd[7274]: dhcpcd is not running
+Oct 07 18:01:19 Alexle python[6738]: [dhcpcd] (31ms, rc=1): dhcpcd -k wlan4 | stderr: dhcpcd is not running
+Oct 07 18:01:19 Alexle python[6738]: [ip] (12ms, rc=0): ip addr flush dev wlan4
+Oct 07 18:01:20 Alexle python[6738]: [pi_agent] command received: connect_wifi {'command_id': 'f4bb8b61-aea1-4087-9003-d31c63bc4529', 'action': 'connect_wifi', 'ssid': 'T-6QNM-WiFi', 'password': '***', 'max_standard': 'ax', 'eap_method': 'PEAP', 'rsn_overriding': '0', 'interface': 'wlan4', 'channel': 93, 'band': '6'}
+Oct 07 18:01:20 Alexle python[6738]: [pi_agent] wifi action start: connect_wifi interface=wlan4 command_id=f4bb8b61-aea1-4087-9003-d31c63bc4529
+Oct 07 18:01:20 Alexle python[6738]: [ip] (4ms, rc=0): ip link set wlan4 up
+Oct 07 18:01:20 Alexle python[6738]: [wpa_supplicant] (31ms, rc=0): wpa_supplicant -B -i wlan4 -c /tmp/wpa_supplicant-wlan4.conf -D nl80211 | stdout: Successfully initialized wpa_supplicant
+Oct 07 18:01:20 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 add_network | stdout: 0
+Oct 07 18:01:20 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 ssid "T-6QNM-WiFi" | stdout: OK
+Oct 07 18:01:20 Alexle python[6738]: [wpa_cli] (12ms, rc=0): wpa_cli -i wlan4 set_network 0 psk *** | stdout: OK
+Oct 07 18:01:20 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set sae_pwe 2 | stdout: OK
+Oct 07 18:01:20 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 key_mgmt WPA-PSK WPA-PSK-SHA256 SAE SAE-EXT-KEY | stdout: OK
+Oct 07 18:01:20 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 pairwise CCMP GCMP-256 GCMP TKIP | stdout: OK
+Oct 07 18:01:20 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 group CCMP GCMP-256 GCMP TKIP | stdout: OK
+Oct 07 18:01:20 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 ieee80211w 1 | stdout: OK
+Oct 07 18:01:20 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 rsn_overriding 0 | stdout: OK
+Oct 07 18:01:20 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 scan_freq 6415 | stdout: OK
+Oct 07 18:01:20 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 disable_eht 1 | stdout: OK
+Oct 07 18:01:20 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 enable_network 0 | stdout: OK
+Oct 07 18:01:20 Alexle python[6738]: [wpa_cli] (10ms, rc=0): wpa_cli -i wlan4 select_network 0 | stdout: OK
+Oct 07 18:01:20 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 save_config | stdout: OK
+Oct 07 18:01:21 Alexle python[6738]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 18:01:22 Alexle python[6738]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 18:01:23 Alexle python[6738]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 18:01:23 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 remove_network 0 | stdout: OK
+Oct 07 18:01:23 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 save_config | stdout: OK
+Oct 07 18:01:24 Alexle python[6738]: [pi_agent] command received: link_info {'command_id': 'f43806fc-6319-44ce-af85-e529e682de7f', 'action': 'link_info', 'interface': 'wlan4'}
+Oct 07 18:01:25 Alexle python[6738]: [iw] (785ms, rc=0): iw dev wlan4 link | stdout: Not connected.
+Oct 07 18:01:25 Alexle python[6738]: [pi_agent] command done (786ms): link_info -> ok
+Oct 07 18:01:26 Alexle python[6738]: [pi_agent] command received: ping {'command_id': '43b2e83f-9121-43c6-a4d6-1895e8e94e3d', 'action': 'ping', 'target': '192.168.1.1', 'count': 5, 'interface': 'wlan4'}
+Oct 07 18:01:26 Alexle python[6738]: [ip] (4ms, rc=0): ip neigh flush dev wlan4
+Oct 07 18:01:40 Alexle python[6738]: [ping] (14077ms, rc=1): ping 192.168.1.1 -I wlan4 -c 5 | stdout: PING 192.168.1.1 (192.168.1.1) from 192.168.150.96 wlan4: 56(84) bytes of data. \n  \n --- 192.168.1.1 ping statistics --- \n 5 packets transmitted, 0 received, 100% packet loss, time 4072ms | stderr: ping: Warning: source address might be selected on device other than: wlan4
+Oct 07 18:01:40 Alexle python[6738]: [pi_agent] command done (14081ms): ping -> ok
+Oct 07 18:01:41 Alexle python[6738]: [pi_agent] command received: disconnect_wifi {'command_id': 'daaaa43c-475d-4b40-8288-255e51bc60b2', 'action': 'disconnect_wifi', 'interface': 'wlan4'}
+Oct 07 18:01:41 Alexle python[6738]: [pi_agent] wifi action start: disconnect_wifi interface=wlan4 command_id=daaaa43c-475d-4b40-8288-255e51bc60b2
+Oct 07 18:01:41 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 terminate | stdout: OK
+Oct 07 18:01:41 Alexle dhcpcd[7364]: dhcpcd is not running
+Oct 07 18:01:41 Alexle python[6738]: [dhcpcd] (9ms, rc=1): dhcpcd -k wlan4 | stderr: dhcpcd is not running
+Oct 07 18:01:41 Alexle python[6738]: [ip] (4ms, rc=0): ip addr flush dev wlan4
+Oct 07 18:01:42 Alexle python[6738]: [pi_agent] command received: connect_wifi {'command_id': 'a19cea60-5ca0-4fba-8708-763246364fcb', 'action': 'connect_wifi', 'ssid': 'T-6QNM-WiFi', 'password': '***', 'max_standard': 'ac', 'eap_method': 'PEAP', 'rsn_overriding': '0', 'interface': 'wlan4', 'channel': 93, 'band': '6'}
+Oct 07 18:01:42 Alexle python[6738]: [pi_agent] wifi action start: connect_wifi interface=wlan4 command_id=a19cea60-5ca0-4fba-8708-763246364fcb
+Oct 07 18:01:42 Alexle python[6738]: [ip] (4ms, rc=0): ip link set wlan4 up
+Oct 07 18:01:42 Alexle python[6738]: [wpa_supplicant] (30ms, rc=0): wpa_supplicant -B -i wlan4 -c /tmp/wpa_supplicant-wlan4.conf -D nl80211 | stdout: Successfully initialized wpa_supplicant
+Oct 07 18:01:42 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 add_network | stdout: 0
+Oct 07 18:01:42 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 ssid "T-6QNM-WiFi" | stdout: OK
+Oct 07 18:01:42 Alexle python[6738]: [wpa_cli] (12ms, rc=0): wpa_cli -i wlan4 set_network 0 psk *** | stdout: OK
+Oct 07 18:01:42 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set sae_pwe 2 | stdout: OK
+Oct 07 18:01:42 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 key_mgmt WPA-PSK WPA-PSK-SHA256 SAE SAE-EXT-KEY | stdout: OK
+Oct 07 18:01:42 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 pairwise CCMP GCMP-256 GCMP TKIP | stdout: OK
+Oct 07 18:01:42 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 group CCMP GCMP-256 GCMP TKIP | stdout: OK
+Oct 07 18:01:42 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 ieee80211w 1 | stdout: OK
+Oct 07 18:01:42 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 rsn_overriding 0 | stdout: OK
+Oct 07 18:01:42 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 scan_freq 6415 | stdout: OK
+Oct 07 18:01:42 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 disable_eht 1 | stdout: OK
+Oct 07 18:01:42 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 set_network 0 disable_he 1 | stdout: OK
+Oct 07 18:01:42 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 enable_network 0 | stdout: OK
+Oct 07 18:01:42 Alexle python[6738]: [wpa_cli] (10ms, rc=0): wpa_cli -i wlan4 select_network 0 | stdout: OK
+Oct 07 18:01:42 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 save_config | stdout: OK
+Oct 07 18:01:43 Alexle python[6738]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 18:01:44 Alexle python[6738]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 18:01:45 Alexle python[6738]: [pi_agent] wlan4: wpa event: CTRL-EVENT-SCAN-FAILED {'ret': '-22', 'retry': '1'}
+Oct 07 18:01:45 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 remove_network 0 | stdout: OK
+Oct 07 18:01:45 Alexle python[6738]: [wpa_cli] (3ms, rc=0): wpa_cli -i wlan4 save_config | stdout: OK
+Oct 07 18:01:46 Alexle python[6738]: [pi_agent] command received: ping {'command_id': '61e11ecf-6559-48fe-b196-60ee16100e4d', 'action': 'ping', 'target': '192.168.1.1', 'count': 5, 'interface': 'wlan4'}
+Oct 07 18:01:46 Alexle python[6738]: [ip] (9ms, rc=0): ip neigh flush dev wlan4
+Oct 07 18:02:00 Alexle python[6738]: [ping] (14110ms, rc=1): ping 192.168.1.1 -I wlan4 -c 5 | stdout: PING 192.168.1.1 (192.168.1.1) from 192.168.150.96 wlan4: 56(84) bytes of data. \n  \n --- 192.168.1.1 ping statistics --- \n 5 packets transmitted, 0 received, 100% packet loss, time 4102ms | stderr: ping: Warning: source address might be selected on device other than: wlan4
+Oct 07 18:02:00 Alexle python[6738]: [pi_agent] command done (14120ms): ping -> ok
+Oct 07 18:02:01 Alexle python[6738]: [pi_agent] command received: link_info {'command_id': 'e769a01b-6971-4b96-8a2f-e3deffa35323', 'action': 'link_info', 'interface': 'wlan4'}
+Oct 07 18:02:01 Alexle python[6738]: [iw] (7ms, rc=0): iw dev wlan4 link | stdout: Not connected.
+Oct 07 18:02:01 Alexle python[6738]: [pi_agent] command done (8ms): link_info -> ok

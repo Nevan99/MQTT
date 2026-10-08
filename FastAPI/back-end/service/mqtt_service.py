@@ -131,6 +131,20 @@ class MQTTService:
         pi.last_seen = datetime.now(timezone.utc)
         session.add(pi)
 
+    # Actions whose result reports a failed attempt as connected=false
+    # rather than with an "error" key - the agent only sets "error" when the
+    # command couldn't run at all (bad args, an exception), not when it ran
+    # and the radio didn't associate (scan rejected, auth failure, timeout).
+    _CONNECT_ACTIONS = ("connect_wifi", "connect_hotspot")
+
+    @classmethod
+    def _command_status(cls, payload: dict) -> str:
+        if "error" in payload:
+            return "failed"
+        if payload.get("action") in cls._CONNECT_ACTIONS and payload.get("connected") is False:
+            return "failed"
+        return "complete"
+
     def _update_command_result(self, session, pi_id: str, payload: dict):
         command_id = payload.get("command_id")
         if not command_id:
@@ -139,16 +153,17 @@ class MQTTService:
             self._update_wifi_scan_history(session, pi_id, payload)
         elif payload.get("action") == "interface_status":
             self._update_interface_status(session, pi_id, payload)
+        status = self._command_status(payload)
         transient = self._transient_commands.get(command_id)
         if transient is not None:
-            transient["status"] = "failed" if "error" in payload else "complete"
+            transient["status"] = status
             transient["result"] = payload
             transient["completed_at"] = datetime.now(timezone.utc)
             return
         command = session.get(Command, command_id)
         if command is None:
             return
-        command.status = "failed" if "error" in payload else "complete"
+        command.status = status
         command.result_json = json.dumps(payload)
         command.completed_at = datetime.now(timezone.utc)
         session.add(command)

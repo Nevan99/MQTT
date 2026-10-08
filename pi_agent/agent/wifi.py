@@ -731,6 +731,21 @@ class WifiMixin:
                         scans["completed"] += 1
                     elif name == "CTRL-EVENT-SCAN-FAILED":
                         scans["failed"].append(fields.get("ret", "?"))
+                        # ret=-22 (EINVAL) is the kernel refusing the scan
+                        # request itself - typically a scan_freq the radio
+                        # or regulatory domain doesn't allow. Unlike -16
+                        # (EBUSY) it never clears on retry, so a few in a row
+                        # with no completed scan is a verdict, not a reason
+                        # to keep waiting out the timeout.
+                        if (scans["completed"] == 0
+                                and scans["failed"].count("-22") >= self.WPA_SCAN_EINVAL_LIMIT):
+                            freq = (scan_target or {}).get("freq")
+                            self.last_wpa_failure = (
+                                "scan rejected by the driver (ret=-22 EINVAL)"
+                                + (f" for scan_freq {freq} MHz - frequency not supported by this "
+                                   "radio/regulatory domain, or wrong band for the channel" if freq else "")
+                            )
+                            return False
                     elif name == "CTRL-EVENT-NETWORK-NOT-FOUND":
                         scans["not_found"] += 1
                     if name == "CTRL-EVENT-CONNECTED" and target_state == "COMPLETED":
@@ -774,6 +789,10 @@ class WifiMixin:
     # rather than the whole timeout.
     WPA_STATE_RECHECK_SECONDS = 2
 
+    # ret=-22 scan failures (with no scan completing) after
+    # which _wait_for_wpa_state gives up - see the SCAN-FAILED handling there.
+    WPA_SCAN_EINVAL_LIMIT = 3
+
     # States that mean wpa_supplicant never got as far as talking to an AP.
     _WPA_NOT_FOUND_STATES = (None, "SCANNING", "DISCONNECTED", "INACTIVE", "INTERFACE_DISABLED")
 
@@ -808,7 +827,9 @@ class WifiMixin:
         """
         if last_state not in cls._WPA_NOT_FOUND_STATES:
             return True
-        if scans["failed"]:
+        if any(ret != "-22" for ret in scans["failed"]):
+            # -22 (EINVAL) is excluded: a rejected scan request never
+            # clears on retry - see _wait_for_wpa_state.
             return True
         if not target:
             return False
@@ -1050,11 +1071,24 @@ class WifiMixin:
             await asyncio.sleep(0.5)
 
     @staticmethod
-    def _freq_for_channel(channel):
+    def _freq_for_channel(channel, band=None):
         """Inverse of WifiScanMixin._channel_for_freq - good enough for
         pinning a connect attempt's scan_freq, not a full channel-plan
-        validator."""
+        validator.
+
+        Pass band whenever it's known: 6 GHz channel numbers (1-233)
+        overlap the 2.4/5 GHz ones, so without it 6 GHz channel 93 came out
+        as 5465 MHz - no channel at all - and the kernel rejected every
+        scan on it (CTRL-EVENT-SCAN-FAILED ret=-22) for the whole connect
+        wait. The number-only fallback below assumes 2.4/5 GHz."""
         channel = int(channel)
+        band = str(band).lower().removesuffix("ghz").removesuffix("g") if band is not None else ""
+        if band == "6":
+            return 5950 + channel * 5
+        if band == "5":
+            return 5000 + channel * 5
+        if band in ("2", "2.4"):
+            return 2484 if channel == 14 else 2407 + channel * 5
         if channel == 14:
             return 2484
         if 1 <= channel <= 13:
@@ -1062,6 +1096,18 @@ class WifiMixin:
         if channel <= 196:
             return 5000 + channel * 5
         return 5950 + channel * 5
+
+    @staticmethod
+    def _band_for_freq(freq_mhz):
+        """"2.4"/"5"/"6" for a frequency, in the form _freq_for_channel
+        takes - None when unknown."""
+        if not freq_mhz:
+            return None
+        if freq_mhz < 2500:
+            return "2.4"
+        if freq_mhz < 5950:
+            return "5"
+        return "6"
 
     async def _find_bssid_in_scan(self, interface, bssid, use_cache):
         """One BSSID's entry from a scan, or None. See get_wifi_scan_detail
@@ -1210,7 +1256,8 @@ class WifiMixin:
         return out
 
     async def connect_wifi(self, ssid, password=None, interface=None, bssid=None, channel=None,
-                            max_standard=None, rsn_overriding=None, security=None, eap=None):
+                            max_standard=None, rsn_overriding=None, security=None, eap=None,
+                            band=None):
         """Connect to a wifi hotspot via wpa_supplicant + dhcpcd - see the
         module-level comment above for why NetworkManager is never involved.
 
@@ -1219,7 +1266,9 @@ class WifiMixin:
         wpa_supplicant's network blocks are keyed by ssid. If channel is
         given, the connection is pinned to that channel's frequency
         (scan_freq) - useful when the same SSID is broadcast on multiple
-        bands/channels and a specific one needs to be tested.
+        bands/channels and a specific one needs to be tested. band ("2.4",
+        "5" or "6") says which band that channel number is on - required to
+        get 6 GHz right, see _freq_for_channel.
 
         max_standard optionally caps the 802.11 PHY standard the association
         is allowed to negotiate at - one of "ax", "ac", "n", "legacy" (a/g
@@ -1285,6 +1334,9 @@ class WifiMixin:
                 print(f"[pi_agent] {interface}: {bssid} is now on channel "
                       f"{match['channel']}, not the requested {channel} - using the current one")
                 channel = match["channel"]
+                # The AP may have changed band too; the scan's own frequency
+                # says which, where the caller's band no longer would.
+                band = self._band_for_freq(match.get("frequency_mhz")) or band
 
         async with self._wifi_connect_semaphore:
             ok, err = await self._ensure_wpa_supplicant_running(interface)
@@ -1371,7 +1423,7 @@ class WifiMixin:
             if channel:
                 outputs.append((await self._wpa_cli(
                     interface, "set_network", net_id, "scan_freq",
-                    str(self._freq_for_channel(channel)),
+                    str(self._freq_for_channel(channel, band)),
                 )).stdout.strip())
             # wpa_cli rejects (FAIL, not an exception) a network param its
             # build of wpa_supplicant doesn't know - disable_he/disable_eht
@@ -1398,7 +1450,7 @@ class WifiMixin:
                 expected_bssid=bssid,
                 scan_target={
                     "ssid": ssid, "bssid": bssid, "secured": bool(password),
-                    "freq": self._freq_for_channel(channel) if channel else None,
+                    "freq": self._freq_for_channel(channel, band) if channel else None,
                 },
             )
             if not associated:
@@ -1805,7 +1857,7 @@ class WifiMixin:
     CONNECT_HOTSPOT_STAGGER_SECONDS = 0.4
 
     async def connect_hotspot(self, ssid=None, password=None, bssid=None,
-                              channel=None, interfaces=None, max_standard=None):
+                              channel=None, interfaces=None, max_standard=None, band=None):
         """Join one hotspot on several of this Pi's radios at once.
 
         The fleet use case this exists for is "put these four radios on that
@@ -1857,7 +1909,8 @@ class WifiMixin:
                 await asyncio.sleep(delay)
             async with self._wifi_pending_command(interface):
                 async with self._wifi_lock_for(interface):
-                    return await self.connect_wifi(ssid, password, interface, bssid, channel, max_standard)
+                    return await self.connect_wifi(ssid, password, interface, bssid, channel, max_standard,
+                                                   band=band)
 
         outcomes = await asyncio.gather(
             *(one(i, idx * self.CONNECT_HOTSPOT_STAGGER_SECONDS) for idx, i in enumerate(present)),
