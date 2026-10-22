@@ -645,7 +645,7 @@ async function resShowRun(kind, id) {
     document.getElementById('resTestStatus').value = 'all';
     document.getElementById('resTestSearch').value = '';
     document.getElementById('resJumpTo').value = '';
-    document.getElementById('resTestsBody').innerHTML = '<tr><td colspan="6" class="pi-log-empty">loading…</td></tr>';
+    document.getElementById('resTestsBody').innerHTML = '<tr><td colspan="7" class="pi-log-empty">loading…</td></tr>';
     document.getElementById('resRunStopHost').innerHTML = '';
   }
   showResDetailView();
@@ -707,7 +707,7 @@ function resRenderRunGone() {
   document.getElementById('resRunTitle').textContent = `#${resDetailCurrent.id}`;
   document.getElementById('resRunStatusBig').textContent = 'NOT FOUND';
   document.getElementById('resRunMessage').textContent = 'This run was deleted.';
-  document.getElementById('resTestsBody').innerHTML = '<tr><td colspan="6" class="pi-log-empty">nothing to show</td></tr>';
+  document.getElementById('resTestsBody').innerHTML = '<tr><td colspan="7" class="pi-log-empty">nothing to show</td></tr>';
 }
 
 // --- sidebar ----------------------------------------------------------------
@@ -813,7 +813,7 @@ function resTestTime(t) {
 function renderResTests(data) {
   const body = document.getElementById('resTestsBody');
   if (!data.items.length) {
-    body.innerHTML = `<tr><td colspan="6" class="pi-log-empty">${
+    body.innerHTML = `<tr><td colspan="7" class="pi-log-empty">${
       data.summary.total ? 'no tests match the filter' : (data.summary.status === 'running' ? 'starting…' : 'nothing ran')}</td></tr>`;
     return;
   }
@@ -831,12 +831,13 @@ function renderResTests(data) {
       <td class="res-test-desc">${tcEsc(t.description)}${t.error ? ` <span class="res-test-error">${tcEsc(t.error)}</span>` : ''}</td>
       <td class="res-log-cell">${t.status === 'pending'
         ? '<span class="hint">–</span>'
-        : `<button type="button" class="res-link res-log-open" title="This test's syslog">log</button>`}${hasDetails
-        ? ` <button type="button" class="res-link res-log-btn" aria-expanded="${open}" title="Step results, checks and per-Pi output">${open ? 'hide' : 'details'}</button>`
-        : ''}</td>
+        : `<button type="button" class="res-link res-log-open" title="This test's syslog">log</button>`}</td>
+      <td class="res-log-cell">${hasDetails
+        ? `<button type="button" class="res-link res-log-btn" aria-expanded="${open}" title="Step results, checks and per-Pi output">${open ? 'hide' : 'details'}</button>`
+        : '<span class="hint">–</span>'}</td>
       <td class="res-num">${t.seq}</td>
     </tr>
-    ${open ? `<tr class="res-log-row" data-log-for="${t.seq}"><td colspan="6"><div class="res-log-body"></div></td></tr>` : ''}`;
+    ${open ? `<tr class="res-log-row" data-log-for="${t.seq}"><td colspan="7"><div class="res-log-body"></div></td></tr>` : ''}`;
   }).join('');
   body.querySelectorAll('.res-log-row').forEach(row => {
     const t = data.items.find(x => x.seq === Number(row.dataset.logFor));
@@ -1384,7 +1385,7 @@ resById('resTestsBody').addEventListener('click', (e) => {
   resRunOpenLogs.add(seq);
   logBtn.textContent = 'hide';
   logBtn.setAttribute('aria-expanded', 'true');
-  row.insertAdjacentHTML('afterend', `<tr class="res-log-row" data-log-for="${seq}"><td colspan="6"><div class="res-log-body"></div></td></tr>`);
+  row.insertAdjacentHTML('afterend', `<tr class="res-log-row" data-log-for="${seq}"><td colspan="7"><div class="res-log-body"></div></td></tr>`);
   // The row's test, rebuilt from what's on screen (run_id for a suite's testcase).
   const runBtn = row.querySelector('[data-open-run]');
   resFillLog(row.nextElementSibling.querySelector('.res-log-body'),
