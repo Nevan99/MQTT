@@ -10,29 +10,14 @@
 // the whole history. Owner = the testcase/testsuite's author, Device = the
 // Pi(s) its steps target, Package = the testcase/testsuite that ran.
 //
-// A testsuite run drills down into each testcase's own step detail inline
-// (see renderResSuiteDetail) via tcRenderRunSteps from testcases-tab.js,
-// which is why this file is loaded after it (and after testsuites-tab.js,
-// whose openTsRunConfirmModal backs the testsuite Rerun path below).
+// Opening a run shows CDRouter's result page for it (#results/<kind>/<id>,
+// see "one run" below) - live runs included, which is why there's no
+// separate Running tab. Its Log column reuses tcRenderRunInto/
+// tcRenderRunSteps from testcases-tab.js, which is why this file is loaded
+// after it (and after testsuites-tab.js, whose openTsRunConfirmModal backs
+// the testsuite Re-run path below).
 
-let resDetailPollTimer = null;
 let resListPollTimer = null;
-
-// testcase_id -> name, for the currently-open testsuite run's detail view -
-// fetched once (see resLoadSuiteTestcaseNames) so a testcase the suite
-// hasn't reached yet (or is running right now) can still show its name
-// instead of just "#<id>". Reset whenever a different run is opened (see
-// openResDetail).
-let resSuiteTestcaseNames = {};
-// testcase_id -> steps (its own definition, not a run), fetched alongside
-// the names above - lets a not-yet-reached testcase still show its planned
-// step list. Reset alongside resSuiteTestcaseNames.
-let resSuiteTestcaseSteps = {};
-// testcase_ids whose row in the currently-open suite detail is expanded to
-// show its step-by-step detail inline - keyed by testcase_id (stable across
-// pending -> running -> finished) rather than run_id (which doesn't exist
-// yet for a pending row). Reset alongside the caches above.
-let resExpandedSuiteTcIds = new Set();
 
 // Keyed "kind:id" since a testcase run and a testsuite run can share the
 // same numeric id.
@@ -67,10 +52,7 @@ const RES_POPULAR_TAGS = 12;
 const resSelected = new Map();
 
 function resStopPolling() {
-  if (resDetailPollTimer) {
-    clearInterval(resDetailPollTimer);
-    resDetailPollTimer = null;
-  }
+  resStopRunPolling();
   resStopListPolling();
 }
 
@@ -83,6 +65,7 @@ function resStopListPolling() {
 
 function showResListView() {
   resStopPolling();
+  resDetailCurrent = null;
   document.getElementById('resDetailView').classList.add('hidden');
   document.getElementById('resListView').classList.remove('hidden');
   resSyncControlsFromState();
@@ -91,6 +74,7 @@ function showResListView() {
 
 function showResDetailView() {
   resStopListPolling();
+  resStopRunPolling();
   document.getElementById('resListView').classList.add('hidden');
   document.getElementById('resDetailView').classList.remove('hidden');
 }
@@ -188,6 +172,10 @@ function resFillSelect(id, values, firstLabel, labelFn = v => v) {
 }
 
 function renderResSidebar() {
+  const running = resFacets.running || 0;
+  const now = document.getElementById('resRunningNow');
+  now.classList.toggle('hidden', !running);
+  now.innerHTML = `<span class="res-live-dot" aria-hidden="true"></span>${running} running now`;
   resFillSelect('resOwner', resFacets.owners, 'All', o => `Owned by ${o}`);
   resFillSelect('resDevice', resFacets.devices, 'All Devices', d => (d === 'all' ? 'all (broadcast)' : d));
 
@@ -438,10 +426,8 @@ async function resBulkDelete() {
     alert(`Failed to delete: ${err.message}`);
     return;
   }
-  const deletedOpen = resDetailCurrent && resSelected.has(resRowKey(resDetailCurrent.kind, resDetailCurrent.id))
-    && !resSelected.get(resRowKey(resDetailCurrent.kind, resDetailCurrent.id)).locked;
   resClearSelection();
-  if (deletedOpen) showResListView(); else loadResults();
+  loadResults();
 }
 
 // A fresh run of the testcase/testsuite behind each checked run, with its
@@ -508,6 +494,7 @@ async function resExportCsv() {
 
 // A row the list has shown (or "select all" fetched), for its source_id.
 function resKnownRun(kind, id) {
+  if (resRunSummary && resRunSummary.kind === kind && resRunSummary.id === id) return resRunSummary;
   return resItems.find(r => r.kind === kind && r.id === id) || resSelected.get(resRowKey(kind, id)) || null;
 }
 
@@ -587,264 +574,426 @@ async function deleteResRun(kind, id) {
   // Back out of the detail view if it was showing the run just deleted -
   // there's nothing left there to poll or display.
   if (resDetailCurrent && resDetailCurrent.kind === kind && resDetailCurrent.id === id) {
-    showResListView();
+    location.hash = '#results';
   } else {
     loadResults();
   }
 }
 
-// --- detail ---------------------------------------------------------------
+// --- one run: CDRouter-style result page ------------------------------------
+// #results/<kind>/<id>. A sidebar to filter the run's tests (status, name
+// search) and move around them (jump to a test, previous/next failure), a
+// summary card (status, progress, PASS/FAIL/TIME, stop + re-run), and a
+// paged tests table - a testsuite run's testcases, or a testcase run's step
+// executions - all from GET /results/{kind}/{id}/tests (routers/Results.py).
+// A live run polls every 2s and updates in place, which is what replaced the
+// old Running tab.
 
-// The run the detail view is currently showing, for the Delete button (its
-// click handler is wired once, in the "wiring" section below, rather than
-// per-open - this is what tells it which run to act on).
+// The run on screen, for the toolbar/sidebar actions. Its summary carries
+// source_id (Re-run) and the star/archive/lock flags.
 let resDetailCurrent = null;
+let resRunSummary = null;
+let resRunPollTimer = null;
+const RES_RUN_DEFAULT = { status: 'all', q: '', page: 1, pageSize: 25 };
+let resRunState = { ...RES_RUN_DEFAULT };
+let resRunFailures = [];        // failed tests' seqs, in the filtered order
+let resRunFocusSeq = null;      // the test Jump to / Prev / Next Failure landed on
+// What the last render drew, split so a live tick that only moved the
+// clocks patches those cells instead of rebuilding the table (which would
+// reload every open Log and knock keyboard focus off the page).
+let resRunLastSig = null;
+let resRunRowsSig = null;
+const resRunOpenLogs = new Set();   // seqs whose Log row is open
 
-async function openResDetail(kind, id) {
-  resDetailCurrent = { kind, id };
-  resSuiteTestcaseNames = {};
-  resSuiteTestcaseSteps = {};
-  resExpandedSuiteTcIds.clear();
+function resStopRunPolling() {
+  if (resRunPollTimer) {
+    clearTimeout(resRunPollTimer);
+    resRunPollTimer = null;
+  }
+}
+
+// Every way into a run's page - list rows, starting a run (openTsRunView /
+// openLiveTestcaseRun), the run history popup - goes through the hash, so
+// the run has its own link and Back returns to wherever you came from.
+function openResDetail(kind, id) {
+  const hash = `#results/${kind}/${id}`;
+  if (location.hash === hash) resShowRun(kind, id);
+  else location.hash = hash;
+}
+
+function resRunFromHash() {
+  const m = location.hash.match(/^#results\/(testcase|testsuite)\/(\d+)$/);
+  return m ? { kind: m[1], id: Number(m[2]) } : null;
+}
+
+async function resShowRun(kind, id) {
+  const same = resDetailCurrent && resDetailCurrent.kind === kind && resDetailCurrent.id === id;
+  if (!same) {
+    resDetailCurrent = { kind, id };
+    resRunSummary = null;
+    resRunState = { ...RES_RUN_DEFAULT, pageSize: resRunState.pageSize };
+    resRunFocusSeq = null;
+    resRunLastSig = null;
+    resRunRowsSig = null;
+    resRunOpenLogs.clear();
+    document.getElementById('resTestStatus').value = 'all';
+    document.getElementById('resTestSearch').value = '';
+    document.getElementById('resJumpTo').value = '';
+    document.getElementById('resTestsBody').innerHTML = '<tr><td colspan="6" class="pi-log-empty">loading…</td></tr>';
+    document.getElementById('resRunStopHost').innerHTML = '';
+  }
   showResDetailView();
-  await refreshResDetail(kind, id);
-  resStopPolling();
-  // Only a run still in flight needs polling; a finished one never changes.
-  const current = resKnownRun(kind, id);
-  if (!current || current.status === 'running') {
-    resDetailPollTimer = setInterval(() => refreshResDetail(kind, id), 1500);
-  }
+  await loadResRun();
 }
 
-// testcase_id -> name for every testcase a suite run will step through -
-// same reasoning and shape as testsuites-tab.js's tsLoadRunTestcaseNames,
-// just against this tab's own cache (resSuiteTestcaseNames) since the two
-// views can be open independently of each other.
-async function resLoadSuiteTestcaseNames(ids) {
-  const results = await Promise.all(ids.map(async (tcId) => {
-    try {
-      const res = await apiFetch(`${API}/testcases/${tcId}`);
-      if (res.ok) {
-        const t = await res.json();
-        return [tcId, t.name, t.steps];
-      }
-    } catch {
-      // transient; this testcase's row just falls back to "#<id>" below
-    }
-    return [tcId, null, null];
-  }));
-  results.forEach(([tcId, name, steps]) => {
-    if (name) resSuiteTestcaseNames[tcId] = name;
-    if (steps) resSuiteTestcaseSteps[tcId] = steps;
+async function loadResRun({ aroundSeq = null } = {}) {
+  if (!resDetailCurrent) return;
+  const { kind, id } = resDetailCurrent;
+  resStopRunPolling();
+  const p = new URLSearchParams({
+    status: resRunState.status, q: resRunState.q,
+    offset: String((resRunState.page - 1) * resRunState.pageSize), limit: String(resRunState.pageSize),
   });
-}
-
-// A fake TestRunOut-shaped object for a testcase the suite hasn't reached
-// yet, built from its own step definitions (fetched above) rather than an
-// actual run - there is none yet - so tcRenderRunSteps can show the planned
-// step list, every one "pending", instead of nothing at all.
-function resPendingStepsRun(testcaseId) {
-  const steps = resSuiteTestcaseSteps[testcaseId] || [];
-  return {
-    id: `pending-${testcaseId}`, status: 'pending',
-    results: steps.map((s, i) => ({
-      action: s.action, target: s.target, status: 'pending', step_index: i,
-      pass_index: 0, iteration: 1,
-    })),
-  };
-}
-
-// One refresh in flight at a time - see testcases-tab.js refreshTcRun.
-let resDetailRefreshing = false;
-
-async function refreshResDetail(kind, id) {
-  if (resDetailRefreshing) return;
-  resDetailRefreshing = true;
+  if (aroundSeq !== null) p.set('around_seq', String(aroundSeq));
   try {
-    let run;
-    if (kind === 'testsuite') {
-      const res = await apiFetch(`${API}/testsuites/runs/${id}`);
-      if (!res.ok) return;
-      run = await res.json();
-      if (!Object.keys(resSuiteTestcaseNames).length && (run.testcase_ids || []).length) {
-        await resLoadSuiteTestcaseNames(run.testcase_ids);
+    const res = await apiFetch(`${API}/results/${kind}/${id}/tests?${p}`);
+    if (!resDetailCurrent || resDetailCurrent.kind !== kind || resDetailCurrent.id !== id) return;
+    if (res.status === 404) {
+      resRenderRunGone();
+      return;
+    }
+    if (!res.ok) return;
+    const data = await res.json();
+    resRunState.page = Math.floor(data.offset / resRunState.pageSize) + 1;
+    resRunSummary = data.summary;
+    resRunFailures = data.failure_seqs;
+    // Same skip-if-unchanged as the list, so a poll tick doesn't knock
+    // focus off a control or collapse what's being read.
+    const sig = JSON.stringify([data, resRunState, resRunFocusSeq]);
+    if (sig !== resRunLastSig) {
+      resRunLastSig = sig;
+      const rowsSig = JSON.stringify([
+        data.items.map(t => [t.seq, t.status, t.name, t.description, t.run_id, t.error]),
+        data.total, data.summary.status, resRunState, resRunFocusSeq,
+      ]);
+      renderResRunSidebar(data);
+      renderResRunSummary(data.summary);
+      if (rowsSig !== resRunRowsSig) {
+        resRunRowsSig = rowsSig;
+        renderResTests(data);
+        renderResTestsPager(data);
+      } else {
+        resPatchTestTimes(data);
       }
-      renderResSuiteDetail(run);
-      await resRefreshRunningSuiteRow(run);
-    } else {
-      // Summary + only the opened loop passes, never the whole run - see
-      // tcRenderRunInto (testcases-tab.js). Forced collapsed: this tab is
-      // for scanning past runs, not watching one live, so nothing here
-      // auto-expands just because a run happens to still be "running".
-      run = await tcRenderRunInto(document.getElementById('resDetailBody'), id, { forceCollapsed: true });
-      if (!run) return;
-      renderResTestcaseDetail(run);
     }
-    // The user may have navigated to another run while this one loaded.
-    if (resDetailCurrent && resDetailCurrent.kind === kind && resDetailCurrent.id === id) {
-      tcRenderStopControls(document.getElementById('resDetailStopHost'), kind, run);
+    resRefreshOpenLogs(data);
+    tcRenderStopControls(document.getElementById('resRunStopHost'), kind, data.summary);
+    if (data.summary.status === 'running' && !document.getElementById('resDetailView').classList.contains('hidden')) {
+      resRunPollTimer = setTimeout(() => loadResRun(), 2000);
     }
-    if (run.status !== 'running') resStopPolling();
   } catch {
-    // transient; the next tick retries
-  } finally {
-    resDetailRefreshing = false;
+    // transient; the next tick (or a Refresh) retries
+    if (resRunSummary && resRunSummary.status === 'running') resRunPollTimer = setTimeout(() => loadResRun(), 4000);
   }
 }
 
-function resSetDetailHeader(title, status, metaBits) {
-  document.getElementById('resDetailTitle').textContent = title;
-  const statusEl = document.getElementById('resDetailStatus');
-  statusEl.textContent = status;
-  statusEl.className = `cmd-status ${tcStatusClass(status)}`;
-  document.getElementById('resDetailMeta').textContent = metaBits.filter(Boolean).join('  ·  ');
+function resRenderRunGone() {
+  document.getElementById('resRunTitle').textContent = `#${resDetailCurrent.id}`;
+  document.getElementById('resRunStatusBig').textContent = 'NOT FOUND';
+  document.getElementById('resRunMessage').textContent = 'This run was deleted.';
+  document.getElementById('resTestsBody').innerHTML = '<tr><td colspan="6" class="pi-log-empty">nothing to show</td></tr>';
 }
 
-// Header only; run is a GET /testcases/runs/{id}/summary - the steps were
-// already drawn by tcRenderRunInto in refreshResDetail.
-function renderResTestcaseDetail(run) {
-  resSetDetailHeader(`Testcase run: ${run.testcase_name}`, run.status, [
-    `started ${formatVnDateTime(run.started_at)}`,
-    run.completed_at ? `completed ${formatVnDateTime(run.completed_at)}` : null,
-    `${run.total} step result(s)`,
-    run.repeat_count > 1 ? `repeat ×${run.repeat_count}` : null,
-    run.stop_on_failure ? 'stop on failure' : 'continue on failure',
-  ]);
+// --- sidebar ----------------------------------------------------------------
+
+function renderResRunSidebar(data) {
+  const s = data.summary;
+  document.getElementById('resRunTitle').textContent = `#${s.id}`;
+  document.getElementById('resRunKind').textContent = `${s.kind === 'testsuite' ? 'Testsuite' : 'Testcase'} run · ${formatVnDateTime(s.started_at)}`;
+  const flag = (id, on, onTitle, offTitle, svg) => {
+    const b = document.getElementById(id);
+    b.innerHTML = svg;
+    b.classList.toggle('on', on);
+    b.title = on ? onTitle : offTitle;
+    b.setAttribute('aria-label', b.title);
+    b.setAttribute('aria-pressed', String(on));
+  };
+  flag('resRunStarBtn', s.starred, 'Starred - click to unstar', 'Star this result', RES_STAR_SVG(s.starred));
+  flag('resRunArchiveBtn', s.archived, 'Archived - click to unarchive', 'Archive this result', RES_ARCHIVE_SVG);
+  flag('resRunLockBtn', s.locked, 'Locked - click to unlock', 'Lock this result', RES_LOCK_SVG(s.locked));
+  document.getElementById('resRunArchiveLink').textContent = s.archived ? 'Unarchive this Result' : 'Archive this Result';
+  document.getElementById('resRunLockLink').textContent = s.locked ? 'Unlock this Result' : 'Lock this Result...';
+  const del = document.getElementById('resRunDeleteLink');
+  del.disabled = s.locked;
+  del.title = s.locked ? 'Locked - unlock it to delete' : '';
+  document.getElementById('resRunPackageLink').textContent = s.name;
+  document.getElementById('resJumpList').innerHTML = data.names.map(n => `<option value="${tcEsc(n)}"></option>`).join('');
+  document.getElementById('resPrevFailBtn').disabled = !data.failure_seqs.length;
+  document.getElementById('resNextFailBtn').disabled = !data.failure_seqs.length;
 }
 
-// One row per testcase_id the run steps through - not just the ones with a
-// reported result yet. Same reasoning as testsuites-tab.js's tsRunRowState:
-// mid-run this otherwise only ever showed what had already finished, with
-// nothing indicating what was running right now or still queued behind it.
-// The "running" entry (once it exists) already carries its run_id - see
-// routers/TestSuites._run_testsuite, which records it before the testcase
-// starts, not just once it finishes - so this only ever needs to fall back
-// to a "pending" placeholder for testcases the suite run hasn't reached yet.
-function resSuiteRowState(run, index) {
-  const results = run.results || [];
-  const id = run.testcase_ids[index];
-  if (index < results.length) {
-    const r = results[index];
-    return {
-      status: r.status, testcase_name: r.testcase_name, testcase_id: id,
-      run_id: r.run_id, error: r.error,
-    };
+// --- summary + info cards ---------------------------------------------------
+
+const RES_STATUS_WORD = {
+  running: 'RUNNING', passed: 'COMPLETED', failed: 'COMPLETED', stopped: 'STOPPED',
+};
+
+function resRunMessage(s) {
+  const what = s.kind === 'testsuite' ? 'testsuite' : 'testcase';
+  if (s.status === 'running') {
+    if (s.stop_requested) return `Stopping${s.stop_requested === 'now' ? '' : ` (${s.stop_requested.replace(/_/g, ' ')})`}…`;
+    if (!s.live) return `This ${what} run lost its runner (the backend restarted) - stop it to close it out.`;
+    return s.current ? `Now running ${s.current}` : `The ${what} is starting…`;
   }
-  const name = resSuiteTestcaseNames[id] || `#${id}`;
-  return { status: 'pending', testcase_name: name, testcase_id: id, run_id: null };
+  if (s.status === 'stopped') return `The ${what} was stopped before it finished.`;
+  const failed = s.counts.failed || 0;
+  return failed
+    ? `The ${what} completed with ${failed} failure${failed === 1 ? '' : 's'}.`
+    : `The ${what} completed successfully.`;
 }
 
-// Whether a row has anything to show if expanded - a run to poll/fetch
-// (running or finished), or at least its own planned step list cached (see
-// resLoadSuiteTestcaseNames) for one the suite hasn't reached yet. A row
-// with neither (its testcase was deleted before the suite got to it, and
-// nothing was ever cached for it) stays a plain non-toggling status line.
-function resSuiteRowTogglable(r) {
-  return !!r.run_id || (r.status === 'pending' && !!resSuiteTestcaseSteps[r.testcase_id]);
+function renderResRunSummary(s) {
+  const big = document.getElementById('resRunStatusBig');
+  big.textContent = RES_STATUS_WORD[s.status] || s.status.toUpperCase();
+  big.className = `res-run-status ${tcStatusClass(s.status)}`;
+  document.getElementById('resRunProgress').textContent = `${s.progress}%`;
+  const bar = document.getElementById('resRunProgressBar');
+  bar.setAttribute('aria-valuenow', String(s.progress));
+  bar.querySelector('span').style.width = `${s.progress}%`;
+  bar.classList.toggle('done', s.status !== 'running');
+  document.getElementById('resRunMessage').textContent = resRunMessage(s);
+  document.getElementById('resRunPass').textContent = s.counts.passed || 0;
+  document.getElementById('resRunFail').textContent = s.counts.failed || 0;
+  document.getElementById('resRunTime').textContent = resDurationText(s) || '–';
+  const rerun = document.getElementById('resRunRerunBtn');
+  rerun.disabled = !s.source_exists;
+  rerun.title = s.source_exists ? `Start a new run of ${s.name}` : `${s.name} no longer exists`;
+
+  const unit = s.kind === 'testsuite'
+    ? `${s.testcase_count} testcase${s.testcase_count === 1 ? '' : 's'}`
+    : `${s.step_count} step${s.step_count === 1 ? '' : 's'}${s.repeat_count > 1 ? ` × ${s.repeat_count} passes` : ''}`;
+  document.getElementById('resRunInfoPackage').innerHTML = `
+    <button type="button" class="res-link" id="resRunInfoPackageLink">${tcEsc(s.name)}</button> - ${unit},
+    ${s.stop_on_failure ? 'stops on the first failure' : 'runs normally'}
+    ${s.description ? `<div class="hint">${tcEsc(s.description)}</div>` : ''}
+    ${s.suite_run_id ? `<div class="hint">part of <button type="button" class="res-link" data-suite-run="${s.suite_run_id}">testsuite run #${s.suite_run_id}</button></div>` : ''}`;
+  document.getElementById('resRunInfoDevice').innerHTML = s.devices.length
+    ? s.devices.map(d => tcEsc(d === 'all' ? 'all Pis (broadcast)' : d)).join(', ') : '<span class="hint">–</span>';
+  document.getElementById('resRunInfoOwner').textContent = s.owner || '–';
+  document.getElementById('resRunInfoStarted').innerHTML = `${formatVnDateTime(s.started_at)}${
+    s.completed_at ? `<div class="hint">ended ${formatVnDateTime(s.completed_at)}</div>` : ''}`;
+  document.getElementById('resRunInfoTags').innerHTML = s.tags.length
+    ? s.tags.map(t => `<button type="button" class="res-tag res-tag-sm" data-tag="${tcEsc(t)}" title="Show every result tagged ${tcEsc(t)}">${tcEsc(t)}</button>`).join('')
+    : '<span class="hint">–</span>';
 }
 
-function resSuiteRowHtml(r, i, expanded) {
-  const togglable = resSuiteRowTogglable(r);
-  return `
-    <div class="cmd-entry">
-      <div class="hdr${togglable ? ' res-suite-tc-toggle' : ''}"${togglable ? ` data-testcase-id="${r.testcase_id}"` : ''}>
-        ${togglable ? `<button type="button" class="icon-btn tc-run-toggle-chevron" title="Show/hide step detail">${chevronIconSvg(expanded ? 'down' : 'right')}</button>` : ''}
-        <span>${i + 1}. ${r.testcase_name || `testcase #${r.testcase_id}`}</span>
-        <span class="cmd-status ${tcStatusClass(r.status)}">${r.status}</span>
-      </div>
-      <div class="result${togglable && !expanded ? ' hidden' : ''}" data-testcase-id="${r.testcase_id}">
-        ${r.error ? `<div class="tc-run-reason">${r.error}</div>` : ''}
-        ${togglable ? '' : `<div class="hint">${r.status === 'pending' ? 'not started yet'
-            : r.status === 'skipped' ? 'never ran - the suite stopped before reaching it'
-            : 'no run to open - the testcase was gone when the suite reached it'}</div>`}
-      </div>
-    </div>
-  `;
+// --- tests table ------------------------------------------------------------
+
+const RES_TEST_ICON = {
+  passed: '<span class="res-ti res-ti-pass" title="passed">&#10003;</span>',
+  failed: '<span class="res-ti res-ti-fail" title="failed">&#10007;</span>',
+  timeout: '<span class="res-ti res-ti-fail" title="timeout">&#9201;</span>',
+  running: '<span class="res-ti res-ti-run" title="running"><span class="wifi-scan-spinner"></span></span>',
+  pending: '<span class="res-ti res-ti-dim" title="pending">&#9675;</span>',
+  skipped: '<span class="res-ti res-ti-dim" title="skipped">&#8631;</span>',
+  stopped: '<span class="res-ti res-ti-stop" title="stopped">&#9632;</span>',
+};
+
+function resTestTime(t) {
+  if (t.duration_s === null || t.duration_s === undefined) return t.status === 'running' ? '…' : '';
+  return resDurationText({ duration_s: t.duration_s, status: t.status });
 }
 
-// Fills one row's expanded step detail - a static planned-step preview for
-// one not yet started, or the real (possibly still live) run for one that
-// is. Called both right after expanding and, for a running testcase, on
-// every subsequent poll tick (see resRefreshRunningSuiteRow) - forceCollapsed
-// is passed through to tcRenderRunSteps either way, per this tab's own
-// default of every step/Pi entry starting collapsed (see
-// renderResTestcaseDetail above).
-async function resFillSuiteTcSteps(el, r) {
-  if (r.status === 'pending') {
-    tcRenderRunSteps(el, resPendingStepsRun(r.testcase_id), true);
+function renderResTests(data) {
+  const body = document.getElementById('resTestsBody');
+  if (!data.items.length) {
+    body.innerHTML = `<tr><td colspan="6" class="pi-log-empty">${
+      data.summary.total ? 'no tests match the filter' : (data.summary.status === 'running' ? 'starting…' : 'nothing ran')}</td></tr>`;
     return;
   }
-  if (!r.run_id) return;
-  // Summary-first and lazy per loop pass, same as the testcase-run view -
-  // a finished row re-rendered by a suite-level tick costs one small
-  // summary request, not the whole run.
-  await tcRenderRunInto(el, r.run_id, { forceCollapsed: true });
+  const kind = data.summary.kind;
+  body.innerHTML = data.items.map(t => {
+    const hasLog = kind === 'testcase' ? t.status !== 'pending' : !!t.run_id;
+    const open = resRunOpenLogs.has(t.seq);
+    return `
+    <tr class="res-test-row${t.seq === resRunFocusSeq ? ' res-test-focus' : ''}${t.status === 'running' ? ' res-test-running' : ''}" data-seq="${t.seq}">
+      <td class="res-icon-col">${RES_TEST_ICON[t.status] || tcEsc(t.status)}</td>
+      <td class="res-num">${resTestTime(t)}</td>
+      <td class="res-test-name">${kind === 'testsuite' && t.run_id
+        ? `<button type="button" class="res-link" data-open-run="${t.run_id}" title="Open this testcase run">${tcEsc(t.name)}</button>`
+        : tcEsc(t.name)}</td>
+      <td class="res-test-desc">${tcEsc(t.description)}${t.error ? ` <span class="res-test-error">${tcEsc(t.error)}</span>` : ''}</td>
+      <td>${hasLog ? `<button type="button" class="res-link res-log-btn" aria-expanded="${open}">${open ? 'hide' : 'log'}</button>` : '<span class="hint">–</span>'}</td>
+      <td class="res-num">${t.seq}</td>
+    </tr>
+    ${open ? `<tr class="res-log-row" data-log-for="${t.seq}"><td colspan="6"><div class="res-log-body"></div></td></tr>` : ''}`;
+  }).join('');
+  body.querySelectorAll('.res-log-row').forEach(row => {
+    const t = data.items.find(x => x.seq === Number(row.dataset.logFor));
+    if (t) resFillLog(row.querySelector('.res-log-body'), t, data.summary);
+  });
+  const focus = body.querySelector('.res-test-focus');
+  if (focus) focus.scrollIntoView({ block: 'nearest' });
 }
 
-// A suite run holds one entry per testcase it launched, each pointing at its
-// own TestRun via run_id. Every togglable row (started or not-yet-reached -
-// see resSuiteRowTogglable) expands inline to show that testcase's own step
-// detail, rather than navigating away to see it - collapsed by default
-// (see resExpandedSuiteTcIds), same as this tab's testcase-run view.
-function renderResSuiteDetail(run) {
-  const results = run.results || [];
-  const rows = (run.testcase_ids || []).map((_, i) => resSuiteRowState(run, i));
-  // Entries are seeded pending for the whole suite up front (see
-  // routers/TestSuites._run_testsuite), so "run" here means started - one
-  // that has its own TestRun to point at - not merely listed.
-  const started = results.filter(r => r.run_id).length;
-  resSetDetailHeader(`Testsuite run: ${run.testsuite_name}`, run.status, [
-    `started ${formatVnDateTime(run.started_at)}`,
-    run.completed_at ? `completed ${formatVnDateTime(run.completed_at)}` : null,
-    `${started} of ${(run.testcase_ids || []).length} testcase(s) run`,
-    run.stop_on_failure ? 'stop on failure' : 'continue on failure',
-  ]);
-
-  const body = document.getElementById('resDetailBody');
-  body.innerHTML = rows.length
-    ? rows.map((r, i) => resSuiteRowHtml(r, i, resExpandedSuiteTcIds.has(r.testcase_id))).join('')
-    : `<div class="pi-log-empty">${run.status === 'running' ? 'starting…' : 'no testcases ran'}</div>`;
-
-  // Only for runs recorded before the backend seeded every testcase up front -
-  // a seeded run already shows the not-yet-reached ones as their own pending
-  // rows, so a trailing "running…" would just be repeating itself.
-  if (run.status === 'running' && !results.some(r => r.status === 'pending' || r.status === 'running')) {
-    body.insertAdjacentHTML('beforeend', '<div class="pi-log-empty">running…</div>');
+// The Log column: a suite's testcase shows that testcase run's full step
+// detail (the same renderer the old views used); a testcase's step shows
+// that one step's logs, checks and per-Pi results.
+async function resFillLog(el, t, summary) {
+  if (!el.childElementCount) el.innerHTML = '<div class="pi-log-empty">loading…</div>';
+  if (summary.kind === 'testsuite') {
+    await tcRenderRunInto(el, t.run_id, { forceCollapsed: summary.status !== 'running' });
+    return;
   }
+  const page = await tcFetchRunSteps(summary.id, t.seq - 1, 1).catch(() => null);
+  if (!page || !page.items.length) {
+    el.innerHTML = '<div class="pi-log-empty">failed to load</div>';
+    return;
+  }
+  // Opened on purpose from the Log column, so the step starts expanded -
+  // tcRenderRunSteps only expands by default for a run that's "running".
+  tcRenderRunSteps(el, { id: summary.id, status: 'running', results: page.items }, false, t.seq - 1);
+}
 
-  body.querySelectorAll('.cmd-entry').forEach((entry, i) => {
-    const r = rows[i];
-    const toggle = entry.querySelector('.res-suite-tc-toggle');
-    if (!toggle) return;
-    const resultEl = entry.querySelector('.result');
-    // Already expanded (surviving a poll-driven re-render) - re-fill rather
-    // than leave whatever was rendered before this tick's fetch/data.
-    if (resExpandedSuiteTcIds.has(r.testcase_id)) resFillSuiteTcSteps(resultEl, r);
-    toggle.addEventListener('click', () => {
-      const expanding = resultEl.classList.contains('hidden');
-      resultEl.classList.toggle('hidden', !expanding);
-      toggle.querySelector('.tc-run-toggle-chevron').innerHTML = chevronIconSvg(expanding ? 'down' : 'right');
-      if (expanding) {
-        resExpandedSuiteTcIds.add(r.testcase_id);
-        resFillSuiteTcSteps(resultEl, r);
-      } else {
-        resExpandedSuiteTcIds.delete(r.testcase_id);
-      }
-    });
+// Live tick with the same rows: just move the clocks.
+function resPatchTestTimes(data) {
+  data.items.forEach(t => {
+    const cell = document.querySelector(`#resTestsBody tr[data-seq="${t.seq}"] > td:nth-child(2)`);
+    if (cell) cell.textContent = resTestTime(t);
   });
 }
 
-// Keeps the currently-running testcase's step-by-step detail live, inline in
-// the suite detail view, if its row happens to be expanded - called on every
-// poll tick (see refreshResDetail). A collapsed running row is left alone:
-// renderResSuiteDetail's own rebuild above already redraws its status text.
-async function resRefreshRunningSuiteRow(run) {
-  const idx = (run.results || []).findIndex(r => r.status === 'running');
-  if (idx === -1) return;
-  const r = run.results[idx];
-  if (!resExpandedSuiteTcIds.has(r.testcase_id)) return;
-  const el = document.querySelector(`#resDetailBody .result[data-testcase-id="${r.testcase_id}"]`);
-  if (!el) return;
-  await resFillSuiteTcSteps(el, r);
+// An open Log on a test that's still going keeps following it.
+// tcRenderRunInto skips the redraw when nothing changed.
+function resRefreshOpenLogs(data) {
+  data.items.forEach(t => {
+    if (t.status !== 'running' || !resRunOpenLogs.has(t.seq)) return;
+    const el = document.querySelector(`#resTestsBody tr[data-log-for="${t.seq}"] .res-log-body`);
+    if (el && el.childElementCount) resFillLog(el, t, data.summary);
+  });
+}
+
+function renderResTestsPager(data) {
+  const { page, pageSize } = resRunState;
+  const total = data.total;
+  const last = Math.max(1, Math.ceil(total / pageSize));
+  const from = total ? (page - 1) * pageSize + 1 : 0;
+  document.getElementById('resTestsSummary').textContent =
+    `${from}-${Math.min(total, page * pageSize)} of ${total} test${total === 1 ? '' : 's'}`
+    + (total !== data.summary.total ? ` (of ${data.summary.total})` : '');
+  document.getElementById('resTestsGoto').max = String(last);
+  document.getElementById('resTestsPageSize').value = String(pageSize);
+  const start = Math.max(1, Math.min(page - 2, last - 4));
+  const nums = [];
+  for (let n = start; n <= Math.min(last, start + 4); n++) nums.push(n);
+  const btn = (label, target, { current = false, disabled = false } = {}) =>
+    `<button type="button" class="res-page-btn${current ? ' current' : ''}" data-page="${target}" ${disabled ? 'disabled' : ''} ${current ? 'aria-current="page"' : ''}>${label}</button>`;
+  document.getElementById('resTestsNav').innerHTML = [
+    btn('First', 1, { disabled: page === 1 }),
+    btn('Previous', page - 1, { disabled: page === 1 }),
+    ...nums.map(n => btn(String(n), n, { current: n === page })),
+    btn('Next', page + 1, { disabled: page >= last }),
+    btn('Last', last, { disabled: page >= last }),
+  ].join('');
+}
+
+function resRunSetFilter(changes) {
+  Object.assign(resRunState, changes, { page: 1 });
+  resRunFocusSeq = null;
+  loadResRun();
+}
+
+function resRunGoToPage(n) {
+  const page = Math.max(1, Math.floor(Number(n)) || 1);
+  if (page === resRunState.page) return;
+  resRunState.page = page;
+  loadResRun();
+}
+
+// --- test navigation --------------------------------------------------------
+
+function resRunGoToSeq(seq) {
+  resRunFocusSeq = seq;
+  loadResRun({ aroundSeq: seq });
+}
+
+function resRunStepFailure(dir) {
+  if (!resRunFailures.length) return;
+  const cur = resRunFocusSeq;
+  let target;
+  if (cur === null) {
+    target = dir > 0 ? resRunFailures[0] : resRunFailures[resRunFailures.length - 1];
+  } else if (dir > 0) {
+    target = resRunFailures.find(s => s > cur) ?? resRunFailures[0];
+  } else {
+    target = [...resRunFailures].reverse().find(s => s < cur) ?? resRunFailures[resRunFailures.length - 1];
+  }
+  resRunGoToSeq(target);
+}
+
+// Jump to: the first test with that exact name (or the first that contains
+// it). A status filter that would hide it is cleared first.
+async function resRunJumpTo(name) {
+  name = name.trim();
+  if (!name || !resDetailCurrent) return;
+  const { kind, id } = resDetailCurrent;
+  try {
+    const res = await apiFetch(`${API}/results/${kind}/${id}/tests?${new URLSearchParams({ q: name, limit: '0' })}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const hit = data.items.find(t => t.name.toLowerCase() === name.toLowerCase()) || data.items[0];
+    if (!hit) { alert(`No test named "${name}" in this run.`); return; }
+    const visible = data.items.length && (resRunState.status === 'all' || resRunState.status === hit.status);
+    if (!visible || resRunState.q) {
+      Object.assign(resRunState, { status: 'all', q: '' });
+      document.getElementById('resTestStatus').value = 'all';
+      document.getElementById('resTestSearch').value = '';
+    }
+    resRunGoToSeq(hit.seq);
+  } catch {
+    // transient
+  }
+}
+
+// --- actions ----------------------------------------------------------------
+
+const RES_ARCHIVE_SVG = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4"/></svg>';
+
+async function resRunToggleFlag(flag) {
+  if (!resRunSummary) return;
+  const { kind, id } = resRunSummary;
+  try {
+    const res = await apiFetch(`${API}/results/${kind}/${id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [flag]: !resRunSummary[flag] }),
+    });
+    if (!res.ok) { alert(`Failed to update: ${res.status} ${await res.text()}`); return; }
+    resRunLastSig = null;
+    resRunRowsSig = null;
+    loadResRun();
+  } catch (err) {
+    alert(`Failed to update: ${err.message}`);
+  }
+}
+
+async function resRunExportCsv() {
+  if (!resDetailCurrent) return;
+  const { kind, id } = resDetailCurrent;
+  try {
+    const res = await apiFetch(`${API}/results/${kind}/${id}/tests.csv`);
+    if (!res.ok) { alert(`Failed to export: ${res.status} ${await res.text()}`); return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = (res.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/)?.[1] || 'tests.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert(`Failed to export: ${err.message}`);
+  }
 }
 
 // --- wiring ---------------------------------------------------------------
@@ -955,16 +1104,95 @@ resById('resPageSize').addEventListener('change', (e) => resSetFilter({ pageSize
 resById('resExportLink').addEventListener('click', resExportCsv);
 resById('resSelectAllMatching').addEventListener('click', resSelectAllMatching);
 
-// Detail view
-resById('resDetailBackBtn').addEventListener('click', showResListView);
-resById('resDetailRerunBtn').addEventListener('click', () => {
-  if (resDetailCurrent) rerunResRun(resDetailCurrent.kind, resDetailCurrent.id);
+// Result page
+resById('resTestStatus').addEventListener('change', (e) => resRunSetFilter({ status: e.target.value }));
+resById('resTestSearch').addEventListener('input', debounce((e) => resRunSetFilter({ q: e.target.value.trim() }), 300));
+resById('resJumpTo').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); resRunJumpTo(e.target.value); }
 });
-resById('resDetailDeleteBtn').addEventListener('click', () => {
+// Picking a suggestion from the datalist fires "change" without an Enter.
+resById('resJumpTo').addEventListener('change', (e) => resRunJumpTo(e.target.value));
+resById('resPrevFailBtn').addEventListener('click', () => resRunStepFailure(-1));
+resById('resNextFailBtn').addEventListener('click', () => resRunStepFailure(1));
+document.querySelectorAll('#resDetailView .res-run-flag').forEach(b => {
+  b.addEventListener('click', () => resRunToggleFlag(b.dataset.flag));
+});
+resById('resRunArchiveLink').addEventListener('click', () => resRunToggleFlag('archived'));
+resById('resRunLockLink').addEventListener('click', () => resRunToggleFlag('locked'));
+resById('resRunDeleteLink').addEventListener('click', () => {
   if (resDetailCurrent) deleteResRun(resDetailCurrent.kind, resDetailCurrent.id);
 });
+resById('resRunExportLink').addEventListener('click', resRunExportCsv);
+resById('resRunBackLink').addEventListener('click', () => { location.hash = '#results'; });
+resById('resRunRerunBtn').addEventListener('click', () => {
+  if (resDetailCurrent) rerunResRun(resDetailCurrent.kind, resDetailCurrent.id);
+});
 
+// Back to the list, filtered to every run of this package / with this tag.
+function resListFilteredBy(changes) {
+  resById('resTagSearch').value = '';
+  Object.assign(resState, {
+    view: 'current', owner: '', device: '', kind: '', status: '', package: '', testcase: '',
+    tags: [], date_from: '', date_to: '', page: 1,
+  }, changes);
+  resSaveState();
+  location.hash = '#results';
+}
+function resListThisPackage() {
+  if (resRunSummary) resListFilteredBy({ package: resRunSummary.name, kind: resRunSummary.kind });
+}
+resById('resRunPackageLink').addEventListener('click', resListThisPackage);
+document.querySelector('#resDetailView .res-run-info').addEventListener('click', (e) => {
+  if (e.target.id === 'resRunInfoPackageLink') { resListThisPackage(); return; }
+  const suite = e.target.closest('[data-suite-run]');
+  if (suite) { openResDetail('testsuite', Number(suite.dataset.suiteRun)); return; }
+  const tag = e.target.closest('[data-tag]');
+  if (tag) resListFilteredBy({ tags: [tag.dataset.tag] });
+});
+
+resById('resTestsBody').addEventListener('click', (e) => {
+  const open = e.target.closest('[data-open-run]');
+  if (open) { openResDetail('testcase', Number(open.dataset.openRun)); return; }
+  const logBtn = e.target.closest('.res-log-btn');
+  if (!logBtn || !resRunSummary) return;
+  const row = logBtn.closest('tr');
+  const seq = Number(row.dataset.seq);
+  const next = row.nextElementSibling;
+  if (resRunOpenLogs.has(seq)) {
+    resRunOpenLogs.delete(seq);
+    if (next && next.classList.contains('res-log-row')) next.remove();
+    logBtn.textContent = 'log';
+    logBtn.setAttribute('aria-expanded', 'false');
+    return;
+  }
+  resRunOpenLogs.add(seq);
+  logBtn.textContent = 'hide';
+  logBtn.setAttribute('aria-expanded', 'true');
+  row.insertAdjacentHTML('afterend', `<tr class="res-log-row" data-log-for="${seq}"><td colspan="6"><div class="res-log-body"></div></td></tr>`);
+  // The row's test, rebuilt from what's on screen (run_id for a suite's testcase).
+  const runBtn = row.querySelector('[data-open-run]');
+  resFillLog(row.nextElementSibling.querySelector('.res-log-body'),
+    { seq, run_id: runBtn ? Number(runBtn.dataset.openRun) : null }, resRunSummary);
+});
+resById('resTestsNav').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-page]');
+  if (b && !b.disabled) resRunGoToPage(b.dataset.page);
+});
+resById('resTestsGoto').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { resRunGoToPage(e.target.value); e.target.value = ''; }
+});
+resById('resTestsPageSize').addEventListener('change', (e) => resRunSetFilter({ pageSize: Number(e.target.value) || 25 }));
+
+resById('resRunningNow').addEventListener('click', () => resSetFilter({ view: 'current', status: 'running' }));
+
+// #results is the list; #results/<kind>/<id> is one run's page (detail-page.js
+// routes both here).
 document.addEventListener('tabshown', (e) => {
-  if (e.detail.viewId === 'results') showResListView();
-  else resStopPolling();
+  if (e.detail.viewId !== 'results') {
+    resStopPolling();
+    return;
+  }
+  const run = resRunFromHash();
+  if (run) resShowRun(run.kind, run.id);
+  else showResListView();
 });

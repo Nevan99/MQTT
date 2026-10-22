@@ -1141,7 +1141,7 @@ function showPiDetail(piId, captureIface = null) {
   // closeWifiInfoModal is called above.
   if (typeof closeTcEditorModal === 'function') closeTcEditorModal();
   if (typeof closeTsEditorModal === 'function') closeTsEditorModal();
-  if (typeof pauseTsRunTab === 'function') pauseTsRunTab();
+  if (typeof resStopPolling === 'function') resStopPolling();
   if (typeof closeTsRunHistoryModal === 'function') closeTsRunHistoryModal();
   detailPiId = piId;
   lastDetailInterfacesKey = null;
@@ -1217,6 +1217,17 @@ function routeApp() {
   const piMatch = hash.match(/^pi\/(.+)$/);
   if (piMatch) {
     showPiDetail(decodeURIComponent(piMatch[1]));
+    return;
+  }
+  // One run's result page (results-tab.js reads the kind/id back out of the
+  // hash on "tabshown"), so a run has its own link and Back returns to the list.
+  if (/^results\/(testcase|testsuite)\/\d+$/.test(hash)) {
+    showTabView('results');
+    return;
+  }
+  // The old Running tab merged into Results - keep its bookmarks working.
+  if (hash === 'running') {
+    location.replace(`${location.pathname}${location.search}#results`);
     return;
   }
   if (KNOWN_VIEWS.includes(hash)) {

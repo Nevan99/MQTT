@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="assets/kaon-favicon-180.png">
 <link id="faviconSvg" rel="icon" type="image/svg+xml" href="assets/kaon-favicon.svg">
 <link rel="stylesheet" href="themes.css?v=3">
-<link rel="stylesheet" href="styles.css?v=11">
+<link rel="stylesheet" href="styles.css?v=13">
 <!-- Applies the saved theme before first paint (no dark flash for a
      light-theme user) - same keys/logic as js/settings.js's applyTheme. -->
 <script>
@@ -53,7 +53,6 @@
     <button class="tab active" data-view="fleet">Fleet</button>
     <button class="tab" data-view="interfaces">Interfaces</button>
     <button class="tab" data-view="packages">Packages</button>
-    <button class="tab" data-view="running">Running</button>
     <button class="tab" data-view="results">Results</button>
     <button class="tab" data-view="captures">Captures</button>
     <button class="tab" data-view="history">History</button>
@@ -172,6 +171,8 @@
 
       <section class="res-side-section">
         <h3>Show</h3>
+        <!-- What the old Running tab listed: one click to the live runs. -->
+        <button type="button" class="res-link res-running-now hidden" id="resRunningNow"></button>
         <select id="resOwner" class="field" aria-label="Owner">
           <option value="">All</option>
         </select>
@@ -282,17 +283,116 @@
     </div>
   </div>
 
-  <div id="resDetailView" class="panel captures-panel hidden">
-    <div class="row" style="align-items: center; margin-bottom: 0.75rem; gap: 0.5rem;">
-      <button type="button" id="resDetailBackBtn" style="flex: 0 0 auto;">&larr; Back</button>
-      <h2 id="resDetailTitle" style="margin: 0 0 0 0.25rem; font-size: 1rem; flex: 1 1 auto;"></h2>
-      <span id="resDetailStatus" class="cmd-status pending"></span>
-      <span id="resDetailStopHost" class="tc-stop-host"></span>
-      <button type="button" id="resDetailRerunBtn" style="flex: 0 0 auto;">Rerun</button>
-      <button type="button" id="resDetailDeleteBtn" class="tc-bulk-danger" style="flex: 0 0 auto;">Delete</button>
+  <!-- One run, laid out like CDRouter's result page (#results/<kind>/<id>):
+       a Filter Tests / Test Navigation sidebar, then a summary card
+       (status, progress, PASS/FAIL/TIME), the package/device card and a
+       paged table of the run's tests - a testsuite's testcases, or a
+       testcase's step runs. Live runs update in place, so this is also where
+       a running testcase/testsuite is watched. See results-tab.js. -->
+  <div id="resDetailView" class="res-layout hidden">
+    <aside class="panel res-sidebar" aria-label="Filter and navigate tests">
+      <div class="res-run-flags">
+        <button type="button" class="icon-btn res-run-flag" data-flag="starred" id="resRunStarBtn"></button>
+        <button type="button" class="icon-btn res-run-flag" data-flag="archived" id="resRunArchiveBtn"></button>
+        <button type="button" class="icon-btn res-run-flag" data-flag="locked" id="resRunLockBtn"></button>
+      </div>
+      <h2 class="res-run-id" id="resRunTitle"></h2>
+      <div class="hint res-run-kind" id="resRunKind"></div>
+
+      <section class="res-side-section">
+        <h3>Filter Tests</h3>
+        <label class="res-side-label" for="resTestStatus">Status</label>
+        <select id="resTestStatus" class="field">
+          <option value="all">All Tests</option>
+          <option value="run">Run</option>
+          <option value="passed">Passes</option>
+          <option value="failed">Failures</option>
+          <option value="running">Running</option>
+          <option value="pending">Pending</option>
+          <option value="skipped">Skipped</option>
+          <option value="stopped">Stopped</option>
+        </select>
+        <button type="button" class="res-link res-run-package" id="resRunPackageLink" title="Show every run of this in Results"></button>
+        <label class="res-side-label" for="resTestSearch">Search</label>
+        <input type="text" id="resTestSearch" class="field" placeholder="Enter test name">
+      </section>
+
+      <section class="res-side-section">
+        <h3>Test Navigation</h3>
+        <label class="res-side-label" for="resJumpTo">Jump to</label>
+        <input type="text" id="resJumpTo" class="field" placeholder="Enter test name" list="resJumpList" autocomplete="off">
+        <datalist id="resJumpList"></datalist>
+        <div class="res-fail-nav">
+          <button type="button" id="resPrevFailBtn">&larr; Prev Failure</button>
+          <button type="button" id="resNextFailBtn">Next Failure &rarr;</button>
+        </div>
+      </section>
+
+      <section class="res-side-section res-run-links">
+        <button type="button" class="res-link" id="resRunBackLink">&larr; All results</button>
+        <button type="button" class="res-link" id="resRunExportLink">Export as CSV</button>
+        <button type="button" class="res-link" id="resRunArchiveLink"></button>
+        <button type="button" class="res-link" id="resRunLockLink"></button>
+        <button type="button" class="res-link res-danger-link" id="resRunDeleteLink">Delete this Result&hellip;</button>
+      </section>
+    </aside>
+
+    <div class="res-run-main">
+      <div class="panel res-run-summary">
+        <div class="res-run-state">
+          <div id="resRunStatusBig" class="res-run-status"></div>
+          <div class="res-run-progress-row">
+            <span id="resRunProgress" class="res-run-progress"></span>
+            <div class="res-progress-bar" role="progressbar" id="resRunProgressBar" aria-valuemin="0" aria-valuemax="100"><span></span></div>
+          </div>
+          <div id="resRunMessage" class="res-run-message"></div>
+        </div>
+        <div class="res-run-big res-pass"><span id="resRunPass">0</span><small>PASS</small></div>
+        <div class="res-run-big res-fail-big"><span id="resRunFail">0</span><small>FAIL</small></div>
+        <div class="res-run-big"><span id="resRunTime">–</span><small>TIME</small></div>
+        <div class="res-run-actions">
+          <span id="resRunStopHost" class="tc-stop-host"></span>
+          <button type="button" id="resRunRerunBtn">&#8635; Re-run&hellip;</button>
+        </div>
+      </div>
+
+      <div class="panel res-run-info">
+        <div><h4>Package</h4><div id="resRunInfoPackage"></div></div>
+        <div><h4>Device</h4><div id="resRunInfoDevice"></div></div>
+        <div><h4>Owner</h4><div id="resRunInfoOwner"></div></div>
+        <div><h4>Started</h4><div id="resRunInfoStarted"></div></div>
+        <div><h4>Tags</h4><div id="resRunInfoTags"></div></div>
+      </div>
+
+      <div class="panel res-main res-run-tests">
+        <div class="res-table-wrap">
+          <table class="res-table res-tests-table">
+            <thead>
+              <tr>
+                <th class="res-icon-col" title="Status"><span class="res-th-icon" aria-label="Status">&#10003;</span></th>
+                <th class="res-num">Time</th>
+                <th>Test Name</th>
+                <th>Description</th>
+                <th>Log</th>
+                <th class="res-num">Seq</th>
+              </tr>
+            </thead>
+            <tbody id="resTestsBody"></tbody>
+          </table>
+        </div>
+        <div class="res-pager">
+          <span id="resTestsSummary"></span>
+          <span class="res-pager-links">| <label class="res-goto">go to page <input type="number" id="resTestsGoto" min="1" class="field"></label></span>
+          <span class="res-pager-gap"></span>
+          <select id="resTestsPageSize" class="field" aria-label="Tests per page">
+            <option value="25">25 / page</option>
+            <option value="50">50 / page</option>
+            <option value="100">100 / page</option>
+          </select>
+          <nav id="resTestsNav" class="res-pager-nav" aria-label="Test pages"></nav>
+        </div>
+      </div>
     </div>
-    <div id="resDetailMeta" class="hint" style="margin-bottom: 0.6rem;"></div>
-    <div id="resDetailBody"></div>
   </div>
 </section>
 
@@ -626,51 +726,6 @@
   </div>
 </div>
 
-<!-- Live runs - testsuites and standalone testcases. Pressing Run on either
-     (or View in their run history) lands here; see testsuites-tab.js. -->
-<section id="running" class="view">
-  <div class="ts-live-layout">
-    <div class="panel ts-live-list-panel">
-      <div class="row" style="align-items: center; margin-bottom: 0.5rem;">
-        <h2 style="margin: 0; font-size: 1rem; flex: 1 1 auto;">Runs</h2>
-        <button type="button" id="tsLiveRefreshBtn" style="flex: 0 0 auto;">Refresh</button>
-      </div>
-      <!-- Bulk actions over the checked runs (see testsuites-tab.js's
-           "Running tab: selection + bulk actions"). Always rendered, buttons
-           disabled until something is checked, same as .tc-bulk-bar in
-           Packages, so checking a run doesn't shift the list under the pointer. -->
-      <div class="tc-bulk-bar ts-live-bulk-bar">
-        <input type="checkbox" id="tsLiveSelectAll" title="Select all runs" aria-label="Select all runs">
-        <span id="tsLiveBulkCount" class="tc-bulk-count">none selected</span>
-        <button type="button" id="tsLiveRerunBtn" title="Start a new run of each selected testcase/testsuite" disabled>Re-run</button>
-        <button type="button" id="tsLiveDeleteBtn" class="tc-bulk-danger" title="Delete the selected runs" disabled>Delete</button>
-      </div>
-      <div id="tsLiveList"></div>
-    </div>
-    <div class="panel ts-live-detail-panel">
-      <div id="tsRunEmpty" class="pi-log-empty">No run selected - start a testcase or testsuite from Packages, or pick a run on the left.</div>
-      <div id="tsRunDetail" class="hidden">
-        <div class="row" style="align-items: center; margin-bottom: 0.75rem;">
-          <h2 id="tsRunTitle" style="margin: 0; font-size: 1rem; flex: 1 1 auto;"></h2>
-          <span id="tsRunStopHost" class="tc-stop-host"></span>
-          <span id="tsRunStatus" class="cmd-status pending"></span>
-        </div>
-        <div id="tsRunMeta" class="hint" style="margin-bottom: 0.6rem;"></div>
-        <div id="tsRunTestcases"></div>
-      </div>
-      <div id="tcLiveDetail" class="hidden">
-        <div class="row" style="align-items: center; margin-bottom: 0.75rem;">
-          <h2 id="tcLiveTitle" style="margin: 0; font-size: 1rem; flex: 1 1 auto;"></h2>
-          <span id="tcLiveStopHost" class="tc-stop-host"></span>
-          <span id="tcLiveStatus" class="cmd-status pending"></span>
-        </div>
-        <div id="tcLiveMeta" class="hint" style="margin-bottom: 0.6rem;"></div>
-        <div id="tcLiveSteps"></div>
-      </div>
-    </div>
-  </div>
-</section>
-
 <section id="captures" class="view">
   <div class="panel captures-panel">
     <div class="capture-filters">
@@ -855,16 +910,16 @@
      serves them with only Last-Modified/ETag, which Chrome's heuristic
      cache treats as "reuse without revalidating" for a warm tab), so a
      plain reload can otherwise keep serving a stale copy indefinitely. -->
-<script src="js/testcases-tab.js?v=14"></script>
+<script src="js/testcases-tab.js?v=15"></script>
 <script src="js/tc-bulk-edit.js?v=1"></script>
-<script src="js/testsuites-tab.js?v=10"></script>
+<script src="js/testsuites-tab.js?v=11"></script>
 <!-- After testcases-tab.js: reuses its tcRenderRunSteps/tcStatusClass so a
      run's step detail renders identically in both places. -->
-<script src="js/results-tab.js?v=10"></script>
+<script src="js/results-tab.js?v=12"></script>
 <script src="js/wifi-scan.js?v=2"></script>
 <script src="js/wifi-info-modal.js?v=5"></script>
 <script src="js/log-rendering.js"></script>
 <script src="js/wireshark-table.js"></script>
-<script src="js/detail-page.js?v=15"></script>
+<script src="js/detail-page.js?v=16"></script>
 </body>
 </html>

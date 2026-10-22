@@ -236,6 +236,8 @@ def _facets(rows: list[dict]) -> dict:
         key = (r["kind"], r["name"])
         packages[key] = packages.get(key, 0) + 1
     return {
+        # The sidebar's "Running now" shortcut - what the old Running tab listed.
+        "running": sum(1 for r in rows if r["status"] == "running"),
         "owners": sorted({r["owner"] for r in rows if r["owner"]}, key=str.lower),
         "devices": sorted({d for r in rows for d in r["devices"]}, key=str.lower),
         "tags": [{"tag": t, "count": n} for t, n in sorted(tags.items(), key=lambda kv: (-kv[1], kv[0].lower()))],
@@ -379,3 +381,219 @@ def bulk_results(req: ResultBulkRequest, session: Session = Depends(get_session)
         done += 1
     session.commit()
     return {"action": req.action, "done": done, "missing": missing, "skipped_locked": locked}
+
+
+# --- one run's tests (CDRouter's result page) --------------------------------
+# A run is shown the way CDRouter shows one result: a summary (status,
+# progress, pass/fail/time) over a filterable, paged list of its "tests" -
+# a testsuite run's testcases, or a testcase run's step executions (one per
+# step x repeat x loop pass, in execution order). Used for live runs too, so
+# the Results tab is also where a running testcase/testsuite is watched.
+
+TEST_FILTERS = ("all", "run", "passed", "failed", "skipped", "pending", "running", "stopped")
+FAILED_STATUSES = ("failed", "timeout")
+
+
+def _test_matches(t: dict, status: str, q: str) -> bool:
+    st = t["status"]
+    if status == "run" and st in ("pending", "skipped"):
+        return False
+    if status == "failed" and st not in FAILED_STATUSES:
+        return False
+    if status not in ("all", "run", "failed") and st != status:
+        return False
+    if q and q not in t["name"].lower() and q not in t["description"].lower():
+        return False
+    return True
+
+
+def _params_text(params: dict) -> str:
+    bits = []
+    for k, v in (params or {}).items():
+        if v in (None, "", [], {}):
+            continue
+        text = v if isinstance(v, str) else json.dumps(v)
+        bits.append(f"{k}={text if len(text) <= 40 else text[:37] + '...'}")
+    return ", ".join(bits[:5]) + (", ..." if len(bits) > 5 else "")
+
+
+def _target_text(step: dict) -> str:
+    target = step.get("target")
+    if target == "multicast":
+        return ", ".join(step.get("target_pi_ids") or []) or "multicast"
+    return "all Pis" if target in (None, "all") else str(target)
+
+
+def _testcase_tests(run: TestRun) -> tuple[list, Optional[str]]:
+    results, live = _run_results(run)
+    entries = _locked_copy(results, live) if live is not None else list(results)
+    steps = json.loads(run.steps_json or "[]")
+    tests = []
+    for i, e in enumerate(entries):
+        idx = e.get("step_index")
+        step = steps[idx] if isinstance(idx, int) and 0 <= idx < len(steps) else {}
+        where = [f"-> {_target_text({**step, **{k: v for k, v in e.items() if k == 'target'}})}"]
+        params = _params_text(e.get("params") or step.get("params") or {})
+        if params:
+            where.append(params)
+        context = []
+        if run.repeat_count > 1:
+            context.append(f"pass {e.get('pass_index', 0) + 1}/{run.repeat_count}")
+        if e.get("loop_group") and (e.get("loop_count") or 1) > 1:
+            context.append(f"loop {e['loop_group']} {(e.get('loop_pass') or 0) + 1}/{e['loop_count']}")
+        if (step.get("repeat_count") or 1) > 1:
+            context.append(f"repeat {e.get('iteration', 1)}/{step['repeat_count']}")
+        tests.append({
+            "seq": i + 1, "name": f"#{(idx if isinstance(idx, int) else 0) + 1} {e.get('action') or '?'}",
+            "description": " · ".join(where + context),
+            "status": e.get("status", "pending"),
+            "duration_s": (e["duration_ms"] / 1000) if e.get("duration_ms") is not None else None,
+            "step_index": idx, "run_id": None,
+            "error": e.get("error"),
+        })
+    current = None
+    if live is not None and live.current is not None and 0 <= live.current < len(tests):
+        current = tests[live.current]["name"]
+    return tests, current
+
+
+def _suite_tests(session: Session, run: TestSuiteRun) -> tuple[list, Optional[str]]:
+    results = json.loads(run.results_json or "[]")
+    if not results:   # not started yet: the plan, all pending
+        results = [{"testcase_id": t, "status": "pending", "run_id": None}
+                   for t in json.loads(run.testcase_ids_json or "[]")]
+    tc_ids = [e.get("testcase_id") for e in results]
+    testcases = {
+        t.id: t for t in session.exec(select(TestCase).where(TestCase.id.in_(tc_ids))).all()
+    } if tc_ids else {}
+    child_ids = [e["run_id"] for e in results if e.get("run_id")]
+    children = {
+        rid: (started, completed)
+        for rid, started, completed in session.exec(
+            select(TestRun.id, TestRun.started_at, TestRun.completed_at).where(TestRun.id.in_(child_ids))
+        ).all()
+    } if child_ids else {}
+    now = datetime.now(timezone.utc)
+    tests, current = [], None
+    for i, e in enumerate(results):
+        tc = testcases.get(e.get("testcase_id"))
+        child = children.get(e.get("run_id"))
+        duration = None
+        if child is not None:
+            duration = _duration_s(child[0], child[1] or (now if e.get("status") == "running" else None))
+        name = e.get("testcase_name") or (tc.name if tc else f"testcase #{e.get('testcase_id')}")
+        if e.get("status") == "running":
+            current = name
+        tests.append({
+            "seq": i + 1, "name": name,
+            "description": (tc.description if tc and tc.description else ""),
+            "status": e.get("status", "pending"), "duration_s": duration,
+            "testcase_id": e.get("testcase_id"), "run_id": e.get("run_id"),
+            "error": e.get("error"),
+        })
+    return tests, current
+
+
+def _run_tests(session: Session, kind: str, run) -> tuple[list, Optional[str]]:
+    return _testcase_tests(run) if kind == "testcase" else _suite_tests(session, run)
+
+
+def _run_summary(session: Session, kind: str, run, tests: list, current: Optional[str]) -> dict:
+    counts = {}
+    for t in tests:
+        key = "failed" if t["status"] in FAILED_STATUSES else t["status"]
+        counts[key] = counts.get(key, 0) + 1
+    total = len(tests)
+    done = total - counts.get("pending", 0) - counts.get("running", 0)
+    if kind == "testcase":
+        source = session.get(TestCase, run.testcase_id)
+        name, source_id = run.testcase_name, run.testcase_id
+        steps = json.loads(run.steps_json or "[]")
+        devices = sorted(_targets_of(steps))
+        stop_mode = run_control.run_stop_mode(run.id)
+        live = run_control.get_run(run.id) is not None
+        extra = {"repeat_count": run.repeat_count, "step_count": len(steps), "suite_run_id": run.suite_run_id}
+    else:
+        source = session.get(TestSuite, run.testsuite_id)
+        name, source_id = run.testsuite_name, run.testsuite_id
+        tc_ids = json.loads(run.testcase_ids_json or "[]")
+        found = set()
+        if tc_ids:
+            for tc in session.exec(select(TestCase).where(TestCase.id.in_(tc_ids))).all():
+                found |= _targets_of(tc.steps)
+        devices = sorted(found)
+        suite_live = run_control.get_suite(run.id)
+        stop_mode = suite_live.stop_mode if suite_live is not None else None
+        live = suite_live is not None
+        extra = {"testcase_count": len(tc_ids)}
+    started, completed = _as_utc(run.started_at), _as_utc(run.completed_at)
+    now = datetime.now(timezone.utc)
+    return {
+        "kind": kind, "id": run.id, "source_id": source_id, "name": name,
+        "description": (source.description if source else "") or "",
+        "status": run.status, "started_at": started, "completed_at": completed,
+        "duration_s": _duration_s(started, completed or (now if run.status == "running" else None)),
+        "total": total, "done": done,
+        "progress": round(100 * done / total) if total else (0 if run.status == "running" else 100),
+        "counts": counts, "current": current,
+        "devices": devices, "owner": (source.author if source else "") or "",
+        "tags": source.tags if source else [],
+        "stop_on_failure": run.stop_on_failure, "stop_requested": stop_mode, "live": live,
+        "starred": run.starred, "archived": run.archived, "locked": run.locked,
+        "source_exists": source is not None,
+        **extra,
+    }
+
+
+@router.get("/{kind}/{run_id}/tests")
+def get_result_tests(
+    kind: str, run_id: int,
+    status: str = "all", q: str = "",
+    offset: int = 0, limit: int = 25,
+    around_seq: Optional[int] = None,
+    session: Session = Depends(get_session),
+):
+    """One run's summary plus one page of its tests matching the status
+    filter and name/description search. around_seq moves to the page that
+    holds that test (Jump to / Prev / Next Failure); failure_seqs lists every
+    failed test's seq in the filtered order, for that navigation."""
+    run = _get_run(session, kind, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if status not in TEST_FILTERS:
+        raise HTTPException(status_code=400, detail=f"status must be one of {TEST_FILTERS}")
+    tests, current = _run_tests(session, kind, run)
+    summary = _run_summary(session, kind, run, tests, current)
+    needle = q.strip().lower()
+    matched = [t for t in tests if _test_matches(t, status, needle)]
+    if around_seq is not None and limit > 0:
+        pos = next((i for i, t in enumerate(matched) if t["seq"] == around_seq), None)
+        if pos is not None:
+            offset = (pos // limit) * limit
+    offset = max(0, offset)
+    page = matched[offset:offset + limit] if limit > 0 else matched[offset:]
+    return {
+        "summary": summary, "total": len(matched), "offset": offset, "limit": limit,
+        "items": page,
+        "failure_seqs": [t["seq"] for t in matched if t["status"] in FAILED_STATUSES],
+        "names": sorted({t["name"] for t in tests}, key=str.lower)[:500],
+    }
+
+
+@router.get("/{kind}/{run_id}/tests.csv")
+def export_result_tests(kind: str, run_id: int, session: Session = Depends(get_session)):
+    """Every test of one run as CSV (the result page's "Export as CSV")."""
+    run = _get_run(session, kind, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    tests, _ = _run_tests(session, kind, run)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["seq", "status", "time_s", "test_name", "description", "error"])
+    for t in tests:
+        w.writerow([t["seq"], t["status"], round(t["duration_s"], 1) if t["duration_s"] is not None else "",
+                    t["name"], t["description"], t.get("error") or ""])
+    return Response(
+        content=buf.getvalue(), media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{kind}-run-{run_id}-tests.csv"'},
+    )

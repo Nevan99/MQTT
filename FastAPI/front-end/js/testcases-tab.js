@@ -1430,8 +1430,9 @@ async function runTestcaseById(id) {
   }
 }
 
-// Runs are watched in the Running tab now (testsuites-tab.js); this is
-// kept as the entry point every Run/View button already calls.
+// Runs are watched on their own result page in the Results tab
+// (results-tab.js); this is kept as the entry point every Run/View button
+// already calls.
 async function openRunView(runId) {
   openLiveTestcaseRun(runId);
 }
@@ -1575,7 +1576,7 @@ function tcRunStepHtml(r, i) {
 // require rewriting every entry in the set. Keyed by run id so switching to
 // a different run's view starts fresh instead of carrying over an unrelated
 // run's toggles. A running testcase's view re-renders on every poll tick
-// (see refreshTcRun/refreshResDetail), so this has to live outside
+// (see refreshTcRun, and results-tab.js's loadResRun), so this has to live outside
 // tcRenderRunSteps to survive that - otherwise every 1.5s would silently
 // undo anything the user just clicked.
 let tcRunCollapseRunId = null;
@@ -1594,8 +1595,8 @@ function tcRunDefaultExpanded(run) {
 
 // container: where to render. run: a TestRunOut. forceCollapsed: when true,
 // every step/Pi entry defaults collapsed regardless of tcRunDefaultExpanded
-// (the Results tab's own default - see resSuiteTestcaseStepsHtml/
-// renderResTestcaseDetail - rather than auto-opening while still running).
+// (the Results tab's own default for a finished suite's testcase Log -
+// see results-tab.js's resFillLog - rather than auto-opening).
 // baseIndex: position of run.results[0] in the whole run, when rendering one
 // page of a bigger run (see tcRenderRunInto) - keeps data-step ids, and so
 // the per-step toggle state, unique across pages.
