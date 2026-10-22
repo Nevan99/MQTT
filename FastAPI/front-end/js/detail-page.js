@@ -1226,6 +1226,11 @@ function routeApp() {
     showTabView('results');
     return;
   }
+  // Packages has two sub-tabs (testcases-tab.js's pkgShow reads which).
+  if (/^packages\/(testcases|testsuites)$/.test(hash)) {
+    showTabView('packages');
+    return;
+  }
   // The old Running tab merged into Results - keep its bookmarks working.
   if (hash === 'running') {
     location.replace(`${location.pathname}${location.search}#results`);

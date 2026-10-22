@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="assets/kaon-favicon-180.png">
 <link id="faviconSvg" rel="icon" type="image/svg+xml" href="assets/kaon-favicon.svg">
 <link rel="stylesheet" href="themes.css?v=3">
-<link rel="stylesheet" href="styles.css?v=14">
+<link rel="stylesheet" href="styles.css?v=15">
 <!-- Applies the saved theme before first paint (no dark flash for a
      light-theme user) - same keys/logic as js/settings.js's applyTheme. -->
 <script>
@@ -432,52 +432,64 @@
 </section>
 
 <section id="packages" class="view">
-  <div id="tcListView">
-    <div class="panel captures-panel ts-list-panel">
-      <h3 style="margin: 0 0 0.5rem;">Testsuites</h3>
-      <div class="row" style="margin-bottom: 0.5rem; align-items: center; gap: 0.5rem;">
-        <input type="text" id="tsSearchInput" class="field" placeholder="Search…" style="flex: 1 1 auto;">
-        <button type="button" id="tsRunHistoryBtn" style="flex: 0 0 auto;">History</button>
-        <button type="button" id="tsNewBtn" style="flex: 0 0 auto;">+ New</button>
-      </div>
-      <input type="text" id="tsTagFilterInput" class="field" placeholder="Filter by tag" style="margin-bottom: 0.5rem;">
-      <table id="tsTable">
-        <thead>
-          <tr><th class="ts-name-cell">Name<span class="col-resize-handle" id="tsNameColResize" title="Drag to resize"></span></th><th>Testcases</th><th></th></tr>
-        </thead>
-        <tbody id="tsTableBody"></tbody>
-      </table>
+  <!-- Testcases and Testsuites as two full-width sub-tabs (#packages/testcases,
+       #packages/testsuites - see packages-tabs in testcases-tab.js), each
+       with its own title row (main actions on the right), one compact filter
+       row and its table. -->
+  <div id="tcListView" class="pkg-layout">
+    <div class="pkg-switch" role="tablist" aria-label="Packages">
+      <button type="button" class="pkg-tab" role="tab" id="pkgTabTestcases" data-pkg="testcases" aria-controls="pkgTestcases">
+        Testcases <span class="pkg-count" id="pkgCountTestcases"></span>
+      </button>
+      <button type="button" class="pkg-tab" role="tab" id="pkgTabTestsuites" data-pkg="testsuites" aria-controls="pkgTestsuites">
+        Testsuites <span class="pkg-count" id="pkgCountTestsuites"></span>
+      </button>
     </div>
 
-    <div class="gutter" id="tcListGutter"></div>
-
-    <div class="panel captures-panel tc-list-panel">
-      <div class="row" style="margin-bottom: 0.5rem; align-items: center; gap: 0.5rem;">
-        <input type="text" id="tcSearchInput" class="field" placeholder="Search name/description…" style="flex: 1 1 auto;">
-        <input type="text" id="tcTagFilterInput" class="field" placeholder="Filter by tag" style="flex: 0 0 160px;">
-        <button type="button" id="tcRunHistoryBtn" style="flex: 0 0 auto;">Run History</button>
-        <button type="button" id="tcNewBtn" style="flex: 0 0 auto;">+ New Testcase</button>
+    <!-- Testcases -->
+    <div id="pkgTestcases" class="panel captures-panel pkg-pane tc-list-panel" role="tabpanel" aria-labelledby="pkgTabTestcases">
+      <div class="pkg-head">
+        <h2>Testcases</h2>
+        <div class="pkg-head-actions">
+          <button type="button" id="tcRunHistoryBtn">Run History</button>
+          <button type="button" id="tcNewBtn" class="pkg-primary">+ New Testcase</button>
+        </div>
+      </div>
+      <div class="pkg-filters" role="search">
+        <label class="pkg-search">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input type="text" id="tcSearchInput" placeholder="Search name or description" aria-label="Search testcases">
+        </label>
+        <input type="text" id="tcTagFilterInput" class="field pkg-tag-filter" placeholder="Tag" aria-label="Filter testcases by tag" list="pkgTagList" autocomplete="off">
+        <button type="button" class="res-link pkg-clear" id="tcClearFilters">Clear</button>
       </div>
 
       <!-- Bulk toolbar: acts on the checkbox column below. Always present so
            the table doesn't shift when a row is ticked; its buttons are
-           disabled until something is selected (see tcRenderBulkBar). -->
-      <div class="tc-bulk-bar">
+           disabled until something is selected (see tcRenderBulkBar). The
+           less frequent actions sit in the More menu. -->
+      <div class="tc-bulk-bar pkg-bulk-bar">
         <span id="tcBulkCount" class="tc-bulk-count">none selected</span>
-        <button type="button" id="tcBulkRunBtn">Run</button>
-        <button type="button" id="tcBulkDuplicateBtn">Duplicate</button>
-        <button type="button" id="tcBulkTagBtn">Tag&hellip;</button>
-        <button type="button" id="tcBulkEditStepsBtn" title="Find-and-replace across the steps of many testcases">Edit steps&hellip;</button>
-        <button type="button" id="tcBulkUndoEditBtn" class="hidden" title="Undo the last mass step edit">Undo step edit</button>
+        <button type="button" id="tcBulkRunBtn">&#9654; Run</button>
         <button type="button" id="tcBulkAddToSuiteBtn">Add to Testsuite&hellip;</button>
-        <button type="button" id="tcBulkExportBtn">Export</button>
+        <button type="button" id="tcBulkTagBtn">Tag&hellip;</button>
+        <div class="pkg-more">
+          <button type="button" id="tcBulkMoreBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="tcBulkMoreMenu">More &#9662;</button>
+          <div class="pkg-more-menu hidden" id="tcBulkMoreMenu" role="menu">
+            <button type="button" role="menuitem" id="tcBulkDuplicateBtn">Duplicate</button>
+            <button type="button" role="menuitem" id="tcBulkEditStepsBtn" title="Find-and-replace across the steps of many testcases">Edit steps&hellip;</button>
+            <button type="button" role="menuitem" id="tcBulkUndoEditBtn" class="hidden" title="Undo the last mass step edit">Undo step edit</button>
+            <button type="button" role="menuitem" id="tcBulkExportBtn">Export</button>
+          </div>
+        </div>
+        <span class="pkg-gap"></span>
         <button type="button" id="tcBulkDeleteBtn" class="tc-bulk-danger">Delete&hellip;</button>
       </div>
 
       <table id="tcTable">
         <thead>
           <tr>
-            <th class="tc-check-col"><input type="checkbox" id="tcSelectAll" title="Select all on this page"></th>
+            <th class="tc-check-col"><input type="checkbox" id="tcSelectAll" title="Select all on this page" aria-label="Select all on this page"></th>
             <th class="tc-name-cell">Name<span class="col-resize-handle" id="tcNameColResize" title="Drag to resize"></span></th><th>Tags</th><th>Status</th><th>Steps</th><th>Author</th><th>Updated</th><th></th>
           </tr>
         </thead>
@@ -485,6 +497,32 @@
       </table>
       <div id="tcPager" class="tc-pager"></div>
     </div>
+
+    <!-- Testsuites -->
+    <div id="pkgTestsuites" class="panel captures-panel pkg-pane ts-list-panel hidden" role="tabpanel" aria-labelledby="pkgTabTestsuites">
+      <div class="pkg-head">
+        <h2>Testsuites</h2>
+        <div class="pkg-head-actions">
+          <button type="button" id="tsRunHistoryBtn">Run History</button>
+          <button type="button" id="tsNewBtn" class="pkg-primary">+ New Testsuite</button>
+        </div>
+      </div>
+      <div class="pkg-filters" role="search">
+        <label class="pkg-search">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input type="text" id="tsSearchInput" placeholder="Search name or description" aria-label="Search testsuites">
+        </label>
+        <input type="text" id="tsTagFilterInput" class="field pkg-tag-filter" placeholder="Tag" aria-label="Filter testsuites by tag" list="pkgTagList" autocomplete="off">
+        <button type="button" class="res-link pkg-clear" id="tsClearFilters">Clear</button>
+      </div>
+      <table id="tsTable">
+        <thead>
+          <tr><th class="ts-name-cell">Name<span class="col-resize-handle" id="tsNameColResize" title="Drag to resize"></span></th><th>Testcases</th><th>Tags</th><th>Author</th><th>Updated</th><th></th></tr>
+        </thead>
+        <tbody id="tsTableBody"></tbody>
+      </table>
+    </div>
+    <datalist id="pkgTagList"></datalist>
   </div>
 
   <div id="tcRunView" class="panel captures-panel hidden">
@@ -934,7 +972,7 @@
      later files call functions defined in earlier ones. -->
 <script src="js/settings.js?v=2"></script>
 <script src="js/auth.js?v=2"></script>
-<script src="js/layout.js"></script>
+<script src="js/layout.js?v=2"></script>
 <script src="js/fleet-table.js?v=7"></script>
 <script src="js/interfaces-tab.js"></script>
 <script src="js/captures.js?v=2"></script>
@@ -945,9 +983,9 @@
      serves them with only Last-Modified/ETag, which Chrome's heuristic
      cache treats as "reuse without revalidating" for a warm tab), so a
      plain reload can otherwise keep serving a stale copy indefinitely. -->
-<script src="js/testcases-tab.js?v=15"></script>
+<script src="js/testcases-tab.js?v=16"></script>
 <script src="js/tc-bulk-edit.js?v=1"></script>
-<script src="js/testsuites-tab.js?v=11"></script>
+<script src="js/testsuites-tab.js?v=12"></script>
 <!-- After testcases-tab.js: reuses its tcRenderRunSteps/tcStatusClass so a
      run's step detail renders identically in both places. -->
 <script src="js/results-tab.js?v=14"></script>
@@ -955,6 +993,6 @@
 <script src="js/wifi-info-modal.js?v=5"></script>
 <script src="js/log-rendering.js"></script>
 <script src="js/wireshark-table.js"></script>
-<script src="js/detail-page.js?v=17"></script>
+<script src="js/detail-page.js?v=18"></script>
 </body>
 </html>

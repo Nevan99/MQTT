@@ -419,13 +419,10 @@
   /* Testcases tab: list / run / run-history sub-views, only one shown at a
      time within #packages (see testcases-tab.js's tcHideAllViews). The
      editor (new/edit testcase) is a separate popup, not one of these - see
-     .tc-editor-overlay below. #tcListView itself holds two side-by-side
-     panels (testsuites, then testcases - see .ts-list-panel/.tc-list-panel
-     below) split by a draggable .gutter (see #tcListGutter in
-     layout.js's setupTcListGutter), not a .panel itself. */
+     .tc-editor-overlay below. #tcListView holds the Testcases and
+     Testsuites sub-tabs (.pkg-* at the end of this file), one shown at a
+     time. */
   #tcListView.hidden, #tcRunView.hidden, #tcRunHistoryView.hidden { display: none; }
-  #tcListView { display: grid; grid-template-columns: 320px 6px 1fr; gap: 1rem; min-height: 0; }
-  #tcListView.dragging { user-select: none; cursor: col-resize; }
   .tc-list-panel { min-width: 0; overflow-y: auto; }
   .ts-list-panel { min-width: 0; overflow-y: auto; }
 
@@ -585,8 +582,8 @@
   .tc-run-check.fail .tc-run-check-expr { color: var(--text-2); }
   .tc-run-check-actual { color: var(--amber); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
-  /* Testsuites: no tab/section of its own - the list is a permanent panel
-     inside the Testcases tab (.ts-list-panel above); editor/run/run-history
+  /* Testsuites: the Packages tab's second sub-tab (.ts-list-panel above);
+     editor/run/run-history
      are all popups reusing .tc-editor-overlay/-modal directly (see
      #tsEditorOverlay/#tsRunOverlay/#tsRunHistoryOverlay in index.html)
      rather than duplicating that styling. */
@@ -889,3 +886,48 @@ table.res-table tr.res-archived > td { opacity: 0.7; }
 .ll-fail .lx { color: var(--danger); font-weight: 600; }
 .ll-note .lx { color: var(--text-faint); font-style: italic; }
 .res-log-cell { white-space: nowrap; }
+
+/* Packages: Testcases | Testsuites sub-tabs (testcases-tab.js pkgShow). */
+#packages { padding: 1rem; }
+.pkg-layout { display: flex; flex-direction: column; gap: 0.75rem; flex: 1 1 auto; min-height: 0; }
+.pkg-layout.hidden { display: none; }
+.pkg-switch { display: inline-flex; align-self: flex-start; gap: 0.25rem; padding: 0.25rem; border-radius: 8px; background: var(--surface); border: 1px solid var(--border); }
+.pkg-tab { display: inline-flex; align-items: center; gap: 0.5rem; border: 1px solid transparent; background: transparent; padding: 0.45rem 1rem; border-radius: 6px; font-weight: 500; color: var(--text-dim); }
+.pkg-tab:hover { background: var(--surface-hover); color: var(--text); }
+.pkg-tab.active { background: var(--surface-button); border-color: var(--border-strong); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+.pkg-count { min-width: 1.5rem; padding: 0 0.4rem; border-radius: 10px; background: var(--surface-input); color: var(--text-dim); font-size: 0.72rem; line-height: 1.4rem; text-align: center; font-variant-numeric: tabular-nums; }
+.pkg-count:empty { display: none; }
+.pkg-tab.active .pkg-count { color: var(--accent); }
+.pkg-pane { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.pkg-pane.hidden { display: none; }
+.pkg-pane > table { flex: 0 0 auto; }
+.pkg-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+.pkg-head h2 { margin: 0; font-size: 1.05rem; font-weight: 600; color: var(--text); }
+.pkg-head-actions { display: flex; gap: 0.5rem; }
+.pkg-primary { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
+.pkg-primary:hover { background: var(--accent); filter: brightness(1.1); }
+.pkg-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 0.6rem; }
+.pkg-search {
+  display: flex; align-items: center; gap: 0.4rem; flex: 0 1 360px; min-width: 200px; margin: 0;
+  padding: 0 0.6rem; background: var(--surface-input); border: 1px solid var(--border-strong); border-radius: 4px; color: var(--text-dim);
+}
+.pkg-search:focus-within { border-color: var(--accent); }
+.pkg-search input { flex: 1 1 auto; min-width: 0; border: none; background: transparent; padding: 0.45rem 0; color: var(--text); }
+.pkg-search input:focus, .pkg-search input:focus-visible { outline: none; }
+.pkg-tag-filter { flex: 0 0 150px; width: 150px; }
+.pkg-clear { font-size: 0.8rem; }
+.pkg-bulk-bar { flex-wrap: wrap; }
+.pkg-gap { flex: 1 1 auto; }
+.pkg-bulk-bar .tc-bulk-count { flex: 0 0 auto; margin-right: 0.25rem; }
+.pkg-more { position: relative; }
+.pkg-more-menu {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 30; min-width: 180px;
+  display: flex; flex-direction: column; padding: 0.3rem; gap: 0.1rem;
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: 6px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.pkg-more-menu.hidden { display: none; }
+.pkg-more-menu button { text-align: left; border: none; background: transparent; padding: 0.4rem 0.6rem; font-size: 0.8rem; }
+.pkg-more-menu button:hover:not([disabled]) { background: var(--surface-hover); }
+.pkg-more-menu button.hidden { display: none; }
+.pkg-tags { min-width: 7rem; }
+.pkg-desc { margin: 0.15rem 0 0; font-size: 0.72rem; }

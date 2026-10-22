@@ -183,6 +183,7 @@ function showTcListView() {
   stopTcRunPolling();
   tcHideAllViews();
   document.getElementById('tcListView').classList.remove('hidden');
+  pkgShow(pkgFromHash());
   // Entering the tab starts clean: a selection carried over from a previous
   // visit would arm the bulk toolbar against rows the operator can no longer
   // see, and page 3 of a stale result set is rarely where they meant to be.
@@ -293,9 +294,66 @@ async function loadTestcases() {
     renderTcTable();
     renderTcPager();
     tcRenderBulkBar();
+    document.getElementById('pkgCountTestcases').textContent = tcTotal;
+    pkgAddKnownTags(tcList.flatMap(t => t.tags || []));
   } catch {
     // backend unreachable; keep last known list
   }
+}
+
+// --- Packages sub-tabs: Testcases | Testsuites --------------------------------
+// Two full-width panes instead of the old side-by-side split, switched by the
+// hash (#packages/testcases, #packages/testsuites) so each has its own link
+// and Back works; plain #packages (the nav button) reopens the last one used.
+
+const PKG_KEY = 'pi_fleet_packages_tab';
+const PKG_TABS = ['testcases', 'testsuites'];
+
+function pkgFromHash() {
+  const m = location.hash.match(/^#packages\/(testcases|testsuites)$/);
+  if (m) return m[1];
+  let saved = null;
+  try { saved = localStorage.getItem(PKG_KEY); } catch { /* storage blocked */ }
+  return PKG_TABS.includes(saved) ? saved : 'testcases';
+}
+
+function pkgShow(which) {
+  try { localStorage.setItem(PKG_KEY, which); } catch { /* storage blocked */ }
+  PKG_TABS.forEach(name => {
+    const on = name === which;
+    const tab = document.querySelector(`.pkg-tab[data-pkg="${name}"]`);
+    tab.classList.toggle('active', on);
+    tab.setAttribute('aria-selected', String(on));
+    tab.tabIndex = on ? 0 : -1;
+    document.getElementById(name === 'testcases' ? 'pkgTestcases' : 'pkgTestsuites').classList.toggle('hidden', !on);
+  });
+}
+
+// Tags seen on either list, offered as suggestions in both tag filters.
+const pkgKnownTags = new Set();
+function pkgAddKnownTags(tags) {
+  const before = pkgKnownTags.size;
+  tags.forEach(t => { if (t) pkgKnownTags.add(t); });
+  if (pkgKnownTags.size === before) return;
+  document.getElementById('pkgTagList').innerHTML = [...pkgKnownTags].sort((a, b) => a.localeCompare(b))
+    .map(t => `<option value="${tcEsc(t)}"></option>`).join('');
+}
+
+// Tags as chips; clicking one filters that list by it.
+function pkgTagChips(tags, list) {
+  if (!tags || !tags.length) return '<span class="hint">–</span>';
+  return tags.map(t => `<button type="button" class="res-tag res-tag-sm pkg-tag" data-tag="${tcEsc(t)}" data-list="${list}" title="Show only ${tcEsc(t)}">${tcEsc(t)}</button>`).join('');
+}
+
+function pkgSetTagFilter(list, tag) {
+  const input = document.getElementById(list === 'tc' ? 'tcTagFilterInput' : 'tsTagFilterInput');
+  input.value = tag;
+  input.dispatchEvent(new Event('input'));
+}
+
+function pkgCloseMoreMenu() {
+  document.getElementById('tcBulkMoreMenu').classList.add('hidden');
+  document.getElementById('tcBulkMoreBtn').setAttribute('aria-expanded', 'false');
 }
 
 function renderTcTable() {
@@ -309,7 +367,7 @@ function renderTcTable() {
     <tr class="${tcSelected.has(t.id) ? 'tc-row-selected' : ''}" data-id="${t.id}">
       <td class="tc-check-col"><input type="checkbox" class="tc-row-check" data-id="${t.id}" ${tcSelected.has(t.id) ? 'checked' : ''}></td>
       <td class="tc-name-cell">${t.name}</td>
-      <td>${(t.tags || []).join(', ')}</td>
+      <td class="pkg-tags">${pkgTagChips(t.tags, 'tc')}</td>
       <td>${t.status}</td>
       <td>${t.steps.length}</td>
       <td>${t.author || ''}</td>
@@ -2049,6 +2107,49 @@ document.getElementById('tcAddToSuiteModeNew').addEventListener('change', tcSync
 // it rather than leave it floating over unrelated content. Navigating to
 // the Pi detail page (which bypasses showTabView/this event entirely) is
 // handled separately, in showPiDetail (detail-page.js).
+// Packages sub-tabs, filters and the bulk bar's More menu.
+document.querySelectorAll('.pkg-tab').forEach(tab => {
+  tab.addEventListener('click', () => { location.hash = `#packages/${tab.dataset.pkg}`; });
+  tab.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+    e.preventDefault();
+    const other = PKG_TABS.find(name => name !== tab.dataset.pkg);
+    location.hash = `#packages/${other}`;
+    document.querySelector(`.pkg-tab[data-pkg="${other}"]`).focus();
+  });
+});
+document.getElementById('tcClearFilters').addEventListener('click', () => {
+  document.getElementById('tcSearchInput').value = '';
+  pkgSetTagFilter('tc', '');
+});
+document.getElementById('tsClearFilters').addEventListener('click', () => {
+  document.getElementById('tsSearchInput').value = '';
+  pkgSetTagFilter('ts', '');
+});
+document.getElementById('tcListView').addEventListener('click', (e) => {
+  const chip = e.target.closest('.pkg-tag');
+  if (chip) pkgSetTagFilter(chip.dataset.list, chip.dataset.tag);
+});
+document.getElementById('tcBulkMoreBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const menu = document.getElementById('tcBulkMoreMenu');
+  const opening = menu.classList.contains('hidden');
+  menu.classList.toggle('hidden', !opening);
+  e.currentTarget.setAttribute('aria-expanded', String(opening));
+  if (opening) menu.querySelector('button:not([disabled]):not(.hidden)')?.focus();
+});
+// Picking an item (its own handler runs first), clicking elsewhere or Escape closes it.
+document.getElementById('tcBulkMoreMenu').addEventListener('click', () => pkgCloseMoreMenu());
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.pkg-more')) pkgCloseMoreMenu();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !document.getElementById('tcBulkMoreMenu').classList.contains('hidden')) {
+    pkgCloseMoreMenu();
+    document.getElementById('tcBulkMoreBtn').focus();
+  }
+});
+
 document.addEventListener('tabshown', (e) => {
   if (e.detail.viewId === 'packages') showTcListView();
   else {

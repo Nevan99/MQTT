@@ -1,8 +1,7 @@
 // --- Testsuites: named, ordered collections of existing testcases ---------
-// Lives as its own panel inside the Testcases tab (see the "ts-list-panel"
-// in index.html), not a separate top-level tab - the list is always
-// visible alongside the testcase list; editing, running, and run history
-// each open as their own popup instead of navigating anywhere.
+// The Testsuites sub-tab of Packages (#packages/testsuites - see pkgShow in
+// testcases-tab.js); editing, running, and run history each open as their
+// own popup instead of navigating anywhere.
 //
 // A testsuite doesn't own its testcases - the editor's picker lists every
 // testcase that exists (see fetchAllTestcasesForPicker), whether or not
@@ -84,23 +83,19 @@ async function loadTestsuites() {
 
 function renderTsTable() {
   const body = document.getElementById('tsTableBody');
+  document.getElementById('pkgCountTestsuites').textContent = tsList.length;
+  pkgAddKnownTags(tsList.flatMap(t => t.tags || []));
   if (!tsList.length) {
-    body.innerHTML = '<tr><td colspan="3" class="pi-log-empty">no testsuites yet</td></tr>';
+    body.innerHTML = '<tr><td colspan="6" class="pi-log-empty">no testsuites yet</td></tr>';
     return;
   }
-  // Narrower panel than the testcase list (see .ts-list-panel) - tags/
-  // author/updated are folded into the name cell's title tooltip instead of
-  // their own columns, rather than competing for the width to show them.
-  body.innerHTML = tsList.map(s => {
-    const details = [
-      s.tags && s.tags.length ? `tags: ${s.tags.join(', ')}` : null,
-      s.author ? `author: ${s.author}` : null,
-      `updated: ${formatVnDateTime(s.updated_at)}`,
-    ].filter(Boolean).join(' · ');
-    return `
+  body.innerHTML = tsList.map(s => `
     <tr>
-      <td class="ts-name-cell" title="${details}">${s.name}</td>
+      <td class="ts-name-cell">${tcEsc(s.name)}${s.description ? `<div class="hint pkg-desc">${tcEsc(s.description)}</div>` : ''}</td>
       <td>${s.testcase_ids.length}</td>
+      <td class="pkg-tags">${pkgTagChips(s.tags, 'ts')}</td>
+      <td>${tcEsc(s.author || '')}</td>
+      <td>${formatVnDateTime(s.updated_at)}</td>
       <td class="capture-actions">
         <button class="icon-btn ts-run-btn" data-id="${s.id}" title="Run">&#9654;</button>
         <button class="icon-btn ts-edit-btn" data-id="${s.id}" title="Edit">&#9998;</button>
@@ -108,8 +103,7 @@ function renderTsTable() {
         <button class="icon-btn ts-delete-btn" data-id="${s.id}" title="Delete">&#128465;</button>
       </td>
     </tr>
-  `;
-  }).join('');
+  `).join('');
 
   body.querySelectorAll('.ts-run-btn').forEach(btn => btn.addEventListener('click', () => openTsRunConfirmModal(Number(btn.dataset.id))));
   body.querySelectorAll('.ts-edit-btn').forEach(btn => btn.addEventListener('click', () => openEditTestsuite(btn.dataset.id)));

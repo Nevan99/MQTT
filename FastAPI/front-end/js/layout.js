@@ -39,49 +39,6 @@
   });
 })();
 
-// --- Testcases tab: resizable split between the Testsuites and Testcases
-// panels (#tcListView - see .ts-list-panel/.tc-list-panel in styles.css) ---
-
-(function setupTcListGutter() {
-  const container = document.getElementById('tcListView');
-  const gutter = document.getElementById('tcListGutter');
-  if (!container || !gutter) return;
-  const MIN_LEFT = 220;
-  const MAX_LEFT = 640;
-
-  function applyLeftWidth(px) {
-    container.style.gridTemplateColumns = `${px}px 6px 1fr`;
-  }
-
-  const saved = parseInt(localStorage.getItem('tcListLeftWidth'), 10);
-  if (saved && saved >= MIN_LEFT && saved <= MAX_LEFT) applyLeftWidth(saved);
-
-  gutter.addEventListener('mousedown', (e) => {
-    e.preventDefault();
-    container.classList.add('dragging');
-    gutter.classList.add('active');
-
-    function onMove(moveEvent) {
-      const rect = container.getBoundingClientRect();
-      let leftWidth = moveEvent.clientX - rect.left;
-      leftWidth = Math.max(MIN_LEFT, Math.min(MAX_LEFT, leftWidth));
-      applyLeftWidth(leftWidth);
-    }
-
-    function onUp() {
-      container.classList.remove('dragging');
-      gutter.classList.remove('active');
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-      const currentLeft = container.style.gridTemplateColumns.split(' ')[0];
-      if (currentLeft) localStorage.setItem('tcListLeftWidth', parseInt(currentLeft, 10));
-    }
-
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-  });
-})();
-
 // --- Testsuites/Testcases tables: resizable Name column --------------------
 // Drag handle sits directly on the Name column's own right border (see
 // .col-resize-handle in styles.css); dragging it sets a CSS var on the
