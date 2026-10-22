@@ -125,8 +125,30 @@ async function sendDetailCommand(actionSelectEl, paramsContainer, resultsContain
   }
 }
 
+// Same groups as the Fleet tab's Action list; anything not listed lands
+// under "Other" rather than disappearing.
+const ACTION_GROUPS = [
+  ['Diagnostics', ['ping', 'signal_stats', 'band_channel_info', 'link_info', 'throughput_test', 'list_interfaces']],
+  ['Wi-Fi', ['connect_wifi', 'disconnect_wifi', 'nearby_hotspots', 'connect_hotspot', 'set_channel']],
+  ['Logs & capture', ['syslog', 'stream_logs', 'stop_logs', 'tcpdump', 'stop_tcpdump', 'start_pcap_capture', 'stop_pcap_capture']],
+  ['Interface setup', ['set_interface_mode', 'set_monitor_channel', 'set_interface_defaults']],
+  ['Power', ['restart_agent', 'reboot_pi']],
+];
+
+function groupedActionOptions(actions) {
+  const opt = a => `<option value="${a}">${actionLabel(a)}</option>`;
+  const grouped = new Set(ACTION_GROUPS.flatMap(([, list]) => list));
+  const groups = ACTION_GROUPS
+    .map(([label, list]) => [label, list.filter(a => actions.includes(a))])
+    .filter(([, list]) => list.length)
+    .map(([label, list]) => `<optgroup label="${label.replace(/&/g, '&amp;')}">${list.map(opt).join('')}</optgroup>`);
+  const rest = actions.filter(a => !grouped.has(a));
+  if (rest.length) groups.push(`<optgroup label="Other">${rest.map(opt).join('')}</optgroup>`);
+  return groups.join('');
+}
+
 function setupDetailBar(actionSelectEl, paramsContainer, sendBtn, resultsContainer, actions, piId) {
-  actionSelectEl.innerHTML = actions.map(a => `<option value="${a}">${actionLabel(a)}</option>`).join('');
+  actionSelectEl.innerHTML = groupedActionOptions(actions);
   renderDetailParamFields(paramsContainer, actionSelectEl, piId);
   actionSelectEl.onchange = () => renderDetailParamFields(paramsContainer, actionSelectEl, piId);
   sendBtn.onclick = () => sendDetailCommand(actionSelectEl, paramsContainer, resultsContainer, piId);
@@ -137,14 +159,55 @@ let detailPiId = null;
 let lastDetailInterfacesKey = null;
 let detailLogEntry = null;
 
+// Header: status next to the Pi's name, then IP · role · last seen.
 function renderDetailInfo(piId) {
   const pi = pis.find(p => p.pi_id === piId);
-  document.getElementById('pdInfoFields').innerHTML = `
-    <div class="pd-info-row"><span class="k">IP</span><span class="v">${pi ? (pi.ip_address || '') : ''}</span></div>
-    <div class="pd-info-row"><span class="k">Role</span><span class="v">${pi ? (pi.role || '') : ''}</span></div>
-    <div class="pd-info-row"><span class="k">Status</span><span class="v">${pi ? statusBadge(pi.status) : ''}</span></div>
-    <div class="pd-info-row"><span class="k">Last seen</span><span class="v">${pi && pi.last_seen ? formatVnDateTime(pi.last_seen) : ''}</span></div>
-  `;
+  document.getElementById('pdHeroStatus').innerHTML = pi ? statusBadge(pi.status) : '';
+  const bits = [];
+  if (pi && pi.ip_address) bits.push(`<span class="pd-meta-k">IP</span> <span class="pd-meta-mono">${pi.ip_address}</span>`);
+  if (pi && pi.role) bits.push(`<span class="pd-meta-k">Role</span> ${pi.role}`);
+  if (pi && pi.last_seen) {
+    bits.push(`<span class="pd-meta-k">Last seen</span> <span title="${formatVnDateTime(pi.last_seen)}">${fleetAgo(pi.last_seen)}</span>`);
+  }
+  document.getElementById('pdInfoFields').innerHTML = bits.join('<span class="pd-meta-sep" aria-hidden="true">·</span>');
+}
+
+// Latest buffered interface status for the open Pi (see
+// refreshDetailInterfaceStatusBuffer) - drives the header stats and each
+// interface card's one-line summary.
+let pdStatusList = [];
+
+function pdRenderHeroStats() {
+  const pi = pis.find(p => p.pi_id === detailPiId);
+  const ifaces = piInterfaces(detailPiId);
+  const up = pdStatusList.filter(s => String(s.state || '').toUpperCase() === 'UP').length;
+  const radios = pdStatusList.filter(s => s.connected != null);
+  const conn = radios.filter(s => s.connected).length;
+  const primary = pi && pi.primary_interfaces && pi.primary_interfaces.length ? pi.primary_interfaces.join(', ') : '–';
+  const stat = (num, label, cls = '') => `<div class="pd-stat ${cls}"><span class="pd-stat-num">${num}</span><span class="pd-stat-label">${label}</span></div>`;
+  document.getElementById('pdHeroStats').innerHTML = [
+    stat(pdStatusList.length ? `${up}<small>/${pdStatusList.length}</small>` : ifaces.length || '–', pdStatusList.length ? 'interfaces up' : 'interfaces'),
+    stat(radios.length ? `${conn}<small>/${radios.length}</small>` : '–', 'Wi-Fi connected', 'pd-stat-wifi'),
+    stat(`<span class="pd-stat-text">${primary}</span>`, 'primary interface'),
+  ].join('');
+}
+
+// "UP · 10.10.0.21 · Lab-5G · -48 dBm" on each card's header line.
+function pdRenderIfaceMeta() {
+  const byIface = new Map(pdStatusList.map(s => [s.interface, s]));
+  document.querySelectorAll('#pdInterfaceList .pd-iface-meta').forEach(el => {
+    const s = byIface.get(el.dataset.iface);
+    if (!s) { el.innerHTML = ''; return; }
+    const up = String(s.state || '').toUpperCase() === 'UP';
+    const bits = [];
+    if (s.state) bits.push(`<span class="if-pill if-state-${up ? 'up' : 'down'}">${s.state}</span>`);
+    if (s.type) bits.push(`<span class="pd-iface-type">${s.type}</span>`);
+    if (s.ip_address) bits.push(`<span class="pd-meta-mono">${s.ip_address}</span>`);
+    if (s.connected && s.ssid) bits.push(`<span class="pd-iface-ssid">${s.ssid}</span>`);
+    if (s.band) bits.push(s.band);
+    if (s.signal_dbm != null) bits.push(interfacesSignalHtml(s.signal_dbm));
+    el.innerHTML = bits.join(' ');
+  });
 }
 
 function isWifiInterface(name) {
@@ -319,7 +382,11 @@ async function refreshDetailInterfaceStatusBuffer(piId) {
   } catch {
     statusList = [];
   }
-  if (!statusList.length || piId !== detailPiId) return;
+  if (piId !== detailPiId) return;
+  pdStatusList = statusList;
+  pdRenderHeroStats();
+  pdRenderIfaceMeta();
+  if (!statusList.length) return;
   detailIfaceDetailsCache = statusList.map(s => ({
     name: s.interface, mac_address: s.mac_address, state: s.state, type: s.type,
     ip_address: s.ip_address, ipv6_address: s.ipv6_address,
@@ -851,6 +918,7 @@ function renderDetailInterfaceList(piId) {
     <div class="pd-iface-card" data-iface="${name}">
       <div class="pd-iface-header">
         <span class="pd-iface-name">${name}${isWifiInterface(name) ? wifiStdTagHtml(null) : ''}</span>
+        <span class="pd-iface-meta" data-iface="${name}"></span>
         ${isWifiInterface(name) ? `
           <span class="wifi-icon wifi-unknown" data-iface="${name}" title="checking…">${WIFI_ICON_SVG}</span>
           <span class="pd-iface-connected-mark badge badge-online hidden" data-iface="${name}"></span>
@@ -876,6 +944,8 @@ function renderDetailInterfaceList(piId) {
       </div>
     </div>
   `).join('') : '<div class="pi-log-empty">no interfaces</div>';
+  document.getElementById('pdIfaceCount').textContent = interfaces.length || '';
+  pdRenderIfaceMeta();
 
   list.querySelectorAll('.pd-iface-card').forEach(card => {
     const name = card.dataset.iface;
@@ -1112,6 +1182,7 @@ function refreshDetailView() {
   if (!detailPiId || !document.getElementById('piDetail').classList.contains('active')) return;
   renderDetailInfo(detailPiId);
   refreshDetailInterfaceStatusBuffer(detailPiId);
+  pdUpdateLiveDots();
 
   const interfaces = piInterfaces(detailPiId);
   // Sorted before comparing - see the matching comment in fleet-table.js's
@@ -1157,8 +1228,13 @@ function showPiDetail(piId, captureIface = null) {
   document.title = captureIface ? `${captureIface} @ ${piId}` : APP_TITLE;
   renderPowerButtons(document.getElementById('piDetailPower'), piId);
 
+  pdStatusList = [];
   renderDetailInfo(piId);
+  pdRenderHeroStats();
   renderDetailInterfaceList(piId);
+  refreshDetailInterfaceStatusBuffer(piId);
+  // A capture pop-out (#capture/<pi>/<iface>) is only ever the Packets view.
+  pdShowTab(captureIface ? 'tcpdump' : pdSavedTab());
 
   detailLogEntry = buildDetailLogEntry(piId, captureIface);
   refreshDetailLogIfaceOptions(piId, detailLogEntry);
@@ -1170,7 +1246,73 @@ function showPiDetail(piId, captureIface = null) {
     document.getElementById('pdActionSendBtn'), document.getElementById('pdActionResults'),
     Object.keys(ACTION_PARAMS), piId
   );
+  pdUpdateLiveDots();
 }
+
+// --- Pi page sub-tabs: Interfaces | Syslog | Packets ------------------------
+// One section at a time at full width. Both log windows are built and
+// connected on page open (buildDetailLogEntry) whichever tab is showing, so
+// switching tabs never stops a stream; a dot on the tab says it's live
+// (accent) or recording (red). The last tab used is remembered.
+
+const PD_TAB_KEY = 'pi_fleet_pi_tab';
+const PD_TABS = ['interfaces', 'logs', 'tcpdump'];
+
+function pdSavedTab() {
+  let t = null;
+  try { t = localStorage.getItem(PD_TAB_KEY); } catch { /* storage blocked */ }
+  return PD_TABS.includes(t) ? t : 'interfaces';
+}
+
+function pdShowTab(which, remember = false) {
+  if (remember) {
+    try { localStorage.setItem(PD_TAB_KEY, which); } catch { /* storage blocked */ }
+  }
+  document.querySelectorAll('#pdMainPanel [data-pd-tab]').forEach(tab => {
+    const on = tab.dataset.pdTab === which;
+    tab.classList.toggle('active', on);
+    tab.setAttribute('aria-selected', String(on));
+    tab.tabIndex = on ? 0 : -1;
+  });
+  document.getElementById('pdInterfacesPane').classList.toggle('hidden', which !== 'interfaces');
+  const logs = document.getElementById('pdLogPanel');
+  logs.classList.toggle('hidden', which === 'interfaces');
+  if (which !== 'interfaces') logs.dataset.show = which;
+}
+
+function pdUpdateLiveDots() {
+  ['logs', 'tcpdump'].forEach(kind => {
+    const block = document.querySelector(`#pdLogPanel .pd-log-block[data-kind="${kind}"]`);
+    const dot = document.querySelector(`#pdMainPanel .pd-live[data-live="${kind}"]`);
+    if (!block || !dot) return;
+    const recording = !!block.querySelector('.pi-log-capture.recording');
+    const streaming = !!block.querySelector('.pi-log-stream.streaming');
+    dot.classList.toggle('on', streaming || recording);
+    dot.classList.toggle('rec', recording);
+    dot.title = recording ? 'recording' : (streaming ? 'streaming' : '');
+  });
+}
+
+document.querySelectorAll('#pdMainPanel [data-pd-tab]').forEach(tab => {
+  tab.addEventListener('click', () => pdShowTab(tab.dataset.pdTab, true));
+  tab.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+    e.preventDefault();
+    const i = PD_TABS.indexOf(tab.dataset.pdTab);
+    const next = PD_TABS[(i + (e.key === 'ArrowRight' ? 1 : PD_TABS.length - 1)) % PD_TABS.length];
+    pdShowTab(next, true);
+    document.querySelector(`#pdMainPanel [data-pd-tab="${next}"]`).focus();
+  });
+});
+// Stream/record buttons flip their own state after a command round-trip -
+// re-check the dots shortly after any click in the log windows.
+document.getElementById('pdLogPanel').addEventListener('click', () => {
+  setTimeout(pdUpdateLiveDots, 400);
+  setTimeout(pdUpdateLiveDots, 2000);
+});
+document.getElementById('pdActionResultsClear').addEventListener('click', () => {
+  document.getElementById('pdActionResults').innerHTML = '';
+});
 
 // Every top-level tab's data-view value doubles as its URL hash (see the
 // tab click handler in auth.js) and its section id (index.html) - this is

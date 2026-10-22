@@ -52,7 +52,7 @@
   #piDetail.active { display: flex; flex-direction: column; gap: 1rem; }
   .pi-id-link { color: var(--accent); text-decoration: none; cursor: pointer; }
   .pi-id-link:hover { text-decoration: underline; }
-  #piDetailGrid { display: grid; grid-template-columns: 280px 6px 1fr 6px 380px; gap: 1rem; flex: 1 1 auto; min-height: 0; }
+  #piDetailGrid { display: grid; grid-template-columns: 1fr 6px 380px; gap: 1rem; flex: 1 1 auto; min-height: 0; }
   #piDetailGrid.dragging { user-select: none; cursor: col-resize; }
   #piDetailGrid .gutter { margin: 0 -0.5rem; }
   #piDetailGrid .panel { display: flex; flex-direction: column; min-height: 0; }
@@ -82,10 +82,10 @@
      panel, so several interfaces can be captured side by side in separate
      browser tabs. !important beats layout.js's inline gutter-drag columns. */
   #piDetail.capture-only #piDetailGrid { grid-template-columns: 1fr !important; }
-  #piDetail.capture-only #pdInfoPanel,
   #piDetail.capture-only #pdActionPanel,
   #piDetail.capture-only #piDetailGrid .gutter,
-  #piDetail.capture-only .pd-log-block[data-kind="logs"],
+  #piDetail.capture-only .pd-tabs,
+  #piDetail.capture-only #pdHeroStats,
   #piDetail.capture-only .pi-log-popout { display: none; }
   #piDetail.capture-only .pd-log-block + .pd-log-block { margin-top: 0; border-top: 0; padding-top: 0; }
   .pd-results-panel { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; margin-top: 0.75rem; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
@@ -1019,3 +1019,63 @@ header { min-width: 0; }
 header h1 { white-space: nowrap; }
 header nav { flex: 0 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
 header nav button.tab { flex: 0 0 auto; white-space: nowrap; }
+
+/* Pi detail page (detail-page.js): header card, Interfaces | Syslog |
+   Packets sub-tabs, command column. */
+#piDetail.active { padding: 1rem; }
+.pd-hero { flex: 0 0 auto; display: flex; flex-direction: column; gap: 0.6rem; overflow: visible; }
+.pd-back { align-self: flex-start; font-size: 0.8rem; }
+.pd-hero-main { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 1.25rem; }
+.pd-hero-title { display: flex; align-items: center; gap: 0.6rem; }
+.pd-hero-title h2 { margin: 0; font-size: 1.6rem; font-weight: 600; color: var(--text); }
+.pd-hero-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; font-size: 0.85rem; color: var(--text-2); }
+.pd-meta-k { color: var(--text-dim); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.pd-meta-sep { color: var(--text-disabled); margin: 0 0.3rem; }
+.pd-meta-mono { font-family: ui-monospace, monospace; font-size: 0.8rem; }
+.pd-hero .pi-power-actions { margin-left: auto; }
+.pd-hero-stats { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+.pd-stat { display: flex; flex-direction: column; gap: 0.1rem; min-width: 9rem; padding: 0.45rem 0.8rem; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--border-subtle); }
+.pd-stat-num { font-size: 1.25rem; font-weight: 300; line-height: 1.15; color: var(--text); font-variant-numeric: tabular-nums; }
+.pd-stat-num small { font-size: 0.8rem; color: var(--text-dim); margin-left: 0.1rem; }
+.pd-stat-text { font-size: 0.95rem; font-weight: 500; font-family: ui-monospace, monospace; }
+.pd-stat-label { font-size: 0.68rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-dim); }
+.pd-stat-wifi .pd-stat-num { color: var(--accent); }
+
+.pd-main { display: flex; flex-direction: column; gap: 0.75rem; min-height: 0; overflow: hidden; }
+.pd-tabs { flex: 0 0 auto; }
+.pd-pane { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.pd-pane.hidden { display: none; }
+#pdInterfacesPane { overflow-y: auto; }
+#pdLogPanel[data-show="logs"] .pd-log-block[data-kind="tcpdump"],
+#pdLogPanel[data-show="tcpdump"] .pd-log-block[data-kind="logs"] { display: none; }
+#pdLogPanel .pd-log-block { flex: 1 1 auto; }
+#pdLogPanel .pd-log-block + .pd-log-block { margin-top: 0; border-top: none; padding-top: 0; }
+#pdLogPanel .pi-log-collapse { display: none; }
+.pd-live { display: none; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.pd-live.on { display: inline-block; }
+.pd-live.rec { background: var(--danger); }
+
+#pdInterfaceList .pd-iface-card { background: var(--surface-2); }
+#pdInterfaceList .pd-iface-header { padding: 0.6rem 0.75rem; gap: 0.6rem; flex-wrap: nowrap; }
+/* The SSID is in the summary line; the green icon still says "connected". */
+#pdInterfaceList .pd-iface-connected-mark { display: none; }
+#pdInterfaceList .pd-wifi-info-btn { flex: 0 0 auto; white-space: nowrap; }
+.pd-iface-ssid { color: var(--success); font-weight: 600; }
+#pdInterfaceList .pd-iface-name { flex: 0 0 auto; min-width: 7rem; font-weight: 600; font-size: 0.9rem; }
+.pd-iface-meta { flex: 1 1 auto; min-width: 0; display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; font-size: 0.8rem; color: var(--text-3); }
+.pd-iface-type { color: var(--text-dim); }
+#pdInterfaceList .pd-iface-body { padding: 0.25rem 0.9rem 0.9rem; }
+
+#pdActionPanel { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
+#pdActionPanel .pd-panel-header h3 { font-size: 1.05rem; }
+#pdActionPanel .pd-panel-body > label:first-child { margin-top: 0; }
+#pdActionPanel .pd-results-body { padding: 0; overflow: visible; }
+
+#piDetail.capture-only #pdInterfacesPane { display: none; }
+#piDetail.capture-only #pdLogPanel { display: flex !important; }
+
+@media (max-width: 900px) {
+  #piDetailGrid { grid-template-columns: 1fr !important; }
+  #piDetailGrid > .gutter { display: none; }
+  .pd-hero .pi-power-actions { margin-left: 0; }
+}

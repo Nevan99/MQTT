@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="assets/kaon-favicon-180.png">
 <link id="faviconSvg" rel="icon" type="image/svg+xml" href="assets/kaon-favicon.svg">
 <link rel="stylesheet" href="themes.css?v=3">
-<link rel="stylesheet" href="styles.css?v=17">
+<link rel="stylesheet" href="styles.css?v=19">
 <!-- Applies the saved theme before first paint (no dark flash for a
      light-theme user) - same keys/logic as js/settings.js's applyTheme. -->
 <script>
@@ -882,29 +882,34 @@
 </section>
 
 <section id="piDetail" class="view">
-  <div class="panel" style="margin-bottom:0; flex: 0 0 auto; position: relative; z-index: 1;">
-    <div class="row" style="align-items:center;">
-      <button id="piDetailBack" type="button" style="flex: 0 0 auto; padding: 0.2rem 0.5rem; font-size: 0.75rem;" title="Back to fleet">&larr; Back</button>
-      <h2 id="piDetailTitle" style="margin:0 0 0 0.75rem; font-size:1rem;"></h2>
+  <!-- Header: the Pi at a glance (detail-page.js renderDetailInfo /
+       pdRenderHeroStats) and its power actions. -->
+  <div class="panel pd-hero" id="pdHero">
+    <button id="piDetailBack" type="button" class="res-link pd-back" title="Back to the fleet">&larr; Fleet</button>
+    <div class="pd-hero-main">
+      <div class="pd-hero-title">
+        <h2 id="piDetailTitle"></h2>
+        <span id="pdHeroStatus"></span>
+      </div>
+      <div class="pd-hero-meta" id="pdInfoFields"></div>
       <span class="pi-power-actions" id="piDetailPower"></span>
     </div>
+    <div class="pd-hero-stats" id="pdHeroStats"></div>
   </div>
   <div id="piDetailGrid">
-    <div class="panel" id="pdInfoPanel">
-      <div class="pd-panel-header">
-        <h3>Pi info</h3>
-        <button type="button" class="icon-btn pd-panel-collapse-btn" id="pdInfoCollapseBtn" title="Collapse"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform: rotate(180deg);"><polyline points="9 6 15 12 9 18"/></svg></button>
+    <!-- Interfaces | Syslog | Packets, one at a time at full width. Both log
+         windows stay live while hidden; their tabs show a dot while
+         streaming (or recording). -->
+    <div class="panel pd-main" id="pdMainPanel">
+      <div class="pkg-switch pd-tabs" role="tablist" aria-label="Pi sections">
+        <button type="button" class="pkg-tab" role="tab" data-pd-tab="interfaces" aria-controls="pdInterfacesPane">Interfaces <span class="pkg-count" id="pdIfaceCount"></span></button>
+        <button type="button" class="pkg-tab" role="tab" data-pd-tab="logs" aria-controls="pdLogPanel">Syslog <span class="pd-live" data-live="logs" aria-hidden="true"></span></button>
+        <button type="button" class="pkg-tab" role="tab" data-pd-tab="tcpdump" aria-controls="pdLogPanel">Packets <span class="pd-live" data-live="tcpdump" aria-hidden="true"></span></button>
       </div>
-      <div class="pd-panel-body">
-        <div id="pdInfoFields"></div>
-        <label>Interfaces</label>
+      <div class="pd-pane" id="pdInterfacesPane" role="tabpanel">
         <div id="pdInterfaceList"></div>
       </div>
-    </div>
-
-    <div class="gutter" id="pdGutterLeft"></div>
-
-    <div class="panel" id="pdLogPanel">
+      <div class="pd-pane hidden" id="pdLogPanel" role="tabpanel" data-show="logs">
       <div class="pd-log-block" data-kind="logs">
         <div class="pi-log-heading">
           <span>syslog / stream_logs</span>
@@ -954,26 +959,28 @@
           </div>
         </div>
       </div>
+      </div>
     </div>
 
     <div class="gutter" id="pdGutterRight"></div>
 
-    <div class="panel" id="pdActionPanel" style="overflow-y: hidden;">
+    <div class="panel" id="pdActionPanel">
       <div class="pd-panel-header">
-        <h3>Actions</h3>
-        <button type="button" class="icon-btn pd-panel-collapse-btn" id="pdActionCollapseBtn" title="Collapse"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></button>
+        <h3>Send command</h3>
+        <button type="button" class="icon-btn pd-panel-collapse-btn" id="pdActionCollapseBtn" title="Hide" aria-label="Hide the command panel"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></button>
       </div>
       <div class="pd-panel-body">
-        <label>Action</label>
+        <label for="pdAction">Action</label>
         <select id="pdAction" class="field"></select>
         <div id="pdActionParams"></div>
         <div class="row" style="margin-top: 0.75rem;">
-          <button id="pdActionSendBtn">Send command</button>
+          <button id="pdActionSendBtn" class="pkg-primary">Send command</button>
         </div>
-        <div class="pd-results-panel">
-          <div class="pd-results-heading">Results</div>
-          <div id="pdActionResults" class="pd-results-body"></div>
+        <div class="fleet-results-head">
+          <h3>Results</h3>
+          <button type="button" class="res-link" id="pdActionResultsClear">Clear</button>
         </div>
+        <div id="pdActionResults" class="pd-results-body"></div>
       </div>
     </div>
   </div>
@@ -1014,7 +1021,7 @@
      later files call functions defined in earlier ones. -->
 <script src="js/settings.js?v=2"></script>
 <script src="js/auth.js?v=2"></script>
-<script src="js/layout.js?v=3"></script>
+<script src="js/layout.js?v=4"></script>
 <script src="js/fleet-table.js?v=8"></script>
 <script src="js/interfaces-tab.js?v=3"></script>
 <script src="js/captures.js?v=2"></script>
@@ -1035,6 +1042,6 @@
 <script src="js/wifi-info-modal.js?v=5"></script>
 <script src="js/log-rendering.js"></script>
 <script src="js/wireshark-table.js"></script>
-<script src="js/detail-page.js?v=18"></script>
+<script src="js/detail-page.js?v=20"></script>
 </body>
 </html>
