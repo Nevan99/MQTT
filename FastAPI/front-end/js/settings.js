@@ -53,6 +53,28 @@ function applyTheme(theme = currentTheme(), accent = currentAccent()) {
   root.setAttribute('data-mode', resolveMode(theme));
   root.setAttribute('data-accent', accent);
   renderSettingsOptions();
+  updateFavicon();
+}
+
+// Kaon power mark - same geometry as assets/kaon-favicon.svg, drawn in the
+// current theme's tile (--surface), logo text (inner disc) and mark colors.
+function kaonFaviconSvg(tile, disc, mark) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">`
+    + `<defs><mask id="m"><rect width="64" height="64" fill="#fff"/><rect x="26" y="-6" width="12" height="42" rx="6" fill="#000"/></mask></defs>`
+    + `<rect width="64" height="64" rx="14" fill="${tile}"/>`
+    + `<path d="M24 14.5A22 22 0 1 0 40 14.5" fill="none" stroke="${mark}" stroke-width="6"/>`
+    + `<circle cx="32" cy="35" r="13" fill="${disc}" mask="url(#m)"/>`
+    + `<rect x="29" y="4" width="6" height="27" rx="3" fill="${mark}"/>`
+    + `</svg>`;
+}
+
+function updateFavicon() {
+  const link = document.getElementById('faviconSvg');
+  if (!link) return;
+  const css = getComputedStyle(document.documentElement);
+  const token = (name) => css.getPropertyValue(name).trim();
+  const svg = kaonFaviconSvg(token('--surface'), token('--logo-text'), token('--logo-mark'));
+  link.href = 'data:image/svg+xml,' + encodeURIComponent(svg);
 }
 
 // "System" has to track the OS switching light/dark while the page is open.

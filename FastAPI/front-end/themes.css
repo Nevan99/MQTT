@@ -206,6 +206,10 @@
 @media (prefers-reduced-motion: no-preference) {
   body, header, .panel, button, input, select { transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease; }
 }
-/* The Kaon logo PNGs have a black background baked in - round it into a
-   badge rather than a hard-edged block on the light surfaces. */
-:root[data-mode="light"] header .header-logo-img, :root[data-mode="light"] footer#appFooter img { border-radius: 4px; }
+/* Kaon Broadband logo (.kaon-logo, header and footer) and favicon colors - the logo is
+   two alpha masks filled with these, and js/settings.js redraws the
+   favicon SVG from them (plus --surface for its tile) on every theme change.
+   Light uses the brand's own gray/blue; dark themes flip the text light. */
+:root { --logo-text: #e6e7ec; --logo-mark: #1e88f0; }
+:root[data-theme="slate"] { --logo-text: #f1f5f9; --logo-mark: #2b8ff2; }
+:root[data-mode="light"] { --logo-text: #3a3b4d; --logo-mark: #0e7ae6; }

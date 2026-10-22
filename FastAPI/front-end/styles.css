@@ -333,12 +333,28 @@
   .login-box h2 { margin: 0 0 1rem; font-size: 1.1rem; }
   .login-error { color: var(--danger); font-size: 0.8rem; min-height: 1.2em; margin-top: 0.5rem; }
   #logoutBtn { margin-left: 0.25rem; }
-  header .header-logo-img { height: 40px; width: auto; }
+  header .header-logo { height: 40px; }
   footer#appFooter {
     flex: 0 0 auto; display: flex; align-items: center; justify-content: center; gap: 0.5rem;
     padding: 0.6rem 1rem; background: var(--surface); border-top: 1px solid var(--border); color: var(--text-dim); font-size: 0.78rem;
   }
-  footer#appFooter img { height: 36px; width: auto; opacity: 0.85; }
+  /* Kaon Broadband logo as two stacked alpha masks (text + power mark),
+     each filled from a theme token so it recolors with the theme - see
+     --logo-text/--logo-mark in themes.css. 740x332 is the masks' size. */
+  .kaon-logo { position: relative; display: inline-block; height: 40px; aspect-ratio: 740 / 332; flex: 0 0 auto; }
+  .kaon-logo > span {
+    position: absolute; inset: 0;
+    -webkit-mask-size: 100% 100%; mask-size: 100% 100%;
+    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  }
+  .kaon-logo-text {
+    background: var(--logo-text);
+    -webkit-mask-image: url('assets/kaon-logo-text-mask.png'); mask-image: url('assets/kaon-logo-text-mask.png');
+  }
+  .kaon-logo-mark {
+    background: var(--logo-mark);
+    -webkit-mask-image: url('assets/kaon-logo-mark-mask.png'); mask-image: url('assets/kaon-logo-mark-mask.png');
+  }
 
   .pd-wifi-info-btn {
     font-size: 0.72rem; padding: 0.15rem 0.5rem; border: 1px solid var(--border); border-radius: 4px;
