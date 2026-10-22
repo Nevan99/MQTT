@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="assets/kaon-favicon-180.png">
 <link id="faviconSvg" rel="icon" type="image/svg+xml" href="assets/kaon-favicon.svg">
 <link rel="stylesheet" href="themes.css?v=3">
-<link rel="stylesheet" href="styles.css?v=19">
+<link rel="stylesheet" href="styles.css?v=21">
 <!-- Applies the saved theme before first paint (no dark flash for a
      light-theme user) - same keys/logic as js/settings.js's applyTheme. -->
 <script>
@@ -62,15 +62,18 @@
 </header>
 
 <section id="fleet" class="view active">
-  <!-- Fleet at a glance (fleet-table.js fleetRenderStats). -->
+  <!-- One grid for the whole tab (columns: list | divider | command), so
+       the summary tiles line up with the panels under them: three tiles
+       over the Pis list, Roles over Send command. The divider resizes both
+       rows together (layout.js setupFleetGutter). Tiles are filled by
+       fleet-table.js fleetRenderStats. -->
   <div class="fleet-stats" id="fleetStats" aria-label="Fleet summary">
-    <div class="fleet-stat"><span class="fleet-stat-num" id="fleetStatOnline">–</span><span class="fleet-stat-label">Pis online</span></div>
+    <div class="fleet-stat fleet-stat-on"><span class="fleet-stat-num" id="fleetStatOnline">–</span><span class="fleet-stat-label">Pis online</span></div>
     <div class="fleet-stat fleet-stat-off"><span class="fleet-stat-num" id="fleetStatOffline">–</span><span class="fleet-stat-label">offline</span></div>
     <div class="fleet-stat fleet-stat-wifi"><span class="fleet-stat-num" id="fleetStatWifi">–</span><span class="fleet-stat-label">Wi-Fi radios connected</span></div>
-    <div class="fleet-stat"><span class="fleet-stat-num" id="fleetStatRoles">–</span><span class="fleet-stat-label">roles</span></div>
   </div>
+  <div class="fleet-stat fleet-stat-side"><span class="fleet-stat-num" id="fleetStatRoles">–</span><span class="fleet-stat-label">roles</span></div>
 
-  <div class="fleet-main" id="fleetMain">
     <div class="panel fleet-list-panel">
       <div class="pkg-head">
         <h2>Pis</h2>
@@ -159,7 +162,6 @@
       </div>
       <div id="cmdResults"><div class="hint fleet-results-empty">Command results appear here.</div></div>
     </div>
-  </div>
 </section>
 
 <section id="interfaces" class="view">
@@ -1021,7 +1023,7 @@
      later files call functions defined in earlier ones. -->
 <script src="js/settings.js?v=2"></script>
 <script src="js/auth.js?v=2"></script>
-<script src="js/layout.js?v=4"></script>
+<script src="js/layout.js?v=5"></script>
 <script src="js/fleet-table.js?v=8"></script>
 <script src="js/interfaces-tab.js?v=3"></script>
 <script src="js/captures.js?v=2"></script>

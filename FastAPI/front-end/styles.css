@@ -41,7 +41,7 @@
      regardless of the header's actual rendered height - avoids the page
      needing to scroll just to reveal the active tab's content. */
   .view { display: none; flex: 1 1 auto; min-height: 0; }
-  #fleet.active { display: flex; flex-direction: column; gap: 1rem; }
+  #fleet.active { display: grid; grid-template-columns: minmax(0, 1fr) 6px 380px; grid-template-rows: auto minmax(0, 1fr); gap: 1rem; }
   #captures.active { display: flex; flex-direction: column; }
   #interfaces.active { display: flex; flex-direction: column; }
   #packages.active { display: flex; flex-direction: column; }
@@ -136,7 +136,6 @@
   .msg { color: var(--text-2); }
 
   #fleet { padding: 1rem; }
-  .fleet-main { display: grid; grid-template-columns: 1fr 6px 380px; gap: 1rem; flex: 1 1 auto; min-height: 0; }
   #captures { padding: 1rem; }
   #interfaces { padding: 1rem; }
   .captures-panel { flex: 1 1 auto; min-height: 0; }
@@ -150,7 +149,7 @@
   .capture-filters input[type="number"] { width: 5.5rem; }
   .capture-filters input[type="datetime-local"] { color-scheme: var(--color-scheme); }
   .capture-filter-count { font-size: 0.75rem; color: var(--text-dim); margin-left: auto; align-self: center; }
-  .fleet-main.dragging { user-select: none; cursor: col-resize; }
+  #fleet.dragging { user-select: none; cursor: col-resize; }
   .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem; overflow-y: auto; overflow-x: auto; min-width: 0; }
   .gutter { width: 6px; margin: 0 -0.5rem; border-radius: 3px; background: var(--surface-button); cursor: col-resize; }
   .gutter:hover, .gutter.active { background: var(--surface-active); }
@@ -975,20 +974,27 @@ tr.if-group:first-child > td { border-top: none; }
 .if-sig-fair .if-bars i.on { background: var(--warning); }
 .if-sig-poor .if-bars i.on { background: var(--danger); }
 
-/* Fleet tab (fleet-table.js): stats tiles, list toolbar, command card. */
-.fleet-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.75rem; flex: 0 0 auto; }
-.fleet-stat { display: flex; flex-direction: column; gap: 0.15rem; padding: 0.7rem 1rem; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
+/* Fleet tab (fleet-table.js): stats tiles, list toolbar, command card.
+   #fleet is one grid - list | divider | command - so the tiles row lines
+   up with the panels: three tiles over the list, Roles over the command
+   panel. */
+.fleet-stats { grid-column: 1; grid-row: 1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+.fleet-stat-side { grid-column: 3; grid-row: 1; }
+#fleet > .fleet-list-panel { grid-column: 1; grid-row: 2; }
+#fleet > .gutter { grid-column: 2; grid-row: 1 / span 2; }
+#fleet > .fleet-cmd-panel { grid-column: 3; grid-row: 2; }
+.fleet-stat { display: flex; flex-direction: column; justify-content: center; gap: 0.2rem; min-height: 4.25rem; padding: 0.75rem 1rem; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
 .fleet-stat-num { font-size: 1.6rem; font-weight: 300; line-height: 1.1; color: var(--text); font-variant-numeric: tabular-nums; }
 .fleet-stat-num small { font-size: 0.9rem; color: var(--text-dim); margin-left: 0.15rem; }
 .fleet-stat-label { font-size: 0.72rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-dim); }
-.fleet-stat:first-child .fleet-stat-num { color: var(--success); }
+.fleet-stat-on .fleet-stat-num { color: var(--success); }
 .fleet-stat-off.has-off .fleet-stat-num { color: var(--danger); }
 .fleet-stat-wifi .fleet-stat-num { color: var(--accent); }
 .fleet-list-panel { display: flex; flex-direction: column; min-height: 0; }
 .fleet-table-wrap { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .fleet-select-info { display: inline-flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; color: var(--accent); }
 .fleet-select-info.hidden { display: none; }
-.fleet-table tr.fleet-filtered { display: none; }
+.fleet-table tr.fleet-filtered, .fleet-table tr.hidden { display: none; }
 .fleet-table .c-seen { color: var(--text-3); white-space: nowrap; }
 .fleet-wifi { display: inline-flex; align-items: center; gap: 3px; }
 .fleet-wifi-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--surface-active); }
@@ -1006,10 +1012,12 @@ tr.if-group:first-child > td { border-top: none; }
 .fleet-results-empty { margin: 0.25rem 0 0; }
 .fleet-results-empty:not(:only-child) { display: none; }
 @media (max-width: 900px) {
-  .fleet-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  /* Stacked: the page scrolls, not a short box inside each panel. */
-  .fleet-main { grid-template-columns: 1fr !important; flex: 0 0 auto; }
-  .fleet-main > .gutter { display: none; }
+  /* Stacked: tiles, then list, then command; the page scrolls, not a
+     short box inside each panel. */
+  #fleet.active { grid-template-columns: minmax(0, 1fr) !important; grid-template-rows: none; }
+  #fleet > * { grid-column: 1 !important; grid-row: auto !important; }
+  #fleet > .gutter { display: none; }
+  .fleet-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .fleet-table-wrap { overflow: visible; }
 }
 

@@ -1,13 +1,13 @@
 // --- Fleet: resizable split between the Pi table and the command panel ----
 
 (function setupFleetGutter() {
-  const fleet = document.getElementById('fleetMain');
+  const fleet = document.getElementById('fleet');
   const gutter = document.getElementById('fleetGutter');
   const MIN_RIGHT = 260;
   const MAX_RIGHT = 800;
 
   function applyRightWidth(px) {
-    fleet.style.gridTemplateColumns = `1fr 6px ${px}px`;
+    fleet.style.gridTemplateColumns = `minmax(0, 1fr) 6px ${px}px`;
   }
 
   const saved = parseInt(localStorage.getItem('fleetRightWidth'), 10);
