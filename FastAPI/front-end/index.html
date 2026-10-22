@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="assets/kaon-favicon-180.png">
 <link id="faviconSvg" rel="icon" type="image/svg+xml" href="assets/kaon-favicon.svg">
 <link rel="stylesheet" href="themes.css?v=3">
-<link rel="stylesheet" href="styles.css?v=15">
+<link rel="stylesheet" href="styles.css?v=17">
 <!-- Applies the saved theme before first paint (no dark flash for a
      light-theme user) - same keys/logic as js/settings.js's applyTheme. -->
 <script>
@@ -62,98 +62,140 @@
 </header>
 
 <section id="fleet" class="view active">
-  <div class="panel">
-    <table>
-      <thead>
-        <tr><th></th><th>Pi ID</th><th>IP</th><th>Role</th><th>Status</th><th>Last seen</th><th></th></tr>
-      </thead>
-      <tbody id="piTableBody"></tbody>
-    </table>
+  <!-- Fleet at a glance (fleet-table.js fleetRenderStats). -->
+  <div class="fleet-stats" id="fleetStats" aria-label="Fleet summary">
+    <div class="fleet-stat"><span class="fleet-stat-num" id="fleetStatOnline">–</span><span class="fleet-stat-label">Pis online</span></div>
+    <div class="fleet-stat fleet-stat-off"><span class="fleet-stat-num" id="fleetStatOffline">–</span><span class="fleet-stat-label">offline</span></div>
+    <div class="fleet-stat fleet-stat-wifi"><span class="fleet-stat-num" id="fleetStatWifi">–</span><span class="fleet-stat-label">Wi-Fi radios connected</span></div>
+    <div class="fleet-stat"><span class="fleet-stat-num" id="fleetStatRoles">–</span><span class="fleet-stat-label">roles</span></div>
   </div>
 
-  <div class="gutter" id="fleetGutter"></div>
-
-  <div class="panel">
-    <label>Target</label>
-    <select id="targetSelect" class="field">
-      <option value="all">all (broadcast)</option>
-    </select>
-    <div id="targetHint" class="hint" style="display: none;"></div>
-
-    <label>Action</label>
-    <select id="actionSelect" class="field">
-      <option value="ping">ping</option>
-      <option value="signal_stats">signal stats</option>
-      <option value="band_channel_info">band channel info</option>
-      <option value="link_info">link info</option>
-      <option value="throughput_test">throughput test</option>
-      <option value="set_channel">set channel</option>
-      <option value="syslog">syslog</option>
-      <option value="stream_logs">stream logs</option>
-      <option value="stop_logs">stop logs</option>
-      <option value="tcpdump">tcpdump</option>
-      <option value="stop_tcpdump">stop tcpdump</option>
-      <option value="start_pcap_capture">start pcap capture</option>
-      <option value="stop_pcap_capture">stop pcap capture</option>
-      <option value="connect_wifi">connect wifi</option>
-      <option value="disconnect_wifi">disconnect wifi</option>
-      <option value="list_interfaces">list interfaces</option>
-      <option value="nearby_hotspots">nearby hotspots</option>
-      <option value="connect_hotspot">connect hotspot (several interfaces)</option>
-      <option value="set_monitor_channel">set monitor channel</option>
-      <option value="set_interface_defaults">set band/channel defaults (all wifi/monitor interfaces)</option>
-    </select>
-
-    <div id="paramFields"></div>
-
-    <div class="row" style="margin-top: 0.75rem;">
-      <button id="sendCmdBtn">Send command</button>
+  <div class="fleet-main" id="fleetMain">
+    <div class="panel fleet-list-panel">
+      <div class="pkg-head">
+        <h2>Pis</h2>
+        <div class="fleet-select-info hidden" id="fleetSelectInfo">
+          <span id="fleetSelectCount"></span>
+          <button type="button" class="res-link" id="fleetSelectClear">Clear</button>
+        </div>
+      </div>
+      <div class="pkg-filters" role="search">
+        <label class="pkg-search">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input type="text" id="fleetSearch" placeholder="Search Pi ID, IP or role" aria-label="Search Pis">
+        </label>
+        <div class="seg" role="radiogroup" aria-label="Status" id="fleetStatusFilter">
+          <button type="button" role="radio" data-status="" aria-checked="true">All</button>
+          <button type="button" role="radio" data-status="online" aria-checked="false">Online</button>
+          <button type="button" role="radio" data-status="offline" aria-checked="false">Offline</button>
+        </div>
+        <select id="fleetRoleFilter" class="field" aria-label="Role"><option value="">All roles</option></select>
+      </div>
+      <div class="fleet-table-wrap">
+        <table class="fleet-table">
+          <thead>
+            <tr>
+              <th class="tc-check-col"><input type="checkbox" id="fleetSelectAll" title="Select every Pi shown, for multicast" aria-label="Select every Pi shown"></th>
+              <th>Pi ID</th><th>IP</th><th>Role</th><th>Status</th><th>Wi-Fi</th><th>Last seen</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="piTableBody"></tbody>
+          <tbody><tr id="fleetEmptyRow" class="hidden"><td colspan="8" class="pi-log-empty" id="fleetEmptyText"></td></tr></tbody>
+        </table>
+      </div>
     </div>
 
-    <div id="cmdResults"></div>
+    <div class="gutter" id="fleetGutter"></div>
+
+    <div class="panel fleet-cmd-panel">
+      <div class="pkg-head"><h2>Send command</h2></div>
+      <label for="targetSelect">Target</label>
+      <select id="targetSelect" class="field">
+        <option value="all">all (broadcast)</option>
+      </select>
+      <div id="targetHint" class="hint" style="display: none;"></div>
+
+      <label for="actionSelect">Action</label>
+      <select id="actionSelect" class="field">
+        <optgroup label="Diagnostics">
+          <option value="ping">ping</option>
+          <option value="signal_stats">signal stats</option>
+          <option value="band_channel_info">band channel info</option>
+          <option value="link_info">link info</option>
+          <option value="throughput_test">throughput test</option>
+          <option value="list_interfaces">list interfaces</option>
+        </optgroup>
+        <optgroup label="Wi-Fi">
+          <option value="connect_wifi">connect wifi</option>
+          <option value="disconnect_wifi">disconnect wifi</option>
+          <option value="nearby_hotspots">nearby hotspots</option>
+          <option value="connect_hotspot">connect hotspot (several interfaces)</option>
+          <option value="set_channel">set channel</option>
+        </optgroup>
+        <optgroup label="Logs &amp; capture">
+          <option value="syslog">syslog</option>
+          <option value="stream_logs">stream logs</option>
+          <option value="stop_logs">stop logs</option>
+          <option value="tcpdump">tcpdump</option>
+          <option value="stop_tcpdump">stop tcpdump</option>
+          <option value="start_pcap_capture">start pcap capture</option>
+          <option value="stop_pcap_capture">stop pcap capture</option>
+        </optgroup>
+        <optgroup label="Interface setup">
+          <option value="set_monitor_channel">set monitor channel</option>
+          <option value="set_interface_defaults">set band/channel defaults (all wifi/monitor interfaces)</option>
+        </optgroup>
+      </select>
+
+      <div id="paramFields"></div>
+
+      <div class="row" style="margin-top: 0.75rem;">
+        <button id="sendCmdBtn" class="pkg-primary">Send command</button>
+      </div>
+
+      <div class="fleet-results-head">
+        <h3>Results</h3>
+        <button type="button" class="res-link" id="cmdResultsClear">Clear</button>
+      </div>
+      <div id="cmdResults"><div class="hint fleet-results-empty">Command results appear here.</div></div>
+    </div>
   </div>
 </section>
 
 <section id="interfaces" class="view">
-  <div class="panel captures-panel">
-    <table class="wifi-info-table">
-      <thead>
-        <tr id="interfacesSortRow" class="table-sort-row">
-          <th data-key="pi_id">Pi ID</th><th data-key="interface">Interface</th><th data-key="state">State</th>
-          <th data-key="type">Type</th><th data-key="mac_address">MAC address</th><th data-key="ip_address">IP address</th>
-          <th data-key="connected">Wi-Fi connected</th><th data-key="ssid">SSID</th><th data-key="bssid">BSSID</th>
-          <th data-key="frequency_mhz">Frequency</th><th data-key="band">Band</th><th data-key="signal_dbm">Signal</th>
-          <th data-key="rx_bitrate_mbps">RX bitrate</th><th data-key="tx_bitrate_mbps">TX bitrate</th><th data-key="gateway">Gateway</th>
-          <th data-key="key_mgmt">Key mgmt</th><th data-key="radio_type">Radio type</th>
-          <th data-key="mlo">MLO</th><th data-key="mld_address">MLD address</th>
-          <th data-key="ap_mld_address">AP MLD address</th><th data-key="mlo_links">Links (STA ↔ AP)</th>
-        </tr>
-        <tr id="interfacesFilterRow" class="table-filter-row">
-          <th><input type="text" class="table-filter-input" data-key="pi_id" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="interface" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="state" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="type" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="mac_address" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="ip_address" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="connected" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="ssid" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="bssid" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="frequency_mhz" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="band" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="signal_dbm" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="rx_bitrate_mbps" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="tx_bitrate_mbps" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="gateway" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="key_mgmt" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="radio_type" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="mlo" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="mld_address" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="ap_mld_address" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="mlo_links" placeholder="Filter…"></th>
-        </tr>
-      </thead>
-      <tbody id="interfacesTableBody"></tbody>
-    </table>
+  <div class="panel captures-panel if-panel">
+    <div class="pkg-head">
+      <h2>Interfaces <span class="if-summary" id="ifSummary"></span></h2>
+    </div>
+    <!-- One toolbar for the whole table (see interfaces-tab.js): search across
+         every column, quick filters, the column chooser and the optional
+         per-column filter row. -->
+    <div class="pkg-filters if-toolbar" role="search">
+      <label class="pkg-search">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input type="text" id="ifSearch" placeholder="Search any column" aria-label="Search interfaces">
+      </label>
+      <select id="ifPiFilter" class="field" aria-label="Pi"></select>
+      <select id="ifTypeFilter" class="field" aria-label="Interface type"></select>
+      <select id="ifBandFilter" class="field" aria-label="Band"></select>
+      <label class="if-check"><input type="checkbox" id="ifConnectedOnly"> Connected only</label>
+      <button type="button" class="res-link pkg-clear" id="ifClearFilters">Clear</button>
+      <span class="pkg-gap"></span>
+      <button type="button" id="ifColumnFiltersBtn" aria-pressed="false" title="Show a filter box under each column">Column filters</button>
+      <div class="if-columns pkg-more">
+        <button type="button" id="ifColumnsBtn" aria-haspopup="true" aria-expanded="false" aria-controls="ifColumnsMenu">Columns &#9662;</button>
+        <div class="pkg-more-menu if-columns-menu hidden" id="ifColumnsMenu"></div>
+      </div>
+    </div>
+    <div class="if-table-wrap">
+      <table class="wifi-info-table if-table">
+        <thead>
+          <tr id="interfacesSortRow" class="table-sort-row"></tr>
+          <tr id="interfacesFilterRow" class="table-filter-row hidden"></tr>
+        </thead>
+        <tbody id="interfacesTableBody"></tbody>
+      </table>
+    </div>
   </div>
 </section>
 
@@ -972,9 +1014,9 @@
      later files call functions defined in earlier ones. -->
 <script src="js/settings.js?v=2"></script>
 <script src="js/auth.js?v=2"></script>
-<script src="js/layout.js?v=2"></script>
-<script src="js/fleet-table.js?v=7"></script>
-<script src="js/interfaces-tab.js"></script>
+<script src="js/layout.js?v=3"></script>
+<script src="js/fleet-table.js?v=8"></script>
+<script src="js/interfaces-tab.js?v=3"></script>
 <script src="js/captures.js?v=2"></script>
 <script src="js/history.js"></script>
 <script src="js/command-builder.js?v=11"></script>

@@ -1,7 +1,7 @@
 // --- Fleet: resizable split between the Pi table and the command panel ----
 
 (function setupFleetGutter() {
-  const fleet = document.getElementById('fleet');
+  const fleet = document.getElementById('fleetMain');
   const gutter = document.getElementById('fleetGutter');
   const MIN_RIGHT = 260;
   const MAX_RIGHT = 800;

@@ -41,7 +41,7 @@
      regardless of the header's actual rendered height - avoids the page
      needing to scroll just to reveal the active tab's content. */
   .view { display: none; flex: 1 1 auto; min-height: 0; }
-  #fleet.active { display: grid; }
+  #fleet.active { display: flex; flex-direction: column; gap: 1rem; }
   #captures.active { display: flex; flex-direction: column; }
   #interfaces.active { display: flex; flex-direction: column; }
   #packages.active { display: flex; flex-direction: column; }
@@ -135,7 +135,8 @@
   .lvl-unknown { color: var(--text-muted); }
   .msg { color: var(--text-2); }
 
-  #fleet { grid-template-columns: 1fr 6px 380px; gap: 1rem; padding: 1rem; }
+  #fleet { padding: 1rem; }
+  .fleet-main { display: grid; grid-template-columns: 1fr 6px 380px; gap: 1rem; flex: 1 1 auto; min-height: 0; }
   #captures { padding: 1rem; }
   #interfaces { padding: 1rem; }
   .captures-panel { flex: 1 1 auto; min-height: 0; }
@@ -149,7 +150,7 @@
   .capture-filters input[type="number"] { width: 5.5rem; }
   .capture-filters input[type="datetime-local"] { color-scheme: var(--color-scheme); }
   .capture-filter-count { font-size: 0.75rem; color: var(--text-dim); margin-left: auto; align-self: center; }
-  #fleet.dragging { user-select: none; cursor: col-resize; }
+  .fleet-main.dragging { user-select: none; cursor: col-resize; }
   .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem; overflow-y: auto; overflow-x: auto; min-width: 0; }
   .gutter { width: 6px; margin: 0 -0.5rem; border-radius: 3px; background: var(--surface-button); cursor: col-resize; }
   .gutter:hover, .gutter.active { background: var(--surface-active); }
@@ -931,3 +932,90 @@ table.res-table tr.res-archived > td { opacity: 0.7; }
 .pkg-more-menu button.hidden { display: none; }
 .pkg-tags { min-width: 7rem; }
 .pkg-desc { margin: 0.15rem 0 0; font-size: 0.72rem; }
+
+/* Interfaces tab (interfaces-tab.js): one toolbar, column chooser, rows
+   grouped per Pi. */
+.if-panel { display: flex; flex-direction: column; min-height: 0; }
+.if-summary { margin-left: 0.5rem; font-size: 0.8rem; font-weight: 400; color: var(--text-dim); }
+.if-toolbar .field { width: auto; font-size: 0.82rem; }
+.if-check { display: inline-flex; align-items: center; gap: 0.35rem; margin: 0; font-size: 0.8rem; color: var(--text-3); white-space: nowrap; }
+#ifColumnFiltersBtn.active { border-color: var(--accent); color: var(--accent); }
+.if-columns-menu { left: auto; right: 0; min-width: 210px; max-height: 360px; overflow-y: auto; }
+.if-col-option { display: flex; align-items: center; gap: 0.45rem; margin: 0; padding: 0.3rem 0.5rem; font-size: 0.8rem; color: var(--text-2); border-radius: 4px; cursor: pointer; }
+.if-col-option:hover { background: var(--surface-hover); }
+.if-col-reset { margin: 0.3rem 0.5rem 0.2rem; font-size: 0.75rem; }
+.if-table-wrap { flex: 1 1 auto; min-height: 0; overflow: auto; }
+table.if-table { width: 100%; }
+table.if-table tr.table-filter-row.hidden { display: none; }
+table.if-table td { font-family: system-ui, sans-serif; font-size: 0.8rem; }
+table.if-table td.if-c-mac_address, table.if-table td.if-c-bssid, table.if-table td.if-c-ip_address,
+table.if-table td.if-c-mld_address, table.if-table td.if-c-ap_mld_address { font-family: ui-monospace, monospace; font-size: 0.76rem; }
+table.if-table td.if-c-pi_id { color: var(--text-dim); }
+table.if-table td.if-c-interface { font-weight: 600; white-space: nowrap; }
+tr.if-group > td { background: var(--surface-3); border-top: 1px solid var(--border); padding: 0.45rem 0.6rem; }
+tr.if-group:first-child > td { border-top: none; }
+.if-group td > * { margin-right: 0.4rem; vertical-align: middle; }
+.if-group-pi { font-weight: 700; font-size: 0.85rem; }
+.if-group-sum { color: var(--text-3); font-size: 0.78rem; }
+.if-pill { display: inline-block; padding: 0 0.45rem; border-radius: 9px; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.02em; }
+.if-state-up { background: var(--success-bg); color: var(--success-text); }
+.if-state-down { background: var(--surface-button); color: var(--text-dim); }
+.if-conn { display: inline-flex; align-items: center; gap: 0.35rem; white-space: nowrap; }
+.if-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-disabled); }
+.if-conn.on .if-dot { background: var(--success); }
+.if-conn.off { color: var(--text-dim); }
+.if-signal { display: inline-flex; align-items: center; gap: 0.4rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.if-bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; }
+.if-bars i { display: block; width: 3px; border-radius: 1px; background: var(--surface-active); }
+.if-bars i:nth-child(1) { height: 4px; }
+.if-bars i:nth-child(2) { height: 6px; }
+.if-bars i:nth-child(3) { height: 9px; }
+.if-bars i:nth-child(4) { height: 12px; }
+.if-sig-great .if-bars i.on, .if-sig-good .if-bars i.on { background: var(--success); }
+.if-sig-fair .if-bars i.on { background: var(--warning); }
+.if-sig-poor .if-bars i.on { background: var(--danger); }
+
+/* Fleet tab (fleet-table.js): stats tiles, list toolbar, command card. */
+.fleet-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.75rem; flex: 0 0 auto; }
+.fleet-stat { display: flex; flex-direction: column; gap: 0.15rem; padding: 0.7rem 1rem; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
+.fleet-stat-num { font-size: 1.6rem; font-weight: 300; line-height: 1.1; color: var(--text); font-variant-numeric: tabular-nums; }
+.fleet-stat-num small { font-size: 0.9rem; color: var(--text-dim); margin-left: 0.15rem; }
+.fleet-stat-label { font-size: 0.72rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-dim); }
+.fleet-stat:first-child .fleet-stat-num { color: var(--success); }
+.fleet-stat-off.has-off .fleet-stat-num { color: var(--danger); }
+.fleet-stat-wifi .fleet-stat-num { color: var(--accent); }
+.fleet-list-panel { display: flex; flex-direction: column; min-height: 0; }
+.fleet-table-wrap { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.fleet-select-info { display: inline-flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; color: var(--accent); }
+.fleet-select-info.hidden { display: none; }
+.fleet-table tr.fleet-filtered { display: none; }
+.fleet-table .c-seen { color: var(--text-3); white-space: nowrap; }
+.fleet-wifi { display: inline-flex; align-items: center; gap: 3px; }
+.fleet-wifi-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--surface-active); }
+.fleet-wifi-dot.on { background: var(--success); }
+.fleet-wifi-count { margin-left: 0.35rem; font-size: 0.75rem; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 4px; overflow: hidden; }
+.seg button { border: none; border-radius: 0; background: var(--surface-input); padding: 0.35rem 0.75rem; font-size: 0.8rem; color: var(--text-dim); }
+.seg button + button { border-left: 1px solid var(--border-strong); }
+.seg button[aria-checked="true"] { background: var(--surface-button); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+#fleetRoleFilter { width: auto; font-size: 0.82rem; }
+.fleet-cmd-panel > label:first-of-type { margin-top: 0; }
+.fleet-results-head { display: flex; align-items: center; justify-content: space-between; margin-top: 1.25rem; padding-top: 0.75rem; border-top: 1px solid var(--border-subtle); }
+.fleet-results-head h3 { margin: 0; font-size: 0.9rem; font-weight: 600; color: var(--text); }
+.fleet-cmd-panel #cmdResults { margin-top: 0.5rem; }
+.fleet-results-empty { margin: 0.25rem 0 0; }
+.fleet-results-empty:not(:only-child) { display: none; }
+@media (max-width: 900px) {
+  .fleet-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* Stacked: the page scrolls, not a short box inside each panel. */
+  .fleet-main { grid-template-columns: 1fr !important; flex: 0 0 auto; }
+  .fleet-main > .gutter { display: none; }
+  .fleet-table-wrap { overflow: visible; }
+}
+
+/* Narrow windows: the nav scrolls inside the header instead of pushing the
+   whole page sideways. */
+header { min-width: 0; }
+header h1 { white-space: nowrap; }
+header nav { flex: 0 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
+header nav button.tab { flex: 0 0 auto; white-space: nowrap; }
