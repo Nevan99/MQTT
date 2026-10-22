@@ -53,6 +53,14 @@ def _add_missing_columns():
             conn.execute(text("ALTER TABLE testrun ADD COLUMN suite_run_id INTEGER"))
             conn.commit()
 
+        # Results tab star/archive/lock flags, on both run tables.
+        for table in ("testrun", "testsuiterun"):
+            cols = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))}
+            for col in ("starred", "archived", "locked"):
+                if cols and col not in cols:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} BOOLEAN NOT NULL DEFAULT 0"))
+                    conn.commit()
+
         iface_status_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(interfacestatus)"))}
         for col, coltype in (
             ("key_mgmt", "VARCHAR"), ("pairwise_cipher", "VARCHAR"), ("group_cipher", "VARCHAR"),

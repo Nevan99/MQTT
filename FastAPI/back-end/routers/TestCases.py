@@ -299,6 +299,8 @@ def delete_run(run_id: int, session: Session = Depends(get_session)):
     run = session.get(TestRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
+    if run.locked:
+        raise HTTPException(status_code=409, detail="Run is locked - unlock it in Results first")
     # Also stops it dispatching further commands, rather than letting it run
     # on unseen until its next flush notices the row is gone.
     run_control.request_run_stop(run_id, run_control.STOP_NOW)

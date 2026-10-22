@@ -184,8 +184,10 @@ async function loadTsLiveList() {
     const listed = new Set(tsLiveShownRuns().map(r => tsLiveKey(r.kind, r.id)));
     [...tsLiveSelected].forEach(k => { if (!listed.has(k)) tsLiveSelected.delete(k); });
     renderTsLiveList();
-    // Nothing picked yet: open the newest running one by itself.
-    if (tsActiveRunId === null && tcLiveRunId === null) {
+    // Nothing picked yet: open the newest running one by itself - but only
+    // while the tab is still showing. A list fetch that finishes after the
+    // user has moved to another tab would otherwise yank them back here.
+    if (tsActiveRunId === null && tcLiveRunId === null && location.hash === '#running') {
       const first = runs.find(r => r.status === 'running');
       if (first && first.kind === 'testsuite') openTsRunView(first.id);
       else if (first) openLiveTestcaseRun(first.id);

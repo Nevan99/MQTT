@@ -217,6 +217,11 @@ class TestRun(SQLModel, table=True):
     suite_run_id: Optional[int] = None
     started_at: datetime = Field(default_factory=utcnow)
     completed_at: Optional[datetime] = None
+    # Results tab flags (see routers/Results.py) - starred/archived only
+    # change which Show view lists the run; locked also refuses deletion.
+    starred: bool = False
+    archived: bool = False
+    locked: bool = False
 
 
 class TestSuite(SQLModel, table=True):
@@ -263,3 +268,8 @@ class TestSuiteRun(SQLModel, table=True):
     results_json: str = "[]"
     started_at: datetime = Field(default_factory=utcnow)
     completed_at: Optional[datetime] = None
+    # Results tab flags (see routers/Results.py) - starred/archived only
+    # change which Show view lists the run; locked also refuses deletion.
+    starred: bool = False
+    archived: bool = False
+    locked: bool = False

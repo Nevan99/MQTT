@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from database.database import init_db
 from service.mqtt_service import mqtt_service
 from service import capture_socket_server
-from routers import Pis, Commands, Ws, Captures, Auth, TestCases, TestSuites
+from routers import Pis, Commands, Ws, Captures, Auth, TestCases, TestSuites, Results
 
 
 @asynccontextmanager
@@ -32,6 +32,7 @@ app.include_router(Ws.router)
 app.include_router(Captures.router)
 app.include_router(TestCases.router)
 app.include_router(TestSuites.router)
+app.include_router(Results.router)
 
 
 @app.get("/health")

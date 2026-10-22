@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="assets/kaon-favicon-180.png">
 <link id="faviconSvg" rel="icon" type="image/svg+xml" href="assets/kaon-favicon.svg">
 <link rel="stylesheet" href="themes.css?v=3">
-<link rel="stylesheet" href="styles.css?v=10">
+<link rel="stylesheet" href="styles.css?v=11">
 <!-- Applies the saved theme before first paint (no dark flash for a
      light-theme user) - same keys/logic as js/settings.js's applyTheme. -->
 <script>
@@ -162,39 +162,124 @@
      Packages tab still has its own live run view for a run you just
      launched; this is where every past run is browsed from. -->
 <section id="results" class="view">
-  <div id="resListView" class="panel captures-panel">
-    <div class="row" style="margin-bottom: 0.5rem; align-items: center; gap: 0.5rem;">
-      <select id="resTypeFilter" class="field" style="flex: 0 0 170px;">
-        <option value="all">Testcases &amp; Testsuites</option>
-        <option value="testcase">Testcase runs only</option>
-        <option value="testsuite">Testsuite runs only</option>
-      </select>
-      <select id="resStatusFilter" class="field" style="flex: 0 0 140px;">
-        <option value="all">Any status</option>
-        <option value="running">Running</option>
-        <option value="passed">Passed</option>
-        <option value="failed">Failed</option>
-        <option value="stopped">Stopped</option>
-      </select>
-      <input type="text" id="resSearchInput" class="field" placeholder="Search name…" style="flex: 1 1 auto;">
-      <button type="button" id="resRefreshBtn" style="flex: 0 0 auto;">Refresh</button>
+  <!-- List view, laid out like CDRouter's Results page: a Show/Filters
+       sidebar on the left, the bulk toolbar + sortable table + pager on the
+       right. Everything is filtered/sorted/paged server-side (GET /results,
+       routers/Results.py) - see results-tab.js. -->
+  <div id="resListView" class="res-layout">
+    <aside class="panel res-sidebar" aria-label="Show and filter results">
+      <h2 class="res-side-title">Results</h2>
+
+      <section class="res-side-section">
+        <h3>Show</h3>
+        <select id="resOwner" class="field" aria-label="Owner">
+          <option value="">All</option>
+        </select>
+        <select id="resView" class="field" aria-label="Which results">
+          <option value="current">Current Results</option>
+          <option value="starred">Starred</option>
+          <option value="date">By Date</option>
+          <option value="archived">Archived</option>
+          <option value="locked">Locked Only</option>
+        </select>
+        <div id="resDateRange" class="res-date-range hidden">
+          <label>From <input type="date" id="resDateFrom" class="field"></label>
+          <label>To <input type="date" id="resDateTo" class="field"></label>
+        </div>
+      </section>
+
+      <section class="res-side-section">
+        <h3>Filters <button type="button" class="res-link" id="resClearFilters">Clear all</button></h3>
+        <select id="resDevice" class="field" aria-label="Device">
+          <option value="">All Devices</option>
+        </select>
+        <select id="resKind" class="field" aria-label="Type">
+          <option value="">Testcases &amp; Testsuites</option>
+          <option value="testcase">Testcase runs only</option>
+          <option value="testsuite">Testsuite runs only</option>
+        </select>
+        <select id="resStatus" class="field" aria-label="Status">
+          <option value="">Any status</option>
+          <option value="running">Running</option>
+          <option value="passed">Passed</option>
+          <option value="failed">Failed</option>
+          <option value="stopped">Stopped</option>
+        </select>
+        <input type="text" id="resPackage" class="field" placeholder="Filter by package name…" aria-label="Filter by package name">
+        <input type="text" id="resTestcase" class="field" placeholder="Filter by testcase…" aria-label="Filter by testcase">
+      </section>
+
+      <section class="res-side-section">
+        <h3>Popular Tags</h3>
+        <div class="res-side-links">
+          <button type="button" class="res-link" id="resShowAllTags">Show all tags</button> |
+          <button type="button" class="res-link" id="resClearTags">Clear selection</button>
+        </div>
+        <input type="text" id="resTagSearch" class="field" placeholder="Filter by tag name…" aria-label="Filter by tag name">
+        <div id="resTagChips" class="res-tag-chips"></div>
+      </section>
+
+      <section class="res-side-section">
+        <h3>Frequent Packages</h3>
+        <div id="resFrequentPackages" class="res-frequent"></div>
+      </section>
+    </aside>
+
+    <div class="panel res-main">
+      <!-- Bulk toolbar: acts on the checked rows. Always present so the table
+           doesn't shift when a row is ticked; buttons carry [disabled]. -->
+      <div class="tc-bulk-bar res-toolbar">
+        <span id="resBulkCount" class="tc-bulk-count">none selected</span>
+        <button type="button" id="resBulkRerunBtn" disabled>Re-run</button>
+        <button type="button" id="resBulkStarBtn" disabled>Star</button>
+        <button type="button" id="resBulkArchiveBtn" disabled>Archive</button>
+        <button type="button" id="resBulkLockBtn" disabled>Lock</button>
+        <button type="button" id="resBulkUnlockBtn" disabled>Unlock</button>
+        <button type="button" id="resBulkDeleteBtn" class="tc-bulk-danger" disabled>Delete&hellip;</button>
+        <span class="res-toolbar-gap"></span>
+        <button type="button" id="resExportBtn" title="Download every matching result as CSV">Export&hellip;</button>
+        <button type="button" id="resRefreshBtn">Refresh</button>
+      </div>
+      <div class="res-table-wrap">
+        <table class="res-table">
+          <thead>
+            <tr>
+              <th class="tc-check-col"><input type="checkbox" id="resSelectAll" title="Select all on this page" aria-label="Select all on this page"></th>
+              <th class="res-icon-col" title="Locked"><span class="res-th-icon" aria-label="Locked">&#128274;</span></th>
+              <th class="res-icon-col" title="Starred"><span class="res-th-icon" aria-label="Starred">&#9733;</span></th>
+              <th data-sort="date">Date</th>
+              <th data-sort="id">Name</th>
+              <th data-sort="package">Package</th>
+              <th data-sort="kind">Type</th>
+              <th>Device</th>
+              <th data-sort="status">Status</th>
+              <th class="res-num">Pass</th>
+              <th class="res-num">Fail</th>
+              <th data-sort="time" class="res-num">Time</th>
+              <th data-sort="owner">Owner</th>
+              <th>Tags</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="resTableBody"></tbody>
+        </table>
+      </div>
+      <div class="res-pager">
+        <span id="resPagerSummary"></span>
+        <span class="res-pager-links">
+          | <button type="button" class="res-link" id="resExportLink">export as csv</button>
+          | <button type="button" class="res-link" id="resSelectAllMatching">select all</button>
+          | <label class="res-goto">go to page <input type="number" id="resGotoPage" min="1" class="field"></label>
+        </span>
+        <span class="res-pager-gap"></span>
+        <select id="resPageSize" class="field" aria-label="Results per page">
+          <option value="25">25 / page</option>
+          <option value="50">50 / page</option>
+          <option value="100">100 / page</option>
+        </select>
+        <nav id="resPagerNav" class="res-pager-nav" aria-label="Results pages"></nav>
+      </div>
     </div>
-    <!-- Bulk toolbar: acts on the checkbox column below, same pattern as the
-         Testcases table's (see tc-bulk-bar). Always present so the table
-         doesn't shift when a row is ticked. -->
-    <div class="tc-bulk-bar">
-      <span id="resBulkCount" class="tc-bulk-count">none selected</span>
-      <button type="button" id="resBulkDeleteBtn" class="tc-bulk-danger" disabled>Delete&hellip;</button>
-    </div>
-    <table>
-      <thead>
-        <tr>
-          <th class="tc-check-col"><input type="checkbox" id="resSelectAll" title="Select all on this page"></th>
-          <th>Type</th><th>Name</th><th>Status</th><th>Started</th><th>Completed</th><th>Duration</th><th></th>
-        </tr>
-      </thead>
-      <tbody id="resTableBody"></tbody>
-    </table>
   </div>
 
   <div id="resDetailView" class="panel captures-panel hidden">
@@ -772,10 +857,10 @@
      plain reload can otherwise keep serving a stale copy indefinitely. -->
 <script src="js/testcases-tab.js?v=14"></script>
 <script src="js/tc-bulk-edit.js?v=1"></script>
-<script src="js/testsuites-tab.js?v=9"></script>
+<script src="js/testsuites-tab.js?v=10"></script>
 <!-- After testcases-tab.js: reuses its tcRenderRunSteps/tcStatusClass so a
      run's step detail renders identically in both places. -->
-<script src="js/results-tab.js?v=8"></script>
+<script src="js/results-tab.js?v=10"></script>
 <script src="js/wifi-scan.js?v=2"></script>
 <script src="js/wifi-info-modal.js?v=5"></script>
 <script src="js/log-rendering.js"></script>

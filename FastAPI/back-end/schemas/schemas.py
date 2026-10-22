@@ -189,3 +189,21 @@ class TestSuiteRunOut(BaseModel):
     results: list[dict] = []
     started_at: datetime
     completed_at: Optional[datetime] = None
+
+class ResultKey(BaseModel):
+    kind: str                              # "testcase" | "testsuite"
+    id: int
+
+
+class ResultFlagsRequest(BaseModel):
+    """PATCH /results/{kind}/{id} - only the flags given are changed."""
+    starred: Optional[bool] = None
+    archived: Optional[bool] = None
+    locked: Optional[bool] = None
+
+
+class ResultBulkRequest(BaseModel):
+    """POST /results/bulk - the Results tab toolbar's actions over its
+    checked rows: star | unstar | archive | unarchive | lock | unlock | delete."""
+    items: list[ResultKey] = []
+    action: str

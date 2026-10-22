@@ -103,6 +103,8 @@ def delete_suite_run(run_id: int, session: Session = Depends(get_session)):
     run = session.get(TestSuiteRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
+    if run.locked:
+        raise HTTPException(status_code=409, detail="Run is locked - unlock it in Results first")
     run_control.request_suite_stop(run_id, run_control.STOP_NOW)
     session.delete(run)
     session.commit()
