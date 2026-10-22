@@ -640,6 +640,10 @@
 .ts-live-item { display: flex; align-items: center; gap: 0.5rem; padding: 0.45rem 0.5rem; border-radius: 4px; cursor: pointer; }
 .ts-live-item:hover { background: var(--hover-tint); }
 .ts-live-item.selected { background: var(--selected-tint); }
+.ts-live-item.checked:not(.selected) { background: var(--row-selected-info); }
+.ts-live-check { flex: 0 0 auto; margin: 0; cursor: pointer; }
+.ts-live-bulk-bar { flex-wrap: wrap; }
+.ts-live-bulk-bar #tsLiveSelectAll { margin: 0 0.15rem 0 0; }
 .ts-live-item .ts-live-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ts-live-item .ts-live-sub { display: block; font-size: 0.8em; opacity: 0.7; }
 .ts-live-section { font-size: 0.8em; text-transform: uppercase; opacity: 0.6; margin: 0.6rem 0 0.2rem; }

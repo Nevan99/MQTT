@@ -178,7 +178,12 @@ async function loadTsLiveList() {
       ...(await sRes.json()).map(r => ({ ...r, kind: 'testsuite' })),
       ...(await cRes.json()).map(r => ({ ...r, kind: 'testcase' })),
     ].sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)));
-    renderTsLiveList(runs);
+    tsLiveRuns = runs;
+    // Drop checks on runs no longer listed (deleted elsewhere, or aged out
+    // of the recent window) so a bulk action never hits something unseen.
+    const listed = new Set(tsLiveShownRuns().map(r => tsLiveKey(r.kind, r.id)));
+    [...tsLiveSelected].forEach(k => { if (!listed.has(k)) tsLiveSelected.delete(k); });
+    renderTsLiveList();
     // Nothing picked yet: open the newest running one by itself.
     if (tsActiveRunId === null && tcLiveRunId === null) {
       const first = runs.find(r => r.status === 'running');
@@ -208,8 +213,10 @@ function tsLiveItemHtml(r) {
     sub = `testcase · ${when}`;
   }
   const name = r.kind === 'testsuite' ? r.testsuite_name : r.testcase_name;
+  const checked = tsLiveSelected.has(tsLiveKey(r.kind, r.id));
   return `
-    <div class="ts-live-item${tsLiveIsSelected(r.kind, r.id) ? ' selected' : ''}" data-kind="${r.kind}" data-id="${r.id}">
+    <div class="ts-live-item${tsLiveIsSelected(r.kind, r.id) ? ' selected' : ''}${checked ? ' checked' : ''}" data-kind="${r.kind}" data-id="${r.id}">
+      <input type="checkbox" class="ts-live-check" ${checked ? 'checked' : ''} aria-label="Select ${tcEsc(name || '')} #${r.id}">
       <span class="ts-live-name">${tcEsc(name)} <span class="tc-run-meta">#${r.id}</span>
         <span class="ts-live-sub">${sub}</span>
       </span>
@@ -217,26 +224,188 @@ function tsLiveItemHtml(r) {
     </div>`;
 }
 
-function renderTsLiveList(runs) {
-  const running = runs.filter(r => r.status === 'running');
-  const recent = runs.filter(r => r.status !== 'running').slice(0, TS_LIVE_RECENT);
-  const el = document.getElementById('tsLiveList');
-  el.innerHTML = `
+// What the list shows, in on-screen order: every running run, then the
+// TS_LIVE_RECENT newest finished ones.
+function tsLiveSplitRuns() {
+  return {
+    running: tsLiveRuns.filter(r => r.status === 'running'),
+    recent: tsLiveRuns.filter(r => r.status !== 'running').slice(0, TS_LIVE_RECENT),
+  };
+}
+
+function tsLiveShownRuns() {
+  const { running, recent } = tsLiveSplitRuns();
+  return [...running, ...recent];
+}
+
+function renderTsLiveList() {
+  const { running, recent } = tsLiveSplitRuns();
+  document.getElementById('tsLiveList').innerHTML = `
     <div class="ts-live-section">Running (${running.length})</div>
     ${running.map(tsLiveItemHtml).join('') || '<div class="pi-log-empty">nothing running</div>'}
     <div class="ts-live-section">Recent</div>
     ${recent.map(tsLiveItemHtml).join('') || '<div class="pi-log-empty">no finished runs</div>'}
   `;
-  el.querySelectorAll('.ts-live-item').forEach(item => item.addEventListener('click', () => {
-    if (item.dataset.kind === 'testsuite') openTsRunView(Number(item.dataset.id));
-    else openLiveTestcaseRun(Number(item.dataset.id));
-  }));
+  tsLiveRenderBulkBar();
 }
 
 function tsMarkLiveSelection() {
   document.querySelectorAll('#tsLiveList .ts-live-item').forEach(item => {
     item.classList.toggle('selected', tsLiveIsSelected(item.dataset.kind, Number(item.dataset.id)));
   });
+}
+
+// --- Running tab: selection + bulk actions ----------------------------------
+// Each run in the list has a checkbox; the bar above the list re-runs or
+// deletes every checked one at once. Checking is separate from opening (a
+// plain click on the row still opens it on the right). Shift-click a
+// checkbox to check/uncheck everything between it and the last one clicked.
+//
+// Keyed "kind:id" - a testcase run and a testsuite run can share a numeric
+// id (same as resSelected in results-tab.js). Kept across the list's 3s
+// re-renders, pruned in loadTsLiveList of runs no longer listed.
+
+let tsLiveRuns = [];                 // last fetched list, both kinds, newest first
+const tsLiveSelected = new Set();
+let tsLiveLastCheckedKey = null;     // shift-click range anchor
+const tsLiveKey = (kind, id) => `${kind}:${id}`;
+
+function tsLiveSelectedRuns() {
+  return tsLiveShownRuns().filter(r => tsLiveSelected.has(tsLiveKey(r.kind, r.id)));
+}
+
+function tsLiveRenderBulkBar() {
+  const shown = tsLiveShownRuns();
+  const n = tsLiveSelectedRuns().length;
+  document.getElementById('tsLiveBulkCount').textContent = n ? `${n} selected` : 'none selected';
+  document.getElementById('tsLiveRerunBtn').disabled = n === 0;
+  document.getElementById('tsLiveDeleteBtn').disabled = n === 0;
+  const all = document.getElementById('tsLiveSelectAll');
+  all.checked = shown.length > 0 && n === shown.length;
+  all.indeterminate = n > 0 && n < shown.length;
+  all.disabled = shown.length === 0;
+}
+
+function tsLiveSetChecked(keys, on) {
+  keys.forEach(k => { if (on) tsLiveSelected.add(k); else tsLiveSelected.delete(k); });
+  document.querySelectorAll('#tsLiveList .ts-live-item').forEach(item => {
+    const k = tsLiveKey(item.dataset.kind, Number(item.dataset.id));
+    const checked = tsLiveSelected.has(k);
+    item.classList.toggle('checked', checked);
+    item.querySelector('.ts-live-check').checked = checked;
+  });
+  tsLiveRenderBulkBar();
+}
+
+function tsLiveOnCheckClick(item, e) {
+  const key = tsLiveKey(item.dataset.kind, Number(item.dataset.id));
+  const on = e.target.checked;
+  const order = tsLiveShownRuns().map(r => tsLiveKey(r.kind, r.id));
+  const from = order.indexOf(tsLiveLastCheckedKey);
+  const to = order.indexOf(key);
+  if (e.shiftKey && from >= 0 && to >= 0) {
+    tsLiveSetChecked(order.slice(Math.min(from, to), Math.max(from, to) + 1), on);
+  } else {
+    tsLiveSetChecked([key], on);
+  }
+  tsLiveLastCheckedKey = key;
+}
+
+// Empties the right-hand pane - used when the run it was showing is deleted.
+function tsLiveCloseDetail() {
+  stopTsRunPolling();
+  stopTcLivePolling();
+  tsActiveRunId = null;
+  tcLiveRunId = null;
+  tsShowLivePane(null);
+}
+
+// Starts a fresh run of the testcase/testsuite behind each checked run - the
+// same as pressing Run on it in Packages, so it uses its *current* saved
+// configuration (a suite's membership or a testcase's steps may have changed
+// since the run being repeated). Several runs of the same testcase/testsuite
+// collapse to one new run. Testcases go through the existing bulk endpoint
+// (one independent run each); suites have none, so one POST per suite.
+async function tsLiveRerunSelected() {
+  const runs = tsLiveSelectedRuns();
+  if (!runs.length) return;
+  const uniq = (xs) => [...new Set(xs.filter(x => x !== null && x !== undefined))];
+  const tcIds = uniq(runs.filter(r => r.kind === 'testcase').map(r => r.testcase_id));
+  const suiteIds = uniq(runs.filter(r => r.kind === 'testsuite').map(r => r.testsuite_id));
+  const what = [
+    tcIds.length ? `${tcIds.length} testcase${tcIds.length === 1 ? '' : 's'}` : null,
+    suiteIds.length ? `${suiteIds.length} testsuite${suiteIds.length === 1 ? '' : 's'}` : null,
+  ].filter(Boolean).join(' and ');
+  if (!what) { alert("The selected runs' testcases/testsuites no longer exist."); return; }
+  if (!confirm(`Re-run ${what}?\nEach starts a new run with its current saved configuration.`)) return;
+
+  const started = [];
+  const failed = [];
+  if (tcIds.length) {
+    try {
+      const newRuns = await tcBulkPost('run', { ids: tcIds }, 'Failed to start testcase runs');
+      newRuns.forEach(r => started.push({ kind: 'testcase', id: r.id }));
+      // The bulk endpoint skips ids that no longer exist instead of failing.
+      const missing = tcIds.length - newRuns.length;
+      if (missing > 0) failed.push(`${missing} testcase${missing === 1 ? '' : 's'} no longer exist`);
+    } catch (err) {
+      failed.push(err.message);
+    }
+  }
+  for (const id of suiteIds) {
+    try {
+      const res = await apiFetch(`${API}/testsuites/${id}/run`, { method: 'POST' });
+      if (!res.ok) throw new Error(`testsuite #${id}: ${res.status} ${await res.text()}`);
+      started.push({ kind: 'testsuite', id: (await res.json()).id });
+    } catch (err) {
+      failed.push(err.message);
+    }
+  }
+
+  tsLiveSetChecked([...tsLiveSelected], false);
+  await loadTsLiveList();
+  // Follow the first new run, so its progress is on screen straight away.
+  if (started.length) {
+    const first = started[0];
+    if (first.kind === 'testsuite') openTsRunView(first.id);
+    else openLiveTestcaseRun(first.id);
+  }
+  if (failed.length) alert(`Started ${started.length} run(s). Some could not be started:\n${failed.join('\n')}`);
+}
+
+// Deletes every checked run's history record (one DELETE each - there's no
+// bulk endpoint for runs; failures are skipped, not fatal, same as the
+// Results tab's bulk delete). A run still in progress is stopped by the
+// backend before it's deleted.
+async function tsLiveDeleteSelected() {
+  const runs = tsLiveSelectedRuns();
+  if (!runs.length) return;
+  const runningN = runs.filter(r => r.status === 'running').length;
+  const msg = `Delete ${runs.length} run${runs.length === 1 ? '' : 's'}? This can't be undone.`
+    + (runningN ? `\n${runningN} still running will be stopped first.` : '');
+  if (!confirm(msg)) return;
+
+  const outcomes = await Promise.all(runs.map(async (r) => {
+    const path = r.kind === 'testsuite' ? `${API}/testsuites/runs/${r.id}` : `${API}/testcases/runs/${r.id}`;
+    try {
+      const res = await apiFetch(path, { method: 'DELETE' });
+      return { r, ok: res.ok || res.status === 404 };   // 404: already gone
+    } catch {
+      return { r, ok: false };
+    }
+  }));
+
+  const deleted = new Set(outcomes.filter(o => o.ok).map(o => tsLiveKey(o.r.kind, o.r.id)));
+  tsLiveSetChecked([...deleted], false);
+  if ((tsActiveRunId !== null && deleted.has(tsLiveKey('testsuite', tsActiveRunId)))
+      || (tcLiveRunId !== null && deleted.has(tsLiveKey('testcase', tcLiveRunId)))) {
+    tsLiveCloseDetail();
+  }
+  tsLiveRuns = tsLiveRuns.filter(r => !deleted.has(tsLiveKey(r.kind, r.id)));
+  renderTsLiveList();
+  loadTsLiveList();
+  const failedN = outcomes.length - deleted.size;
+  if (failedN) alert(`${failedN} run${failedN === 1 ? '' : 's'} could not be deleted.`);
 }
 
 function openTsRunHistoryModal() {
@@ -861,6 +1030,22 @@ document.getElementById('tsEditorOverlay').addEventListener('click', (e) => {
   if (e.target.id === 'tsEditorOverlay') closeTsEditorModal();
 });
 document.getElementById('tsLiveRefreshBtn').addEventListener('click', loadTsLiveList);
+// Delegated - the list's items are re-rendered every poll tick.
+document.getElementById('tsLiveList').addEventListener('click', (e) => {
+  const item = e.target.closest('.ts-live-item');
+  if (!item) return;
+  if (e.target.classList.contains('ts-live-check')) {
+    tsLiveOnCheckClick(item, e);
+    return;
+  }
+  if (item.dataset.kind === 'testsuite') openTsRunView(Number(item.dataset.id));
+  else openLiveTestcaseRun(Number(item.dataset.id));
+});
+document.getElementById('tsLiveSelectAll').addEventListener('change', (e) => {
+  tsLiveSetChecked(tsLiveShownRuns().map(r => tsLiveKey(r.kind, r.id)), e.target.checked);
+});
+document.getElementById('tsLiveRerunBtn').addEventListener('click', tsLiveRerunSelected);
+document.getElementById('tsLiveDeleteBtn').addEventListener('click', tsLiveDeleteSelected);
 document.getElementById('tsRunHistoryBtn').addEventListener('click', openTsRunHistoryModal);
 document.getElementById('tsRunHistoryCloseBtn').addEventListener('click', closeTsRunHistoryModal);
 document.getElementById('tsRunHistoryOverlay').addEventListener('click', (e) => {

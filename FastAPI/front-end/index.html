@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="assets/kaon-favicon-180.png">
 <link id="faviconSvg" rel="icon" type="image/svg+xml" href="assets/kaon-favicon.svg">
 <link rel="stylesheet" href="themes.css?v=3">
-<link rel="stylesheet" href="styles.css?v=9">
+<link rel="stylesheet" href="styles.css?v=10">
 <!-- Applies the saved theme before first paint (no dark flash for a
      light-theme user) - same keys/logic as js/settings.js's applyTheme. -->
 <script>
@@ -550,6 +550,16 @@
         <h2 style="margin: 0; font-size: 1rem; flex: 1 1 auto;">Runs</h2>
         <button type="button" id="tsLiveRefreshBtn" style="flex: 0 0 auto;">Refresh</button>
       </div>
+      <!-- Bulk actions over the checked runs (see testsuites-tab.js's
+           "Running tab: selection + bulk actions"). Always rendered, buttons
+           disabled until something is checked, same as .tc-bulk-bar in
+           Packages, so checking a run doesn't shift the list under the pointer. -->
+      <div class="tc-bulk-bar ts-live-bulk-bar">
+        <input type="checkbox" id="tsLiveSelectAll" title="Select all runs" aria-label="Select all runs">
+        <span id="tsLiveBulkCount" class="tc-bulk-count">none selected</span>
+        <button type="button" id="tsLiveRerunBtn" title="Start a new run of each selected testcase/testsuite" disabled>Re-run</button>
+        <button type="button" id="tsLiveDeleteBtn" class="tc-bulk-danger" title="Delete the selected runs" disabled>Delete</button>
+      </div>
       <div id="tsLiveList"></div>
     </div>
     <div class="panel ts-live-detail-panel">
@@ -762,7 +772,7 @@
      plain reload can otherwise keep serving a stale copy indefinitely. -->
 <script src="js/testcases-tab.js?v=14"></script>
 <script src="js/tc-bulk-edit.js?v=1"></script>
-<script src="js/testsuites-tab.js?v=8"></script>
+<script src="js/testsuites-tab.js?v=9"></script>
 <!-- After testcases-tab.js: reuses its tcRenderRunSteps/tcStatusClass so a
      run's step detail renders identically in both places. -->
 <script src="js/results-tab.js?v=8"></script>

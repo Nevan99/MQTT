@@ -95,10 +95,15 @@ def delete_suite_run(run_id: int, session: Session = Depends(get_session)):
     """Deletes the suite run's own record only - the individual TestRun rows
     it launched (each results entry's run_id) are left in place, same as
     they'd be if the testcases had been run standalone; delete those
-    separately via DELETE /testcases/runs/{run_id} if wanted."""
+    separately via DELETE /testcases/runs/{run_id} if wanted.
+
+    A suite still running is stopped first (same as DELETE /testcases/runs
+    does for a testcase), so it doesn't go on launching testcases for a run
+    nobody can see any more."""
     run = session.get(TestSuiteRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
+    run_control.request_suite_stop(run_id, run_control.STOP_NOW)
     session.delete(run)
     session.commit()
     return {"deleted": run_id}
@@ -193,6 +198,8 @@ def _run_testsuite(suite_run_id: int):
     def save_results():
         with get_session_direct() as session:
             r = session.get(TestSuiteRun, suite_run_id)
+            if r is None:
+                return  # deleted mid-run (DELETE /testsuites/runs/{id})
             r.results_json = json.dumps(results)
             session.add(r)
             session.commit()
