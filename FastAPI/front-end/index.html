@@ -3,8 +3,26 @@
 <head>
 <meta charset="utf-8">
 <title>Pi Fleet Controller</title>
-<link rel="icon" type="image/png" href="assets/favicon-512-clean.png">
-<link rel="stylesheet" href="styles.css?v=7">
+<!-- Kaon power-mark favicon. The SVG one is redrawn in the active theme's
+     colors by js/settings.js; the PNGs are fallbacks for browsers without
+     SVG favicons. -->
+<link rel="alternate icon" type="image/png" sizes="64x64" href="assets/kaon-favicon-64.png">
+<link rel="apple-touch-icon" href="assets/kaon-favicon-180.png">
+<link id="faviconSvg" rel="icon" type="image/svg+xml" href="assets/kaon-favicon.svg">
+<link rel="stylesheet" href="themes.css?v=3">
+<link rel="stylesheet" href="styles.css?v=9">
+<!-- Applies the saved theme before first paint (no dark flash for a
+     light-theme user) - same keys/logic as js/settings.js's applyTheme. -->
+<script>
+(function () {
+  var d = document.documentElement, theme = 'dark', accent = 'cyan';
+  try { theme = localStorage.getItem('pi_fleet_theme') || theme; accent = localStorage.getItem('pi_fleet_accent') || accent; } catch (e) {}
+  var light = theme === 'light' || (theme === 'system' && window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches);
+  d.setAttribute('data-theme', theme);
+  d.setAttribute('data-mode', light ? 'light' : 'dark');
+  d.setAttribute('data-accent', accent);
+})();
+</script>
 </head>
 <body>
 <div id="loginOverlay">
@@ -29,7 +47,7 @@
 </div>
 <div id="appRoot" class="auth-hidden">
 <header>
-  <img src="assets/kaon-icon-logo.png" alt="Kaon Broadband" class="header-logo-img">
+  <span class="kaon-logo header-logo" role="img" aria-label="Kaon Broadband"><span class="kaon-logo-text"></span><span class="kaon-logo-mark"></span></span>
   <h1>Pi Fleet Controller</h1>
   <nav>
     <button class="tab active" data-view="fleet">Fleet</button>
@@ -40,6 +58,7 @@
     <button class="tab" data-view="captures">Captures</button>
     <button class="tab" data-view="history">History</button>
   </nav>
+  <button id="settingsBtn" type="button" class="icon-btn" title="Settings" aria-label="Settings" aria-haspopup="dialog"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg></button>
   <button id="logoutBtn" type="button">Log out</button>
 </header>
 
@@ -459,7 +478,7 @@
       <button type="button" class="icon-btn" id="tsRunConfirmCloseBtn" title="Close">&times;</button>
     </div>
     <div class="wifi-info-modal-body">
-      <div id="tsRunConfirmName" style="font-weight: 600; color: #ddd; margin-bottom: 0.3rem;"></div>
+      <div id="tsRunConfirmName" style="font-weight: 600; color: var(--text-2); margin-bottom: 0.3rem;"></div>
       <div class="hint" id="tsRunConfirmMeta" style="margin-bottom: 0.5rem;"></div>
       <div id="tsRunConfirmList" class="ts-picker-list"></div>
       <div class="row" style="margin-top: 1rem; gap: 0.5rem;">
@@ -695,13 +714,40 @@
   </div>
 </section>
 <footer id="appFooter">
-  <img src="assets/kaon-icon-logo.png" alt="Kaon Broadband">
+  <span class="kaon-logo" role="img" aria-label="Kaon Broadband"><span class="kaon-logo-text"></span><span class="kaon-logo-mark"></span></span>
   <span>&copy; <span id="footerYear"></span> Kaon Broadband. All rights reserved.</span>
 </footer>
 </div>
 
+<!-- Settings popup - theme and accent pickers, see js/settings.js.
+     Choices are per-browser (localStorage), not per-user. -->
+<div id="settingsOverlay" class="wifi-info-overlay settings-overlay hidden">
+  <div class="wifi-info-modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <div class="wifi-info-modal-header">
+      <span id="settingsTitle">Settings</span>
+      <button type="button" class="icon-btn wifi-info-modal-close" id="settingsCloseBtn" title="Close" aria-label="Close settings">&times;</button>
+    </div>
+    <div class="wifi-info-modal-body">
+      <section class="settings-section">
+        <h4 id="themeLabel">Theme</h4>
+        <p class="hint">System follows your operating system's light/dark setting.</p>
+        <div class="theme-options" id="themeOptions" role="radiogroup" aria-labelledby="themeLabel"></div>
+      </section>
+      <section class="settings-section">
+        <h4 id="accentLabel">Accent color</h4>
+        <p class="hint">Used for links, the active tab, selections and focus rings.</p>
+        <div class="accent-options" id="accentOptions" role="radiogroup" aria-labelledby="accentLabel"></div>
+      </section>
+      <div class="settings-footer">
+        <button type="button" id="settingsResetBtn">Reset to defaults</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Loaded in this exact order - plain global-scope scripts (no modules),
      later files call functions defined in earlier ones. -->
+<script src="js/settings.js?v=2"></script>
 <script src="js/auth.js?v=2"></script>
 <script src="js/layout.js"></script>
 <script src="js/fleet-table.js?v=7"></script>
