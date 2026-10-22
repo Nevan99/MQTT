@@ -573,7 +573,7 @@ function renderInterfaceDefaultControl(container, piId, iface, current, onSaved,
     <button type="button" class="iface-default-save">Save</button>
     <button type="button" class="iface-default-clear">Clear</button>
     <div class="iface-default-error login-error" style="width:100%;"></div>
-    <div class="iface-default-success" style="width:100%; color:#6f6; font-size:0.8rem; min-height:1.2em; margin-top:0.5rem;"></div>
+    <div class="iface-default-success" style="width:100%; color:var(--success); font-size:0.8rem; min-height:1.2em; margin-top:0.5rem;"></div>
   `;
   const bandEl = wrap.querySelector('.iface-default-band');
   const channelEl = wrap.querySelector('.iface-default-channel');

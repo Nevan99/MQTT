@@ -1,22 +1,22 @@
   * { box-sizing: border-box; }
-  html { color-scheme: dark; }
+  html { color-scheme: var(--color-scheme); }
   html, body { height: 100%; }
-  body { font-family: system-ui, sans-serif; margin: 0; background: #111; color: #eee; display: flex; flex-direction: column; }
-  header { flex: 0 0 auto; display: flex; gap: 0.5rem; align-items: center; padding: 0.75rem 1rem; background: #1a1a1a; border-bottom: 1px solid #333; }
+  body { font-family: system-ui, sans-serif; margin: 0; background: var(--bg); color: var(--text); display: flex; flex-direction: column; }
+  header { flex: 0 0 auto; display: flex; gap: 0.5rem; align-items: center; padding: 0.75rem 1rem; background: var(--surface); border-bottom: 1px solid var(--border); }
   header h1 { font-size: 1rem; margin: 0; margin-right: 1rem; }
   nav { display: flex; gap: 0.25rem; margin-right: 1rem; }
   nav button.tab { background: transparent; border: 1px solid transparent; }
-  nav button.tab.active { background: #2a2a2a; border-color: #444; }
-  input, select { padding: 0.4rem 0.6rem; background: #222; border: 1px solid #444; color: #eee; border-radius: 4px; }
-  input[type="checkbox"] { width: 1rem; height: 1rem; accent-color: #4a7; color-scheme: dark; }
+  nav button.tab.active { background: var(--surface-button); border-color: var(--border-strong); }
+  input, select { padding: 0.4rem 0.6rem; background: var(--surface-input); border: 1px solid var(--border-strong); color: var(--text); border-radius: 4px; }
+  input[type="checkbox"] { width: 1rem; height: 1rem; accent-color: var(--checkbox); color-scheme: var(--color-scheme); }
   .password-wrap { position: relative; }
   .password-wrap input { width: 100%; padding-right: 2.2rem; }
   .password-toggle {
     position: absolute; right: 0.2rem; top: 50%; transform: translateY(-50%);
     background: transparent; border: none; padding: 0.3rem; font-size: 0.95rem;
-    line-height: 1; cursor: pointer; color: #888;
+    line-height: 1; cursor: pointer; color: var(--text-dim);
   }
-  .password-toggle:hover { color: #eee; background: transparent; }
+  .password-toggle:hover { color: var(--text); background: transparent; }
   .iface-dropdown { position: relative; }
   .iface-dropdown-toggle {
     width: 100%; text-align: left; white-space: nowrap; overflow: hidden;
@@ -25,17 +25,17 @@
   .iface-dropdown-panel {
     position: absolute; top: 100%; left: 0; margin-top: 0.2rem; z-index: 20;
     width: 100%; min-width: 160px; max-height: 180px; overflow-y: auto; box-sizing: border-box;
-    background: #222; border: 1px solid #444; border-radius: 4px; padding: 0.3rem;
+    background: var(--surface-input); border: 1px solid var(--border-strong); border-radius: 4px; padding: 0.3rem;
   }
   .iface-dropdown-panel.hidden { display: none; }
   .iface-dropdown-panel label.iface-row {
-    display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: #ddd;
+    display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: var(--text-2);
     padding: 0.2rem; cursor: pointer; white-space: nowrap; border-radius: 3px;
   }
-  .iface-dropdown-panel label.iface-row:hover { background: #2a2a2a; }
-  .iface-dropdown-panel label.iface-row-all { font-weight: 600; border-bottom: 1px solid #444; margin-bottom: 0.25rem; padding-bottom: 0.35rem; }
-  button { padding: 0.4rem 0.9rem; border: 1px solid #444; background: #2a2a2a; color: #eee; border-radius: 4px; cursor: pointer; }
-  button:hover { background: #333; }
+  .iface-dropdown-panel label.iface-row:hover { background: var(--surface-button); }
+  .iface-dropdown-panel label.iface-row-all { font-weight: 600; border-bottom: 1px solid var(--border-strong); margin-bottom: 0.25rem; padding-bottom: 0.35rem; }
+  button { padding: 0.4rem 0.9rem; border: 1px solid var(--border-strong); background: var(--surface-button); color: var(--text); border-radius: 4px; cursor: pointer; }
+  button:hover { background: var(--surface-button-hover); }
   button:disabled { opacity: 0.5; cursor: default; }
   /* Each view fills whatever vertical space is left below the header,
      regardless of the header's actual rendered height - avoids the page
@@ -49,9 +49,9 @@
   #history.active { display: flex; flex-direction: column; }
   #running.active { display: flex; flex-direction: column; padding: 1rem; overflow: auto; }
   .history-detail-row.hidden { display: none; }
-  .history-detail-row td { background: #141414; padding: 0.5rem 0.75rem; }
+  .history-detail-row td { background: var(--surface-inset); padding: 0.5rem 0.75rem; }
   #piDetail.active { display: flex; flex-direction: column; gap: 1rem; }
-  .pi-id-link { color: #6cf; text-decoration: none; cursor: pointer; }
+  .pi-id-link { color: var(--accent); text-decoration: none; cursor: pointer; }
   .pi-id-link:hover { text-decoration: underline; }
   #piDetailGrid { display: grid; grid-template-columns: 280px 6px 1fr 6px 380px; gap: 1rem; flex: 1 1 auto; min-height: 0; }
   #piDetailGrid.dragging { user-select: none; cursor: col-resize; }
@@ -67,11 +67,11 @@
   .pd-panel-collapsed .pd-panel-body { display: none; }
   .pd-log-block.pd-log-collapsed { flex: 0 0 auto; }
   .pd-log-block.pd-log-collapsed .pi-log-panel { display: none; }
-  .pd-info-row { display: flex; justify-content: space-between; gap: 0.5rem; padding: 0.3rem 0; border-bottom: 1px solid #222; font-size: 0.85rem; }
-  .pd-info-row .k { color: #888; }
-  .pd-info-row .v { color: #ddd; text-align: right; }
+  .pd-info-row { display: flex; justify-content: space-between; gap: 0.5rem; padding: 0.3rem 0; border-bottom: 1px solid var(--border-faint); font-size: 0.85rem; }
+  .pd-info-row .k { color: var(--text-dim); }
+  .pd-info-row .v { color: var(--text-2); text-align: right; }
   .pd-log-block { display: flex; flex-direction: column; min-height: 0; flex: 1 1 50%; }
-  .pd-log-block + .pd-log-block { margin-top: 0.75rem; border-top: 1px solid #262626; padding-top: 0.75rem; }
+  .pd-log-block + .pd-log-block { margin-top: 0.75rem; border-top: 1px solid var(--border-subtle); padding-top: 0.75rem; }
   .pd-log-block .pi-log-panel { flex: 1 1 auto; min-height: 80px; max-height: none; }
   /* Scroll ownership must live on .pi-log-panel (where the pin-to-bottom
      listener is attached), not on the outer #pdLogPanel - otherwise the
@@ -89,52 +89,52 @@
   #piDetail.capture-only .pd-log-block[data-kind="logs"],
   #piDetail.capture-only .pi-log-popout { display: none; }
   #piDetail.capture-only .pd-log-block + .pd-log-block { margin-top: 0; border-top: 0; padding-top: 0; }
-  .pd-results-panel { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; margin-top: 0.75rem; border: 1px solid #333; border-radius: 6px; overflow: hidden; }
-  .pd-results-heading { flex: 0 0 auto; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; color: #888; padding: 0.4rem 0.6rem; border-bottom: 1px solid #262626; background: #181818; }
+  .pd-results-panel { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; margin-top: 0.75rem; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .pd-results-heading { flex: 0 0 auto; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-dim); padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border-subtle); background: var(--surface-3); }
   .pd-results-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0.5rem; }
-  .pd-iface-card { border: 1px solid #333; border-radius: 6px; margin-bottom: 0.5rem; overflow: hidden; }
+  .pd-iface-card { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 0.5rem; overflow: hidden; }
   .pd-iface-card.hidden { display: none; }
-  .pd-iface-header { display: flex; align-items: center; gap: 0.4rem; padding: 0.4rem 0.5rem; font-size: 0.85rem; color: #ddd; cursor: pointer; }
-  .pd-iface-header:hover { background: #202020; }
+  .pd-iface-header { display: flex; align-items: center; gap: 0.4rem; padding: 0.4rem 0.5rem; font-size: 0.85rem; color: var(--text-2); cursor: pointer; }
+  .pd-iface-header:hover { background: var(--surface-hover); }
   .pd-iface-name { flex: 1 1 auto; display: inline-flex; align-items: center; }
-  .pd-iface-toggle { display: inline-flex; align-items: center; color: #888; }
-  .pd-iface-body { padding: 0 0.6rem 0.6rem; border-top: 1px solid #262626; }
+  .pd-iface-toggle { display: inline-flex; align-items: center; color: var(--text-dim); }
+  .pd-iface-body { padding: 0 0.6rem 0.6rem; border-top: 1px solid var(--border-subtle); }
   .pd-iface-body.hidden { display: none; border-top: none; }
   .pd-iface-connected-mark { font-size: 0.7rem; }
   .pd-iface-connected-mark.hidden { display: none; }
-  .pd-wifi-scan-heading { display: flex; align-items: center; justify-content: space-between; margin-top: 0.5rem; font-size: 0.78rem; color: #aaa; }
+  .pd-wifi-scan-heading { display: flex; align-items: center; justify-content: space-between; margin-top: 0.5rem; font-size: 0.78rem; color: var(--text-label); }
   .pd-scan-wifi-toggle svg { transition: transform 0.15s; }
   .pd-scan-wifi-toggle.open svg { transform: rotate(90deg); }
   .pd-wifi-scan-results { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.4rem; }
   .pd-wifi-scan-results.hidden { display: none; }
-  .pd-wifi-search-wrap { display: flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.5rem; background: #222; border: 1px solid #444; border-radius: 4px; color: #888; }
+  .pd-wifi-search-wrap { display: flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.5rem; background: var(--surface-input); border: 1px solid var(--border-strong); border-radius: 4px; color: var(--text-dim); }
   .pd-wifi-search-wrap svg { flex: 0 0 auto; }
-  .pd-wifi-search-input { flex: 1 1 auto; background: transparent; border: none; color: #eee; font-size: 0.82rem; padding: 0; }
+  .pd-wifi-search-input { flex: 1 1 auto; background: transparent; border: none; color: var(--text); font-size: 0.82rem; padding: 0; }
   .pd-wifi-search-input:focus { outline: none; }
   .pd-wifi-scan-list { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.4rem; }
   .wifi-connect-row { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin-top: 0.5rem; }
-  .wifi-remember-row { display: flex; align-items: center; gap: 0.3rem; font-size: 0.75rem; color: #aaa; margin: 0; width: 100%; cursor: pointer; }
+  .wifi-remember-row { display: flex; align-items: center; gap: 0.3rem; font-size: 0.75rem; color: var(--text-label); margin: 0; width: 100%; cursor: pointer; }
   .wifi-remember-row input { width: auto; margin: 0; }
   .wifi-disconnect-row { margin-top: 0.5rem; display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
-  .wifi-disconnect-btn { background: #522; border-color: #a44; color: #fbb; }
-  .wifi-disconnect-btn:hover { background: #633; }
-  .ap-weblink-btn { padding: 0.4rem 0.9rem; border: 1px solid #444; background: #2a2a2a; color: #eee; border-radius: 4px; cursor: pointer; text-decoration: none; display: inline-block; }
-  .ap-weblink-btn:hover { background: #333; }
+  .wifi-disconnect-btn { background: var(--danger-bg); border-color: var(--danger-border); color: var(--danger-text); }
+  .wifi-disconnect-btn:hover { background: var(--danger-bg-hover); }
+  .ap-weblink-btn { padding: 0.4rem 0.9rem; border: 1px solid var(--border-strong); background: var(--surface-button); color: var(--text); border-radius: 4px; cursor: pointer; text-decoration: none; display: inline-block; }
+  .ap-weblink-btn:hover { background: var(--surface-button-hover); }
   .wifi-connect-row .password-wrap { flex: 1 1 auto; }
   .wifi-connect-status { margin-top: 0.3rem; min-height: 1em; }
   .wifi-icon { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; }
-  .wifi-icon.wifi-connected { color: #6f6; }
-  .wifi-icon.wifi-disconnected { color: #666; opacity: 0.6; }
-  .wifi-icon.wifi-unknown { color: #999; }
+  .wifi-icon.wifi-connected { color: var(--success); }
+  .wifi-icon.wifi-disconnected { color: var(--text-disabled); opacity: 0.6; }
+  .wifi-icon.wifi-unknown { color: var(--text-muted); }
 
-  .line { padding: 0.25rem 0; border-bottom: 1px solid #222; font-family: ui-monospace, monospace; font-size: 0.85rem; white-space: pre-wrap; word-break: break-word; }
-  .ts { color: #888; margin-right: 0.6rem; }
+  .line { padding: 0.25rem 0; border-bottom: 1px solid var(--border-faint); font-family: ui-monospace, monospace; font-size: 0.85rem; white-space: pre-wrap; word-break: break-word; }
+  .ts { color: var(--text-dim); margin-right: 0.6rem; }
   .lvl { display: inline-block; min-width: 3.5rem; text-transform: uppercase; font-weight: bold; margin-right: 0.6rem; }
-  .lvl-info { color: #6cf; }
-  .lvl-warning { color: #fc6; }
-  .lvl-error { color: #f66; }
-  .lvl-unknown { color: #999; }
-  .msg { color: #ddd; }
+  .lvl-info { color: var(--accent); }
+  .lvl-warning { color: var(--warning); }
+  .lvl-error { color: var(--danger); }
+  .lvl-unknown { color: var(--text-muted); }
+  .msg { color: var(--text-2); }
 
   #fleet { grid-template-columns: 1fr 6px 380px; gap: 1rem; padding: 1rem; }
   #captures { padding: 1rem; }
@@ -143,20 +143,20 @@
   .pi-power-actions { display: flex; gap: 0.4rem; margin-left: auto; flex: 0 0 auto !important; }
   .fleet-power-bar { justify-content: flex-end; margin-bottom: 0.5rem; }
   .pi-power-btn { padding: 0.2rem 0.6rem; font-size: 0.75rem; }
-  .pi-power-btn.danger { border-color: #844; color: #f99; }
-  .pi-power-btn.danger:hover:not(:disabled) { background: #3a1c1c; }
+  .pi-power-btn.danger { border-color: var(--danger-border); color: var(--danger-soft); }
+  .pi-power-btn.danger:hover:not(:disabled) { background: var(--danger-bg-soft); }
   .capture-filters { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-end; margin-bottom: 0.6rem; }
-  .capture-filters label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.75rem; color: #aaa; }
+  .capture-filters label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.75rem; color: var(--text-label); }
   .capture-filters input[type="number"] { width: 5.5rem; }
-  .capture-filters input[type="datetime-local"] { color-scheme: dark; }
-  .capture-filter-count { font-size: 0.75rem; color: #888; margin-left: auto; align-self: center; }
+  .capture-filters input[type="datetime-local"] { color-scheme: var(--color-scheme); }
+  .capture-filter-count { font-size: 0.75rem; color: var(--text-dim); margin-left: auto; align-self: center; }
   #fleet.dragging { user-select: none; cursor: col-resize; }
-  .panel { background: #1a1a1a; border: 1px solid #333; border-radius: 6px; padding: 0.75rem; overflow-y: auto; overflow-x: auto; min-width: 0; }
-  .gutter { width: 6px; margin: 0 -0.5rem; border-radius: 3px; background: #2a2a2a; cursor: col-resize; }
-  .gutter:hover, .gutter.active { background: #444; }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem; overflow-y: auto; overflow-x: auto; min-width: 0; }
+  .gutter { width: 6px; margin: 0 -0.5rem; border-radius: 3px; background: var(--surface-button); cursor: col-resize; }
+  .gutter:hover, .gutter.active { background: var(--surface-active); }
   table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-  th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid #262626; }
-  th { color: #999; font-weight: 600; }
+  th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--border-subtle); }
+  th { color: var(--text-muted); font-weight: 600; }
   /* A long testsuite/testcase name otherwise just keeps growing the Name
      column (and the whole table) sideways past the panel, forcing a
      horizontal scroll to read anything else in the row - wraps onto further
@@ -171,22 +171,22 @@
      resize" affordance as .gutter elsewhere in the app, just sized to sit
      directly on a table column border instead of between two flex panels. */
   .col-resize-handle { position: absolute; top: 0; right: -3px; bottom: 0; width: 6px; cursor: col-resize; z-index: 1; }
-  .col-resize-handle::after { content: ''; position: absolute; top: 0; bottom: 0; left: 2px; width: 2px; background: #333; }
-  .col-resize-handle:hover::after, .col-resize-handle.active::after { background: #6ab0ff; }
+  .col-resize-handle::after { content: ''; position: absolute; top: 0; bottom: 0; left: 2px; width: 2px; background: var(--surface-button-hover); }
+  .col-resize-handle:hover::after, .col-resize-handle.active::after { background: var(--accent); }
   tr.pi-row { cursor: pointer; }
-  tr.pi-row:hover { background: #222; }
-  tr.pi-row.selected { background: #263a2a; }
-  .pi-toggle { display: inline-block; padding: 0.05rem 0.3rem; margin-right: 0.2rem; font-size: 0.7rem; color: #999; cursor: pointer; border: 1px solid #333; border-radius: 3px; }
-  .pi-toggle:hover { background: #222; color: #eee; }
-  tr.pi-ifaces-row td { background: #181818; padding: 0.5rem; }
+  tr.pi-row:hover { background: var(--surface-hover); }
+  tr.pi-row.selected { background: var(--row-selected); }
+  .pi-toggle { display: inline-block; padding: 0.05rem 0.3rem; margin-right: 0.2rem; font-size: 0.7rem; color: var(--text-muted); cursor: pointer; border: 1px solid var(--border); border-radius: 3px; }
+  .pi-toggle:hover { background: var(--surface-hover); color: var(--text); }
+  tr.pi-ifaces-row td { background: var(--surface-3); padding: 0.5rem; }
   tr.pi-ifaces-row.hidden { display: none; }
-  .fleet-iface-list .pd-iface-card { background: #141414; }
+  .fleet-iface-list .pd-iface-card { background: var(--surface-inset); }
   .fleet-iface-primary-checkbox { margin-right: 0.1rem; }
-  .pi-log-heading { display: flex; justify-content: space-between; align-items: center; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; color: #888; padding: 0.4rem 0.75rem 0.2rem; }
+  .pi-log-heading { display: flex; justify-content: space-between; align-items: center; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-dim); padding: 0.4rem 0.75rem 0.2rem; }
   .pi-log-actions { display: flex; gap: 0.4rem; text-transform: none; letter-spacing: normal; }
-  .pi-log-actions button.icon-btn { border: 1px solid #333; }
-  .pi-log-actions button.recording { background: #522; border-color: #a44; color: #fbb; }
-  .pi-log-actions button.streaming { background: #164; border-color: #4a7; color: #9f9; }
+  .pi-log-actions button.icon-btn { border: 1px solid var(--border); }
+  .pi-log-actions button.recording { background: var(--danger-bg); border-color: var(--danger-border); color: var(--danger-text); }
+  .pi-log-actions button.streaming { background: var(--success-bg); border-color: var(--success-border); color: var(--success-soft); }
   /* overflow-anchor:none - without it, trimming old lines off the top
      (the 500-line cap in flushLineQueue) triggers the browser's own
      scroll-anchoring adjustment to keep visible content stable, which
@@ -195,17 +195,17 @@
      view (permanently, since nothing else ever re-pins it) the moment a
      live stream crosses 500 lines - exactly when it matters most. */
   .pi-log-panel { max-height: 240px; overflow-y: auto; overflow-anchor: none; padding: 0.2rem 0.75rem 0.5rem; }
-  .pi-log-panel .line { border-bottom: 1px solid #202020; }
-  .pi-log-empty { color: #666; font-size: 0.78rem; padding: 0.4rem 0; }
+  .pi-log-panel .line { border-bottom: 1px solid var(--border-faint); }
+  .pi-log-empty { color: var(--text-disabled); font-size: 0.78rem; padding: 0.4rem 0; }
   .pi-log-panel.wireshark-table-wrap { display: flex; flex-direction: column; padding: 0; overflow: hidden; max-height: 320px; }
   #piDetailGrid .pd-log-block .pi-log-panel.wireshark-table-wrap { max-height: none; }
   .fleet-iface-list .pd-log-block .pi-log-panel { max-height: 240px; }
   /* Pi-wide syslog: styled as one more card in the expanded row, same as the interface cards above it */
-  .fleet-syslog-block { background: #141414; border: 1px solid #333; border-radius: 6px; margin-bottom: 0.5rem; overflow: hidden; }
-  .fleet-syslog-block .pi-log-heading { padding: 0.4rem 0.5rem; font-size: 0.85rem; color: #ddd; }
+  .fleet-syslog-block { background: var(--surface-inset); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 0.5rem; overflow: hidden; }
+  .fleet-syslog-block .pi-log-heading { padding: 0.4rem 0.5rem; font-size: 0.85rem; color: var(--text-2); }
   .fleet-syslog-block .pi-log-panel { max-height: 320px; margin: 0 0.5rem 0.5rem; }
   .fleet-iface-list .pd-log-block .pi-log-panel.wireshark-table-wrap { max-height: 320px; }
-  .wireshark-pause-banner { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; background: #3a2f10; color: #e8c766; border-bottom: 1px solid #6a5420; padding: 0.3rem 0.6rem; font-size: 0.73rem; }
+  .wireshark-pause-banner { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; background: var(--warn-bg); color: var(--warn-text); border-bottom: 1px solid var(--warn-border); padding: 0.3rem 0.6rem; font-size: 0.73rem; }
   .wireshark-pause-banner.hidden { display: none; }
   .wireshark-pause-banner button { padding: 0.15rem 0.6rem; font-size: 0.7rem; }
   /* Same reasoning as .pi-log-panel above - flushPacketQueue also trims
@@ -213,29 +213,29 @@
      false scroll-anchoring "scroll" event and wrongly pause live capture. */
   .wireshark-table-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; overflow-anchor: none; }
   table.wireshark-table { width: 100%; border-collapse: collapse; font-family: ui-monospace, monospace; font-size: 0.75rem; }
-  table.wireshark-table thead th { position: sticky; top: 0; background: #1a1a1a; color: #888; text-align: left; padding: 0.25rem 0.6rem; border-bottom: 1px solid #333; white-space: nowrap; }
-  table.wireshark-table td { padding: 0.12rem 0.6rem; border-bottom: 1px solid #1c1c1c; white-space: nowrap; color: #ccc; cursor: pointer; }
+  table.wireshark-table thead th { position: sticky; top: 0; background: var(--surface); color: var(--text-dim); text-align: left; padding: 0.25rem 0.6rem; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  table.wireshark-table td { padding: 0.12rem 0.6rem; border-bottom: 1px solid var(--border-faint); white-space: nowrap; color: var(--text-3); cursor: pointer; }
   table.wireshark-table td.ws-info { white-space: normal; }
   table.wireshark-table tr.proto-tcp { background: rgba(100, 150, 220, 0.10); }
   table.wireshark-table tr.proto-udp { background: rgba(150, 110, 220, 0.10); }
   table.wireshark-table tr.proto-arp { background: rgba(220, 200, 90, 0.12); }
   table.wireshark-table tr.proto-icmp { background: rgba(220, 100, 100, 0.12); }
   table.wireshark-table tr:hover { filter: brightness(1.35); }
-  table.wireshark-table tr.selected { outline: 2px solid #6cf; outline-offset: -2px; }
-  .wireshark-detail-panel { position: relative; flex: 0 0 auto; max-height: 40%; overflow: auto; border-top: 1px solid #333; background: #161616; padding: 0.5rem 0.75rem; font-size: 0.78rem; }
-  .wireshark-detail-empty { color: #666; }
+  table.wireshark-table tr.selected { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .wireshark-detail-panel { position: relative; flex: 0 0 auto; max-height: 40%; overflow: auto; border-top: 1px solid var(--border); background: var(--surface-2); padding: 0.5rem 0.75rem; font-size: 0.78rem; }
+  .wireshark-detail-empty { color: var(--text-disabled); }
   .wireshark-detail-panel table.result-table { width: 100%; }
-  .wireshark-detail-close { position: absolute; top: 0.35rem; right: 0.35rem; width: 1.4rem; height: 1.4rem; color: #888; }
-  .wireshark-detail-close:hover { color: #eee; background: #262626; }
+  .wireshark-detail-close { position: absolute; top: 0.35rem; right: 0.35rem; width: 1.4rem; height: 1.4rem; color: var(--text-dim); }
+  .wireshark-detail-close:hover { color: var(--text); background: var(--surface-hover); }
   .wireshark-detail-panel.wireshark-detail-empty-state .wireshark-detail-close { display: none; }
   .wireshark-detail-body { padding-right: 1.6rem; }
-  .wireshark-filter-wrap { flex: 0 0 auto; display: flex; align-items: center; gap: 0.4rem; padding: 0.35rem 0.6rem; border-bottom: 1px solid #333; color: #888; }
+  .wireshark-filter-wrap { flex: 0 0 auto; display: flex; align-items: center; gap: 0.4rem; padding: 0.35rem 0.6rem; border-bottom: 1px solid var(--border); color: var(--text-dim); }
   .wireshark-filter-wrap svg { flex: 0 0 auto; }
-  .wireshark-filter-input { flex: 1 1 auto; background: transparent; border: none; color: #eee; font-size: 0.78rem; font-family: ui-monospace, monospace; padding: 0; }
+  .wireshark-filter-input { flex: 1 1 auto; background: transparent; border: none; color: var(--text); font-size: 0.78rem; font-family: ui-monospace, monospace; padding: 0; }
   .wireshark-filter-input:focus { outline: none; }
   table.wireshark-table tr.filtered-out { display: none; }
-  .wifi-scan-loading { display: flex; align-items: center; gap: 0.55rem; color: #888; font-size: 0.82rem; padding: 0.5rem 0.1rem; }
-  .wifi-scan-spinner { flex: 0 0 auto; width: 14px; height: 14px; border: 2px solid #333; border-top-color: #6cf; border-radius: 50%; animation: wifi-scan-spin 0.7s linear infinite; }
+  .wifi-scan-loading { display: flex; align-items: center; gap: 0.55rem; color: var(--text-dim); font-size: 0.82rem; padding: 0.5rem 0.1rem; }
+  .wifi-scan-spinner { flex: 0 0 auto; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: wifi-scan-spin 0.7s linear infinite; }
   @keyframes wifi-scan-spin { to { transform: rotate(360deg); } }
 
   /* Nearby Hotspot popup header - a persistent radar-pulse, not a one-shot
@@ -243,10 +243,10 @@
      loop runs continuously the whole time this popup is open (see
      PiAgent._wifi_background_scan_loop), not just once while data loads,
      so the indicator stays animating for as long as the popup is open. */
-  .wifi-scanning-indicator { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.75rem; color: #6cf; flex: 0 0 auto; }
-  .wifi-scanning-dot { position: relative; width: 7px; height: 7px; border-radius: 50%; background: #6cf; flex: 0 0 auto; }
+  .wifi-scanning-indicator { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.75rem; color: var(--accent); flex: 0 0 auto; }
+  .wifi-scanning-dot { position: relative; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: 0 0 auto; }
   .wifi-scanning-dot::after {
-    content: ''; position: absolute; inset: -5px; border-radius: 50%; border: 1.5px solid #6cf;
+    content: ''; position: absolute; inset: -5px; border-radius: 50%; border: 1.5px solid var(--accent);
     animation: wifi-scanning-pulse 1.6s ease-out infinite;
   }
   @keyframes wifi-scanning-pulse {
@@ -254,120 +254,119 @@
     100% { transform: scale(2.2); opacity: 0; }
   }
   .badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 10px; font-size: 0.75rem; }
-  .badge-online { background: #163; }
-  .badge-offline { background: #522; }
-  .badge-unassigned { background: #333; color: #999; }
-  .wifi-std-tag { margin-left: 0.4rem; padding: 0.05rem 0.4rem; font-size: 0.68rem; font-weight: 600; line-height: 1.4; background: #2a3f66; color: #9cf; vertical-align: middle; }
+  .badge-online { background: var(--success-bg); }
+  .badge-offline { background: var(--danger-bg); }
+  .badge-unassigned { background: var(--surface-button-hover); color: var(--text-muted); }
+  .wifi-std-tag { margin-left: 0.4rem; padding: 0.05rem 0.4rem; font-size: 0.68rem; font-weight: 600; line-height: 1.4; background: var(--info-bg); color: var(--info-text); vertical-align: middle; }
   .wifi-std-tag.hidden { display: none; }
-  label { display: block; font-size: 0.8rem; color: #aaa; margin: 0.6rem 0 0.2rem; }
+  label { display: block; font-size: 0.8rem; color: var(--text-label); margin: 0.6rem 0 0.2rem; }
   .field { width: 100%; }
   .param-field.hidden { display: none; }
-  .param-textarea { font-family: monospace; font-size: 0.75rem; resize: vertical; background: #222; border: 1px solid #444; color: #eee; border-radius: 4px; padding: 0.4rem 0.6rem; box-sizing: border-box; }
+  .param-textarea { font-family: monospace; font-size: 0.75rem; resize: vertical; background: var(--surface-input); border: 1px solid var(--border-strong); color: var(--text); border-radius: 4px; padding: 0.4rem 0.6rem; box-sizing: border-box; }
   .row { display: flex; gap: 0.5rem; }
   .row > * { flex: 1; }
   #cmdResults { margin-top: 1rem; }
-  .cmd-entry { border: 1px solid #262626; border-radius: 4px; padding: 0.5rem; margin-bottom: 0.5rem; font-size: 0.8rem; }
-  .cmd-entry .hdr { display: flex; justify-content: space-between; color: #aaa; margin-bottom: 0.3rem; }
+  .cmd-entry { border: 1px solid var(--border-subtle); border-radius: 4px; padding: 0.5rem; margin-bottom: 0.5rem; font-size: 0.8rem; }
+  .cmd-entry .hdr { display: flex; justify-content: space-between; color: var(--text-label); margin-bottom: 0.3rem; }
   .cmd-status { text-transform: uppercase; font-weight: bold; }
-  .cmd-status.pending { color: #fc6; }
-  .cmd-status.complete { color: #6f6; }
-  .cmd-status.failed, .cmd-status.timeout { color: #f66; }
-  .cmd-status.stopped { color: #f96; }
-  .cmd-status.skipped { color: #999; }
+  .cmd-status.pending { color: var(--warning); }
+  .cmd-status.complete { color: var(--success); }
+  .cmd-status.failed, .cmd-status.timeout { color: var(--danger); }
+  .cmd-status.stopped { color: var(--orange); }
+  .cmd-status.skipped { color: var(--text-muted); }
 
   /* Run view: loop-pass blocks + stop controls (testcases-tab.js tcRenderRunInto / tcRenderStopControls) */
   .tc-stop-host { display: inline-flex; gap: 0.4rem; margin: 0 0.6rem; }
   .tc-stop-host button { flex: 0 0 auto; padding: 0.2rem 0.6rem; }
-  .tc-stop-pending { color: #f96; font-style: italic; }
+  .tc-stop-pending { color: var(--orange); font-style: italic; }
   .tc-run-overview { display: flex; flex-wrap: wrap; align-items: center; gap: 0.8rem; margin-bottom: 0.5rem; font-size: 0.9em; }
   .tc-run-failed-only { margin-left: auto; display: inline-flex; align-items: center; gap: 0.3rem; }
   .tc-run-block-toggle .tc-run-counts { margin-left: auto; margin-right: 0.6rem; }
   .tc-run-block-toggle { cursor: pointer; }
   .tc-count { margin-left: 0.35rem; font-size: 0.85em; }
-  .tc-count-passed { color: #6f6; }
-  .tc-count-failed, .tc-count-timeout { color: #f66; }
-  .tc-count-stopped { color: #f96; }
-  .tc-count-running, .tc-count-pending { color: #fc6; }
-  .tc-count-skipped { color: #999; }
+  .tc-count-passed { color: var(--success); }
+  .tc-count-failed, .tc-count-timeout { color: var(--danger); }
+  .tc-count-stopped { color: var(--orange); }
+  .tc-count-running, .tc-count-pending { color: var(--warning); }
+  .tc-count-skipped { color: var(--text-muted); }
   .tc-run-block-pager { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.5rem; }
   .tc-run-more { margin: 0.4rem 0; }
   .cmd-entry .hdr { cursor: pointer; user-select: none; }
-  .cmd-entry .toggle { color: #777; margin-right: 0.4rem; display: inline-block; width: 0.7rem; }
-  .icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 2.1rem; height: 2.1rem; padding: 0; border: none; background: transparent; color: #888; font-size: 1.3rem; line-height: 1; border-radius: 4px; text-decoration: none; cursor: pointer; }
-  .icon-btn:hover { color: #eee; background: #2a2a2a; }
+  .cmd-entry .toggle { color: var(--text-faint); margin-right: 0.4rem; display: inline-block; width: 0.7rem; }
+  .icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 2.1rem; height: 2.1rem; padding: 0; border: none; background: transparent; color: var(--text-dim); font-size: 1.3rem; line-height: 1; border-radius: 4px; text-decoration: none; cursor: pointer; }
+  .icon-btn:hover { color: var(--text); background: var(--surface-button); }
   .cmd-delete { margin-left: 0.5rem; }
-  .cmd-delete:hover { color: #f66; background: #2a2a2a; }
+  .cmd-delete:hover { color: var(--danger); background: var(--surface-button); }
   .capture-actions { display: flex; gap: 0.2rem; white-space: nowrap; }
-  .capture-actions .capture-delete:hover { color: #f66; }
-  .res-delete-btn:hover { color: #f66; }
+  .capture-actions .capture-delete:hover { color: var(--danger); }
+  .res-delete-btn:hover { color: var(--danger); }
   .cmd-entry.collapsed .result { display: none; }
   .result { margin-top: 0.4rem; }
   table.result-table { width: 100%; border-collapse: collapse; font-family: ui-monospace, monospace; font-size: 0.78rem; }
-  table.result-table td { padding: 0.15rem 0.4rem; border-bottom: 1px solid #222; vertical-align: top; white-space: pre-wrap; word-break: break-word; }
-  table.result-table .result-key { color: #888; width: 40%; }
-  table.result-table .result-value { color: #ddd; }
+  table.result-table td { padding: 0.15rem 0.4rem; border-bottom: 1px solid var(--border-faint); vertical-align: top; white-space: pre-wrap; word-break: break-word; }
+  table.result-table .result-key { color: var(--text-dim); width: 40%; }
+  table.result-table .result-value { color: var(--text-2); }
   table.result-table table.result-table { margin: 0; }
-  table.result-array-table th { padding: 0.15rem 0.4rem; border-bottom: 1px solid #444; color: #888; text-align: left; white-space: nowrap; }
+  table.result-array-table th { padding: 0.15rem 0.4rem; border-bottom: 1px solid var(--border-strong); color: var(--text-dim); text-align: left; white-space: nowrap; }
   table.result-array-table td { white-space: nowrap; }
   td.result-nested-label { padding-top: 0.5rem; font-weight: 600; }
   td.result-nested { padding: 0 0 0.4rem 0.75rem; }
-  .hint { color: #777; font-size: 0.75rem; margin-top: 0.5rem; }
+  .hint { color: var(--text-faint); font-size: 0.75rem; margin-top: 0.5rem; }
 
   #loginOverlay {
     position: fixed; inset: 0; display: none; align-items: center; justify-content: center; z-index: 100;
-    background:
-      linear-gradient(rgba(10, 14, 22, 0.65), rgba(10, 14, 22, 0.65)),
+    background: linear-gradient(rgba(10, 14, 22, 0.65), rgba(10, 14, 22, 0.65)),
       url('assets/brand2_img.jpg') center center / cover no-repeat,
-      #111;
+      var(--bg);
   }
   #loginOverlay.active { display: flex; }
   #appRoot { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
   #appRoot.auth-hidden { display: none; }
-  .login-box { width: 280px; background: #1a1a1acc; backdrop-filter: blur(2px); border: 1px solid #333; border-radius: 8px; padding: 1.5rem; }
+  .login-box { width: 280px; background: var(--surface-glass); backdrop-filter: blur(2px); border: 1px solid var(--border); border-radius: 8px; padding: 1.5rem; }
   .login-brand-wordmark {
     display: block; margin: 0 0 1.25rem; font-size: 1.35rem; font-weight: 800;
     letter-spacing: 0.02em; font-family: system-ui, sans-serif;
   }
   .login-brand-wordmark .brand-kaon { color: #29b6f6; }
-  .login-brand-wordmark .brand-broadband { color: #eee; font-weight: 600; }
-  .login-brand-slogan { display: block; margin: -1rem 0 1rem; font-size: 0.72rem; color: #666; letter-spacing: 0.03em; }
+  .login-brand-wordmark .brand-broadband { color: var(--text); font-weight: 600; }
+  .login-brand-slogan { display: block; margin: -1rem 0 1rem; font-size: 0.72rem; color: var(--text-disabled); letter-spacing: 0.03em; }
   .login-box h2 { margin: 0 0 1rem; font-size: 1.1rem; }
-  .login-error { color: #f66; font-size: 0.8rem; min-height: 1.2em; margin-top: 0.5rem; }
-  #logoutBtn { margin-left: auto; }
+  .login-error { color: var(--danger); font-size: 0.8rem; min-height: 1.2em; margin-top: 0.5rem; }
+  #logoutBtn { margin-left: 0.25rem; }
   header .header-logo-img { height: 40px; width: auto; }
   footer#appFooter {
     flex: 0 0 auto; display: flex; align-items: center; justify-content: center; gap: 0.5rem;
-    padding: 0.6rem 1rem; background: #1a1a1a; border-top: 1px solid #333; color: #888; font-size: 0.78rem;
+    padding: 0.6rem 1rem; background: var(--surface); border-top: 1px solid var(--border); color: var(--text-dim); font-size: 0.78rem;
   }
   footer#appFooter img { height: 36px; width: auto; opacity: 0.85; }
 
   .pd-wifi-info-btn {
-    font-size: 0.72rem; padding: 0.15rem 0.5rem; border: 1px solid #333; border-radius: 4px;
-    background: #202020; color: #ccc; cursor: pointer;
+    font-size: 0.72rem; padding: 0.15rem 0.5rem; border: 1px solid var(--border); border-radius: 4px;
+    background: var(--surface-hover); color: var(--text-3); cursor: pointer;
   }
-  .pd-wifi-info-btn:hover { background: #2a2a2a; color: #eee; }
+  .pd-wifi-info-btn:hover { background: var(--surface-button); color: var(--text); }
 
   .wifi-info-overlay {
     position: fixed; inset: 0; z-index: 200; display: flex; align-items: center; justify-content: center;
     background: rgba(0, 0, 0, 0.6); padding: 2rem;
   }
   .wifi-info-modal {
-    background: #1a1a1a; border: 1px solid #333; border-radius: 6px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
     width: 100%; max-width: 1400px; max-height: 100%; display: flex; flex-direction: column;
   }
   .wifi-info-modal-header {
     display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 0.9rem;
-    border-bottom: 1px solid #333; font-size: 0.9rem; color: #eee;
+    border-bottom: 1px solid var(--border); font-size: 0.9rem; color: var(--text);
   }
   .wifi-info-modal-status { flex: 1 1 auto; margin: 0; }
   .wifi-info-modal-close { font-size: 1.4rem; }
   .wifi-info-modal-body { padding: 0 0.9rem 0.75rem; overflow: auto; }
   table.wifi-info-table { border-collapse: collapse; font-family: ui-monospace, monospace; font-size: 0.75rem; white-space: nowrap; }
-  table.wifi-info-table th, table.wifi-info-table td { padding: 0.25rem 0.6rem; border-bottom: 1px solid #262626; text-align: left; }
-  table.wifi-info-table th { color: #888; border-bottom: 1px solid #444; position: sticky; top: 0; background: #1a1a1a; }
-  table.wifi-info-table td { color: #ddd; }
+  table.wifi-info-table th, table.wifi-info-table td { padding: 0.25rem 0.6rem; border-bottom: 1px solid var(--border-subtle); text-align: left; }
+  table.wifi-info-table th { color: var(--text-dim); border-bottom: 1px solid var(--border-strong); position: sticky; top: 0; background: var(--surface); }
+  table.wifi-info-table td { color: var(--text-2); }
   table.wifi-info-table tr.wifi-info-row { cursor: pointer; user-select: none; }
-  table.wifi-info-table tr.wifi-info-row:hover td { background: #222; }
+  table.wifi-info-table tr.wifi-info-row:hover td { background: var(--surface-hover); }
 
   /* Per-column filter row (Interfaces tab, Nearby Hotspot popup) - sits
      directly under the label row. Not sticky (unlike the label row above -
@@ -377,20 +376,20 @@
      shows up as a visible gap - simplest to just let this row scroll away
      with the body instead of chasing that measurement. */
   table.wifi-info-table tr.table-filter-row th {
-    position: static; top: auto; padding: 0.2rem 0.4rem; border-bottom: 1px solid #262626; background: transparent;
+    position: static; top: auto; padding: 0.2rem 0.4rem; border-bottom: 1px solid var(--border-subtle); background: transparent;
   }
   .table-filter-input {
     display: block; width: 100%; box-sizing: border-box; font-size: 0.72rem; padding: 0.15rem 0.4rem; margin: 0;
-    background: #111; border: 1px solid #333; border-radius: 3px; color: #ddd; font-weight: normal; line-height: normal;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 3px; color: var(--text-2); font-weight: normal; line-height: normal;
   }
-  .table-filter-input:focus { border-color: #555; outline: none; }
+  .table-filter-input:focus { border-color: var(--border-focus); outline: none; }
 
   /* Click-to-sort label row (Interfaces tab, Nearby Hotspot popup) - the
      arrow is a ::after driven by data-dir (set in JS on the active column
      only) rather than a static glyph, so an unsorted column shows nothing. */
   table.wifi-info-table tr.table-sort-row th { cursor: pointer; user-select: none; }
-  table.wifi-info-table tr.table-sort-row th:hover { color: #ccc; }
-  table.wifi-info-table tr.table-sort-row th.sorted { color: #eee; }
+  table.wifi-info-table tr.table-sort-row th:hover { color: var(--text-3); }
+  table.wifi-info-table tr.table-sort-row th.sorted { color: var(--text); }
   table.wifi-info-table tr.table-sort-row th[data-dir="asc"]::after { content: " \25B2"; font-size: 0.7em; }
   table.wifi-info-table tr.table-sort-row th[data-dir="desc"]::after { content: " \25BC"; font-size: 0.7em; }
 
@@ -425,52 +424,52 @@
   .tc-editor-modal .wifi-info-modal-body { max-height: 80vh; }
   .tc-bulk-tag-modal { max-width: 420px; }
   .tc-bulk-edit-modal { max-width: 860px; width: 95vw; }
-  .tc-be-h { margin: 1rem 0 0.4rem; font-size: 0.85rem; color: #ddd; display: flex; align-items: center; gap: 0.6rem; }
+  .tc-be-h { margin: 1rem 0 0.4rem; font-size: 0.85rem; color: var(--text-2); display: flex; align-items: center; gap: 0.6rem; }
   .tc-be-h:first-child { margin-top: 0; }
   .tc-be-add { font-size: 0.75rem; padding: 0.15rem 0.5rem; }
   .tc-be-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.5rem; }
   .tc-be-grid label, .tc-be-op label { margin: 0; display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.75rem; }
-  .tc-be-op { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-end; padding: 0.4rem; border: 1px solid #2a2a2a; border-radius: 4px; margin-bottom: 0.4rem; background: #161616; }
+  .tc-be-op { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-end; padding: 0.4rem; border: 1px solid var(--border-subtle); border-radius: 4px; margin-bottom: 0.4rem; background: var(--surface-2); }
   .tc-be-op > label { flex: 1 1 130px; }
   .tc-be-op .tc-be-op-kind { flex: 0 0 190px; }
   .tc-be-preview { max-height: 300px; overflow: auto; margin-top: 0.5rem; font-size: 0.8rem; }
   .tc-be-preview table { width: 100%; border-collapse: collapse; }
-  .tc-be-preview td { padding: 0.25rem 0.4rem; border-bottom: 1px solid #262626; vertical-align: top; }
-  .tc-be-preview .tc-be-diff { font-family: monospace; white-space: pre-wrap; color: #cfc; }
+  .tc-be-preview td { padding: 0.25rem 0.4rem; border-bottom: 1px solid var(--border-subtle); vertical-align: top; }
+  .tc-be-preview .tc-be-diff { font-family: monospace; white-space: pre-wrap; color: var(--success-text); }
   .tc-be-preview tr.excluded td { opacity: 0.4; text-decoration: line-through; }
 
   /* Testcases bulk toolbar + checkbox column + pager. The toolbar is always
      rendered rather than shown on first selection, so ticking a row doesn't
      shift the table down under the pointer; its buttons carry [disabled]
      instead (see tcRenderBulkBar in testcases-tab.js). */
-  .tc-bulk-bar { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.5rem; padding: 0.35rem 0.5rem; border: 1px solid #262626; border-radius: 4px; background: #161616; }
-  .tc-bulk-count { flex: 1 1 auto; font-size: 0.8rem; color: #888; }
+  .tc-bulk-bar { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.5rem; padding: 0.35rem 0.5rem; border: 1px solid var(--border-subtle); border-radius: 4px; background: var(--surface-2); }
+  .tc-bulk-count { flex: 1 1 auto; font-size: 0.8rem; color: var(--text-dim); }
   .tc-bulk-bar button { font-size: 0.8rem; padding: 0.25rem 0.6rem; }
   .tc-bulk-bar button[disabled] { opacity: 0.4; cursor: not-allowed; }
-  .tc-bulk-danger:not([disabled]) { color: #e06c6c; }
+  .tc-bulk-danger:not([disabled]) { color: var(--danger-muted); }
 
   .tc-check-col { width: 1.6rem; }
-  .tc-row-selected > td { background: #1b2430; }
+  .tc-row-selected > td { background: var(--row-selected-info); }
 
-  .tc-pager { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; margin-top: 0.6rem; font-size: 0.8rem; color: #888; }
+  .tc-pager { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; margin-top: 0.6rem; font-size: 0.8rem; color: var(--text-dim); }
   .tc-pager-range { flex: 1 1 auto; }
   .tc-pager button { font-size: 0.78rem; padding: 0.2rem 0.5rem; }
   .tc-pager button[disabled] { opacity: 0.4; cursor: not-allowed; }
-  .tc-pager button.tc-pager-current { border-color: #4a7ab8; color: #cfe1f7; }
+  .tc-pager button.tc-pager-current { border-color: var(--info-border-strong); color: var(--info-text-strong); }
   .tc-pager-size { font-size: 0.78rem; padding: 0.15rem 0.3rem; }
 
   /* Run detail: per-step entries and the action log, shared by the Packages
      tab's live run view and the Results tab (see tcRenderRunSteps). */
-  .tc-run-meta { color: #777; font-size: 0.75rem; font-weight: normal; margin-left: 0.4rem; }
+  .tc-run-meta { color: var(--text-faint); font-size: 0.75rem; font-weight: normal; margin-left: 0.4rem; }
   /* A Pi's result nests under its step - indented (with a rule to carry the
      eye down) rather than sitting flush with the step's own header, so the
      step/Pi hierarchy reads visually, not just via font-weight. */
-  .tc-run-step .result[data-step-result] { padding-left: 1rem; border-left: 1px solid #222; margin-left: 0.35rem; }
-  .tc-run-entry { border-top: 1px solid #222; padding: 0.4rem 0 0.2rem; }
+  .tc-run-step .result[data-step-result] { padding-left: 1rem; border-left: 1px solid var(--border-faint); margin-left: 0.35rem; }
+  .tc-run-entry { border-top: 1px solid var(--border-faint); padding: 0.4rem 0 0.2rem; }
   .tc-run-entry:first-child { border-top: none; }
-  .tc-run-entry-hdr { display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: #ddd; flex-wrap: wrap; }
+  .tc-run-entry-hdr { display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: var(--text-2); flex-wrap: wrap; }
   .tc-run-entry-pi { font-weight: 600; }
-  .tc-run-reason { font-size: 0.78rem; color: #e0a25c; margin: 0.25rem 0; }
+  .tc-run-reason { font-size: 0.78rem; color: var(--amber); margin: 0.25rem 0; }
   .tc-run-result { margin-top: 0.3rem; }
   .tc-run-result:empty { display: none; }
 
@@ -478,8 +477,8 @@
      tab live run + Results tab detail - both go through tcRenderRunSteps).
      Display-only, state kept in tcRunExpandedSteps/tcRunExpandedEntries so
      it survives the live view's poll-driven re-renders. */
-  .tc-run-toggle-chevron { flex: 0 0 auto; width: 1.2rem; height: 1.2rem; padding: 0.1rem; color: #888; background: transparent; border: none; }
-  .tc-run-toggle-chevron:hover { color: #eee; background: transparent; }
+  .tc-run-toggle-chevron { flex: 0 0 auto; width: 1.2rem; height: 1.2rem; padding: 0.1rem; color: var(--text-dim); background: transparent; border: none; }
+  .tc-run-toggle-chevron:hover { color: var(--text); background: transparent; }
   /* Out-specifies `.cmd-entry .hdr`'s space-between (0-2-0 vs this rule's
      0-1-1): that would otherwise spread the chevron, step text and status
      badge apart evenly instead of holding the chevron and text together on
@@ -491,16 +490,16 @@
   .tc-run-entry-toggle { cursor: pointer; user-select: none; }
   .tc-run-entry-body.hidden { display: none; }
 
-  .tc-run-log { margin-top: 0.5rem; border-top: 1px solid #222; padding-top: 0.4rem; }
-  .tc-log-toggle { font-size: 0.72rem; padding: 0.15rem 0.5rem; color: #999; }
-  .tc-log-lines { margin-top: 0.35rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; background: #121212; border: 1px solid #222; border-radius: 4px; padding: 0.35rem 0.5rem; max-height: 260px; overflow: auto; }
+  .tc-run-log { margin-top: 0.5rem; border-top: 1px solid var(--border-faint); padding-top: 0.4rem; }
+  .tc-log-toggle { font-size: 0.72rem; padding: 0.15rem 0.5rem; color: var(--text-muted); }
+  .tc-log-lines { margin-top: 0.35rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; background: var(--surface-sunken); border: 1px solid var(--border-faint); border-radius: 4px; padding: 0.35rem 0.5rem; max-height: 260px; overflow: auto; }
   .tc-log-lines.hidden { display: none; }
   .tc-log-line { display: flex; gap: 0.5rem; padding: 0.08rem 0; white-space: pre-wrap; word-break: break-word; }
-  .tc-log-ts { color: #666; flex: 0 0 auto; }
+  .tc-log-ts { color: var(--text-disabled); flex: 0 0 auto; }
   .tc-log-msg { flex: 1 1 auto; }
-  .tc-log-info .tc-log-msg { color: #cfcfcf; }
-  .tc-log-debug .tc-log-msg { color: #8a8a8a; }
-  .tc-log-error .tc-log-msg { color: #e06c6c; }
+  .tc-log-info .tc-log-msg { color: var(--text-3); }
+  .tc-log-debug .tc-log-msg { color: var(--text-dim); }
+  .tc-log-error .tc-log-msg { color: var(--danger-muted); }
 
   #resListView.hidden, #resDetailView.hidden { display: none; }
   /* Each testcase row in a suite run's detail view toggles its own step
@@ -517,7 +516,7 @@
   .tc-expect-rows { display: flex; flex-direction: column; gap: 0.25rem; }
   .tc-expect-row { display: grid; grid-template-columns: 13rem 7rem 1fr; gap: 0.4rem; align-items: center; }
   .tc-expect-row.tc-expect-off { opacity: 0.45; }
-  .tc-step-body .tc-expect-check { display: flex; align-items: center; gap: 0.35rem; margin: 0; font-size: 0.78rem; color: #ccc; min-width: 0; cursor: pointer; }
+  .tc-step-body .tc-expect-check { display: flex; align-items: center; gap: 0.35rem; margin: 0; font-size: 0.78rem; color: var(--text-3); min-width: 0; cursor: pointer; }
   .tc-expect-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tc-expect-row .field { padding: 0.25rem 0.4rem; font-size: 0.78rem; width: 100%; min-width: 0; }
   .tc-expect-value-wrap { min-width: 0; }
@@ -535,40 +534,40 @@
   /* Multi-Pi target: one section per Pi, each listing only that Pi's own
      radios, so same-named interfaces on different Pis stay separately
      checkable. */
-  .tc-iface-pi { border: 1px solid #262626; border-radius: 4px; background: #141414; margin-bottom: 0.35rem; }
-  .tc-step-body .tc-iface-pi-hdr { display: flex; align-items: center; gap: 0.4rem; margin: 0; padding: 0.3rem 0.5rem; border-bottom: 1px solid #222; font-size: 0.8rem; color: #ddd; }
-  .tc-iface-pi-toggle { flex: 0 0 auto; width: 1.2rem; height: 1.2rem; padding: 0.1rem; color: #888; background: transparent; border: none; }
-  .tc-iface-pi-toggle:hover { color: #eee; background: transparent; }
+  .tc-iface-pi { border: 1px solid var(--border-subtle); border-radius: 4px; background: var(--surface-inset); margin-bottom: 0.35rem; }
+  .tc-step-body .tc-iface-pi-hdr { display: flex; align-items: center; gap: 0.4rem; margin: 0; padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--border-faint); font-size: 0.8rem; color: var(--text-2); }
+  .tc-iface-pi-toggle { flex: 0 0 auto; width: 1.2rem; height: 1.2rem; padding: 0.1rem; color: var(--text-dim); background: transparent; border: none; }
+  .tc-iface-pi-toggle:hover { color: var(--text); background: transparent; }
   .tc-iface-pi-name { font-weight: 600; }
   .tc-iface-pi-hdr .hint { margin: 0 0 0 auto; font-size: 0.72rem; }
   /* "Select all" lives as an ordinary row inside the interface list itself
      now, not a separate checkbox up in the header - styled like the
      iface-dropdown panel's own select-all row, just underlined to set it
      apart from the actual interface names below it. */
-  .tc-iface-pi-list label.iface-row-all { border-bottom: 1px solid #262626; padding-bottom: 0.25rem; margin-bottom: 0.1rem; width: 100%; }
+  .tc-iface-pi-list label.iface-row-all { border-bottom: 1px solid var(--border-subtle); padding-bottom: 0.25rem; margin-bottom: 0.1rem; width: 100%; }
   .tc-iface-pi-list { display: flex; flex-wrap: wrap; gap: 0.2rem 0.75rem; padding: 0.35rem 0.5rem; }
   .tc-iface-pi-list.hidden { display: none; }
-  .tc-step-body .tc-iface-pi-list label.iface-row { display: flex; align-items: center; gap: 0.3rem; margin: 0; font-size: 0.78rem; color: #ccc; cursor: pointer; }
+  .tc-step-body .tc-iface-pi-list label.iface-row { display: flex; align-items: center; gap: 0.3rem; margin: 0; font-size: 0.78rem; color: var(--text-3); cursor: pointer; }
 
   /* Loops: contiguous step ranges repeated as a block. */
-  .tc-loop-row { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; padding: 0.35rem 0.5rem; border: 1px solid #262626; border-radius: 4px; background: #161616; margin-bottom: 0.35rem; }
-  .tc-step-body .tc-loop-row label, .tc-loop-row label { margin: 0; font-size: 0.75rem; color: #888; }
-  .tc-loop-name { font-size: 0.75rem; font-weight: 600; color: #7fb0e8; flex: 0 0 auto; }
+  .tc-loop-row { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; padding: 0.35rem 0.5rem; border: 1px solid var(--border-subtle); border-radius: 4px; background: var(--surface-2); margin-bottom: 0.35rem; }
+  .tc-step-body .tc-loop-row label, .tc-loop-row label { margin: 0; font-size: 0.75rem; color: var(--text-dim); }
+  .tc-loop-name { font-size: 0.75rem; font-weight: 600; color: var(--info-text-2); flex: 0 0 auto; }
   .tc-loop-row .field { padding: 0.2rem 0.4rem; font-size: 0.78rem; }
   .tc-loop-row .tc-loop-from, .tc-loop-row .tc-loop-to { max-width: 12rem; }
   .tc-loop-row .tc-loop-count { width: 4rem; }
   .tc-loop-row .tc-loop-remove { margin-left: auto; }
-  .tc-step-loop-badge { font-size: 0.68rem; color: #7fb0e8; border: 1px solid #2c4a6e; border-radius: 3px; padding: 0.05rem 0.3rem; flex: 0 0 auto; }
+  .tc-step-loop-badge { font-size: 0.68rem; color: var(--info-text-2); border: 1px solid var(--info-border); border-radius: 3px; padding: 0.05rem 0.3rem; flex: 0 0 auto; }
 
   /* Per-field check outcomes on a run's entry. */
   .tc-run-checks { margin: 0.3rem 0; display: flex; flex-direction: column; gap: 0.15rem; }
   .tc-run-check { display: flex; gap: 0.4rem; align-items: baseline; font-size: 0.76rem; flex-wrap: wrap; }
   .tc-run-check-mark { flex: 0 0 auto; }
-  .tc-run-check.ok .tc-run-check-mark { color: #6cc06c; }
-  .tc-run-check.fail .tc-run-check-mark { color: #e06c6c; }
-  .tc-run-check-expr { color: #bbb; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  .tc-run-check.fail .tc-run-check-expr { color: #ddd; }
-  .tc-run-check-actual { color: #e0a25c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .tc-run-check.ok .tc-run-check-mark { color: var(--success-muted); }
+  .tc-run-check.fail .tc-run-check-mark { color: var(--danger-muted); }
+  .tc-run-check-expr { color: var(--text-3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .tc-run-check.fail .tc-run-check-expr { color: var(--text-2); }
+  .tc-run-check-actual { color: var(--amber); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
   /* Testsuites: no tab/section of its own - the list is a permanent panel
      inside the Testcases tab (.ts-list-panel above); editor/run/run-history
@@ -578,23 +577,23 @@
 
   /* Testsuite editor's testcase picker - both the "selected, ordered" list
      and the "available to add" list use the same row look. */
-  .ts-picker-list { max-height: 220px; overflow-y: auto; border: 1px solid #262626; border-radius: 4px; }
-  .ts-picker-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.6rem; border-bottom: 1px solid #262626; font-size: 0.85rem; }
+  .ts-picker-list { max-height: 220px; overflow-y: auto; border: 1px solid var(--border-subtle); border-radius: 4px; }
+  .ts-picker-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border-subtle); font-size: 0.85rem; }
   .ts-picker-row:last-child { border-bottom: none; }
-  .ts-picker-num { color: #888; font-size: 0.78rem; flex: 0 0 auto; }
-  .ts-picker-name { flex: 1 1 auto; color: #ddd; }
+  .ts-picker-num { color: var(--text-dim); font-size: 0.78rem; flex: 0 0 auto; }
+  .ts-picker-name { flex: 1 1 auto; color: var(--text-2); }
   .ts-picker-controls { display: flex; gap: 0.1rem; flex: 0 0 auto; }
   .ts-run-toggle { cursor: pointer; }
   /* A "running"/"pending" row in the live suite view has no run yet to
      drill into - looks the same otherwise, just not clickable. */
   .ts-run-toggle.ts-run-no-toggle { cursor: default; }
 
-  .tc-step-card { border: 1px solid #262626; border-radius: 4px; padding: 0.6rem 0.75rem; margin-bottom: 0.6rem; background: #161616; }
+  .tc-step-card { border: 1px solid var(--border-subtle); border-radius: 4px; padding: 0.6rem 0.75rem; margin-bottom: 0.6rem; background: var(--surface-2); }
   .tc-step-header { display: flex; align-items: center; gap: 0.5rem; }
   .tc-step-toggle { cursor: pointer; user-select: none; }
-  .tc-step-toggle-chevron { flex: 0 0 auto; color: #888; }
-  .tc-step-num { color: #888; font-size: 0.8rem; flex: 0 0 auto; }
-  .tc-step-summary { color: #ccc; font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .tc-step-toggle-chevron { flex: 0 0 auto; color: var(--text-dim); }
+  .tc-step-num { color: var(--text-dim); font-size: 0.8rem; flex: 0 0 auto; }
+  .tc-step-summary { color: var(--text-3); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .tc-step-controls { display: flex; gap: 0.1rem; flex: 0 0 auto; margin-left: auto; }
   .tc-step-body { margin-top: 0.5rem; }
   .tc-step-body.hidden { display: none; }
@@ -613,18 +612,80 @@
      seeing in full while typing, so they get the full step-box width rather
      than the number fields' narrow cap. */
   .tc-step-body input.tc-step-param[type="text"] { width: 100%; max-width: 100%; }
-  .tc-step-body label { display: block; margin-top: 0.5rem; font-size: 0.78rem; color: #aaa; }
+  .tc-step-body label { display: block; margin-top: 0.5rem; font-size: 0.78rem; color: var(--text-label); }
   .tc-step-body label:first-child { margin-top: 0; }
   .tc-step-expected.hidden { display: none; }
-  .tc-step-body .tc-step-expected-toggle-row { display: flex; align-items: center; gap: 0.35rem; margin-top: 0.6rem; font-size: 0.8rem; color: #ccc; }
+  .tc-step-body .tc-step-expected-toggle-row { display: flex; align-items: center; gap: 0.35rem; margin-top: 0.6rem; font-size: 0.8rem; color: var(--text-3); }
 
 /* Running tab (testsuites-tab.js) */
 .ts-live-layout { display: grid; grid-template-columns: minmax(220px, 300px) 1fr; gap: 1rem; align-items: start; }
 @media (max-width: 800px) { .ts-live-layout { grid-template-columns: 1fr; } }
 .ts-live-item { display: flex; align-items: center; gap: 0.5rem; padding: 0.45rem 0.5rem; border-radius: 4px; cursor: pointer; }
-.ts-live-item:hover { background: rgba(255, 255, 255, 0.06); }
-.ts-live-item.selected { background: rgba(102, 170, 255, 0.15); }
+.ts-live-item:hover { background: var(--hover-tint); }
+.ts-live-item.selected { background: var(--selected-tint); }
 .ts-live-item .ts-live-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ts-live-item .ts-live-sub { display: block; font-size: 0.8em; opacity: 0.7; }
 .ts-live-section { font-size: 0.8em; text-transform: uppercase; opacity: 0.6; margin: 0.6rem 0 0.2rem; }
 #tsRunEmpty.hidden, #tsRunDetail.hidden, #tcLiveDetail.hidden { display: none; }
+
+/* Settings popup (js/settings.js) - theme + accent pickers. Reuses the
+   .wifi-info-overlay/-modal shell like every other popup. */
+#settingsBtn { margin-left: auto; }
+#settingsBtn svg { width: 18px; height: 18px; }
+nav button.tab.active { box-shadow: inset 0 -2px 0 var(--accent); }
+button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible, [role="radio"]:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.settings-overlay.hidden { display: none; }
+.settings-modal { max-width: 560px; }
+.settings-modal .wifi-info-modal-header > span:first-child { font-weight: 600; flex: 1 1 auto; }
+.settings-modal .wifi-info-modal-body { padding: 0.9rem; }
+.settings-section + .settings-section { margin-top: 1.25rem; }
+.settings-section h4 { margin: 0 0 0.2rem; font-size: 0.85rem; color: var(--text); }
+.settings-section .hint { margin: 0 0 0.6rem; }
+.theme-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 0.6rem; }
+.theme-option {
+  display: flex; flex-direction: column; gap: 0.45rem; padding: 0.5rem; text-align: left;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; min-height: 44px;
+}
+.theme-option:hover { background: var(--surface-hover); }
+.theme-option[aria-checked="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.theme-option-name { font-size: 0.8rem; color: var(--text); display: flex; align-items: center; justify-content: space-between; }
+.theme-option-check { color: var(--accent); visibility: hidden; display: inline-flex; }
+.theme-option[aria-checked="true"] .theme-option-check { visibility: visible; }
+/* Mini window preview - fixed colors (not tokens) since each card has to
+   show its own theme regardless of which one is active. */
+.theme-preview { position: relative; height: 54px; border-radius: 4px; overflow: hidden; border: 1px solid rgba(127, 127, 127, 0.35); }
+.theme-preview > i { position: absolute; display: block; border-radius: 2px; }
+.theme-preview .p-head { left: 0; right: 0; top: 0; height: 10px; }
+.theme-preview .p-panel { left: 6px; top: 16px; width: 55%; bottom: 6px; }
+.theme-preview .p-side { right: 6px; top: 16px; width: 25%; bottom: 6px; }
+.theme-preview .p-line { left: 11px; top: 22px; width: 35%; height: 3px; }
+.theme-preview .p-line.l2 { top: 30px; width: 25%; }
+.theme-preview[data-preview="dark"]  { background: #111; }
+.theme-preview[data-preview="dark"] .p-head, .theme-preview[data-preview="dark"] .p-panel, .theme-preview[data-preview="dark"] .p-side { background: #1a1a1a; }
+.theme-preview[data-preview="dark"] .p-line { background: #888; }
+.theme-preview[data-preview="slate"] { background: #0f172a; }
+.theme-preview[data-preview="slate"] .p-head, .theme-preview[data-preview="slate"] .p-panel, .theme-preview[data-preview="slate"] .p-side { background: #1b2336; }
+.theme-preview[data-preview="slate"] .p-line { background: #94a3b8; }
+.theme-preview[data-preview="light"] { background: #f1f5f9; }
+.theme-preview[data-preview="light"] .p-head, .theme-preview[data-preview="light"] .p-panel, .theme-preview[data-preview="light"] .p-side { background: #fff; }
+.theme-preview[data-preview="light"] .p-line { background: #94a3b8; }
+.theme-preview[data-preview="system"] { background: linear-gradient(135deg, #111 50%, #f1f5f9 50%); }
+.theme-preview[data-preview="system"] .p-head { background: linear-gradient(90deg, #1a1a1a 50%, #fff 50%); }
+.theme-preview[data-preview="system"] .p-panel { background: #1a1a1a; }
+.theme-preview[data-preview="system"] .p-side { background: #fff; }
+.theme-preview[data-preview="system"] .p-line { background: #888; }
+.theme-preview .p-accent { right: 10px; top: 3px; width: 14px; height: 4px; background: var(--accent); }
+.accent-options { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.accent-option {
+  display: inline-flex; align-items: center; gap: 0.45rem; padding: 0.35rem 0.7rem 0.35rem 0.45rem;
+  min-height: 36px; border-radius: 18px; background: var(--surface-2); border: 1px solid var(--border); font-size: 0.8rem;
+}
+.accent-option:hover { background: var(--surface-hover); }
+.accent-option[aria-checked="true"] { border-color: var(--text-dim); background: var(--surface-button); }
+.accent-swatch { width: 18px; height: 18px; border-radius: 50%; background: var(--swatch); display: inline-flex; align-items: center; justify-content: center; color: #0f172a; }
+.accent-swatch svg { visibility: hidden; }
+.accent-option[aria-checked="true"] .accent-swatch svg { visibility: visible; }
+.settings-footer { display: flex; justify-content: flex-end; margin-top: 1.25rem; }
+:root[data-mode="light"] .accent-swatch { color: #fff; }

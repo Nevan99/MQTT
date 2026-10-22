@@ -1,0 +1,211 @@
+/* Theme tokens - every color in styles.css reads one of these. The active
+   theme is chosen in Settings (js/settings.js), which sets on <html>:
+     data-theme  - the stored choice: dark | slate | light | system
+     data-mode   - what it resolves to right now: dark | light (system
+                   follows prefers-color-scheme)
+     data-accent - cyan | blue | green | violet | amber
+   The inline script in index.html's <head> sets these before first paint
+   so a light-theme user never sees a dark flash on reload. */
+
+/* Dark (default) - the original palette, value for value. */
+:root {
+  --color-scheme: dark;
+
+  --bg: #111;
+  --surface: #1a1a1a;
+  --surface-glass: #1a1a1acc;
+  --surface-2: #161616;
+  --surface-3: #181818;
+  --surface-inset: #141414;
+  --surface-sunken: #121212;
+  --surface-input: #222;
+  --surface-hover: #202020;
+  --surface-button: #2a2a2a;
+  --surface-button-hover: #333;
+  --surface-active: #444;
+
+  --border-faint: #222;
+  --border-subtle: #262626;
+  --border: #333;
+  --border-strong: #444;
+  --border-focus: #555;
+
+  --text: #eee;
+  --text-2: #ddd;
+  --text-3: #ccc;
+  --text-label: #aaa;
+  --text-muted: #999;
+  --text-dim: #888;
+  --text-faint: #777;
+  --text-disabled: #666;
+
+  --accent: #6cf;
+  --checkbox: #4a7;
+  --hover-tint: rgba(255, 255, 255, 0.06);
+  --selected-tint: rgba(102, 170, 255, 0.15);
+  --row-selected: #263a2a;
+  --row-selected-info: #1b2430;
+
+  --success: #6f6;
+  --success-soft: #9f9;
+  --success-muted: #6cc06c;
+  --success-text: #cfc;
+  --success-bg: #163;
+  --success-border: #4a7;
+
+  --danger: #f66;
+  --danger-soft: #f99;
+  --danger-muted: #e06c6c;
+  --danger-text: #fbb;
+  --danger-bg: #522;
+  --danger-bg-hover: #633;
+  --danger-bg-soft: #3a1c1c;
+  --danger-border: #a44;
+
+  --warning: #fc6;
+  --orange: #f96;
+  --amber: #e0a25c;
+  --warn-text: #e8c766;
+  --warn-bg: #3a2f10;
+  --warn-border: #6a5420;
+
+  --info-text: #9cf;
+  --info-text-2: #7fb0e8;
+  --info-text-strong: #cfe1f7;
+  --info-bg: #2a3f66;
+  --info-border: #2c4a6e;
+  --info-border-strong: #4a7ab8;
+}
+
+/* Slate - blue-tinted dark (ui-ux-pro-max "Smart Home/IoT Dashboard"
+   palette: #0F172A bg, #1B2336 card, #475569 border, #94A3B8 muted).
+   Status colors are inherited from Dark. */
+:root[data-theme="slate"] {
+  --bg: #0f172a;
+  --surface: #1b2336;
+  --surface-glass: #1b2336cc;
+  --surface-2: #172033;
+  --surface-3: #1e273b;
+  --surface-inset: #151d2e;
+  --surface-sunken: #121a2a;
+  --surface-input: #151d2e;
+  --surface-hover: #273148;
+  --surface-button: #263045;
+  --surface-button-hover: #313c55;
+  --surface-active: #475569;
+
+  --border-faint: #1f293b;
+  --border-subtle: #273248;
+  --border: #334155;
+  --border-strong: #475569;
+  --border-focus: #64748b;
+
+  --text: #f8fafc;
+  --text-2: #e2e8f0;
+  --text-3: #cbd5e1;
+  --text-label: #a8b4c6;
+  --text-muted: #94a3b8;
+  --text-dim: #94a3b8;
+  --text-faint: #8291a7;
+  --text-disabled: #64748b;
+
+  --row-selected: #1d3b31;
+  --row-selected-info: #1e2d4a;
+}
+
+/* Light - slate grays on white. Every text token clears 4.5:1 on
+   --surface (#fff) and --bg; status colors are darkened to match. */
+:root[data-mode="light"] {
+  --color-scheme: light;
+
+  --bg: #f1f5f9;
+  --surface: #ffffff;
+  --surface-glass: #ffffffe0;
+  --surface-2: #f8fafc;
+  --surface-3: #f1f5f9;
+  --surface-inset: #f8fafc;
+  --surface-sunken: #f8fafc;
+  --surface-input: #ffffff;
+  --surface-hover: #e9eef5;
+  --surface-button: #f1f5f9;
+  --surface-button-hover: #e2e8f0;
+  --surface-active: #cbd5e1;
+
+  --border-faint: #edf1f6;
+  --border-subtle: #e2e8f0;
+  --border: #cbd5e1;
+  --border-strong: #94a3b8;
+  --border-focus: #64748b;
+
+  --text: #0f172a;
+  --text-2: #1e293b;
+  --text-3: #334155;
+  --text-label: #475569;
+  --text-muted: #475569;
+  --text-dim: #5b6779;
+  --text-faint: #5b6779;
+  --text-disabled: #8792a2;
+
+  --checkbox: #16a34a;
+  --hover-tint: rgba(15, 23, 42, 0.05);
+  --selected-tint: rgba(37, 99, 235, 0.12);
+  --row-selected: #dcfce7;
+  --row-selected-info: #dbeafe;
+
+  --success: #15803d;
+  --success-soft: #166534;
+  --success-muted: #15803d;
+  --success-text: #166534;
+  --success-bg: #dcfce7;
+  --success-border: #16a34a;
+
+  --danger: #dc2626;
+  --danger-soft: #b91c1c;
+  --danger-muted: #b91c1c;
+  --danger-text: #991b1b;
+  --danger-bg: #fee2e2;
+  --danger-bg-hover: #fecaca;
+  --danger-bg-soft: #fee2e2;
+  --danger-border: #f87171;
+
+  --warning: #b45309;
+  --orange: #c2410c;
+  --amber: #b45309;
+  --warn-text: #92400e;
+  --warn-bg: #fef3c7;
+  --warn-border: #fcd34d;
+
+  --info-text: #1d4ed8;
+  --info-text-2: #1d4ed8;
+  --info-text-strong: #1e3a8a;
+  --info-bg: #dbeafe;
+  --info-border: #93c5fd;
+  --info-border-strong: #2563eb;
+}
+
+/* Accents - links, spinners, selected outlines, the active tab marker and
+   focus rings. Each has a light-mode shade dark enough to read on white. */
+:root[data-accent="blue"]   { --accent: #6ab0ff; }
+:root[data-accent="green"]  { --accent: #4ade80; }
+:root[data-accent="violet"] { --accent: #a78bfa; }
+:root[data-accent="amber"]  { --accent: #fbbf24; }
+:root[data-mode="light"]                       { --accent: #0369a1; }
+:root[data-mode="light"][data-accent="blue"]   { --accent: #1d4ed8; }
+:root[data-mode="light"][data-accent="green"]  { --accent: #15803d; }
+:root[data-mode="light"][data-accent="violet"] { --accent: #6d28d9; }
+:root[data-mode="light"][data-accent="amber"]  { --accent: #b45309; }
+
+/* Packet-row protocol tints are a touch stronger on white to stay visible. */
+:root[data-mode="light"] table.wireshark-table tr.proto-tcp { background: rgba(37, 99, 235, 0.08); }
+:root[data-mode="light"] table.wireshark-table tr.proto-udp { background: rgba(124, 58, 237, 0.08); }
+:root[data-mode="light"] table.wireshark-table tr.proto-arp { background: rgba(202, 138, 4, 0.12); }
+:root[data-mode="light"] table.wireshark-table tr.proto-icmp { background: rgba(220, 38, 38, 0.08); }
+:root[data-mode="light"] table.wireshark-table tr:hover { filter: brightness(0.95); }
+:root[data-mode="light"] .wifi-info-overlay { background: rgba(15, 23, 42, 0.45); }
+
+@media (prefers-reduced-motion: no-preference) {
+  body, header, .panel, button, input, select { transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease; }
+}
+/* The Kaon logo PNGs have a black background baked in - round it into a
+   badge rather than a hard-edged block on the light surfaces. */
+:root[data-mode="light"] header .header-logo-img, :root[data-mode="light"] footer#appFooter img { border-radius: 4px; }
