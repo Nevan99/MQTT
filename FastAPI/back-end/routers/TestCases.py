@@ -16,6 +16,7 @@ from schemas.schemas import (
 from service import step_bulk_edit
 from service.mqtt_service import mqtt_service
 from service import run_control
+from service import recordings, run_logs
 from service.auth import get_current_user
 from routers.Commands import _dispatch
 
@@ -306,6 +307,7 @@ def delete_run(run_id: int, session: Session = Depends(get_session)):
     run_control.request_run_stop(run_id, run_control.STOP_NOW)
     session.delete(run)
     session.commit()
+    run_logs.delete(run_id)
     return {"deleted": run_id}
 
 
@@ -1143,6 +1145,73 @@ def _block_key(pass_no, loop_group, loop_pass):
     return (pass_no, loop_group, loop_pass)
 
 
+# --- per-run Pi syslog ------------------------------------------------------
+# Each test in the Results tab has a CDRouter-style log page made of the
+# syslog its Pis produced while it ran (service/run_logs.py). For that the
+# run asks each Pi it targets to stream its syslog (stream_logs) for the
+# whole run, and stops the streams it started once it's done - unless
+# another run or a log recording still needs that Pi's stream.
+
+SYSLOG_START_TIMEOUT_SECONDS = 5
+
+
+def _run_syslog_pis(steps: list) -> list:
+    """Every Pi this run's steps can target. "all" means every Pi that's
+    online now (the same set a broadcast step would reach)."""
+    pis = set()
+    broadcast = False
+    for step in steps:
+        for t in _resolve_targets(step):
+            if t == "all":
+                broadcast = True
+            elif t:
+                pis.add(str(t))
+    if broadcast:
+        with get_session_direct() as session:
+            pis |= {p.pi_id for p in session.exec(select(Pi).where(Pi.status == "online")).all()}
+    return sorted(pis)
+
+
+def _start_run_syslog(run_id: int, pis: list) -> set:
+    """Starts capturing the Pis' syslog for this run and asks each online
+    one to stream it. Returns the Pis whose stream this run started."""
+    if not pis:
+        return set()
+    run_logs.start(run_id, pis)
+    try:
+        return _request_syslog_streams(pis)
+    except Exception:
+        # The log page just shows no syslog; never fail the run over it.
+        return set()
+
+
+def _request_syslog_streams(pis: list) -> set:
+    with get_session_direct() as session:
+        online = {p.pi_id for p in session.exec(select(Pi).where(Pi.pi_id.in_(pis))).all() if p.status == "online"}
+        sent = {pi: _dispatch(pi, CommandRequest(action="stream_logs", params={}), session).command_id
+                for pi in pis if pi in online}
+    started = set()
+    for pi, command_id in sent.items():
+        status, result = _await_command(command_id, SYSLOG_START_TIMEOUT_SECONDS)
+        if status == "complete" and isinstance(result, dict) and not result.get("already_running"):
+            started.add(pi)
+    return started
+
+
+def _stop_run_syslog(run_id: int, started: set):
+    released = run_logs.stop(run_id)
+    recording = {r["pi_id"] for r in recordings.list_active() if r["category"] == "logs"}
+    to_stop = (started & released) - recording
+    if not to_stop:
+        return
+    try:
+        with get_session_direct() as session:
+            for pi in to_stop:
+                _dispatch(pi, CommandRequest(action="stop_logs", params={}), session)
+    except Exception:
+        pass   # best effort - a stream left running only costs the Pi a journalctl
+
+
 def _run_testcase(run_id: int):
     with get_session_direct() as session:
         run = session.get(TestRun, run_id)
@@ -1162,6 +1231,9 @@ def _run_testcase(run_id: int):
     # which loop pass produced it.
     plan = _expand_step_plan(steps)
     results = _plan_skeletons(plan, repeat_count)
+    # Before the run registers, so a "stop now" can't cut the 5s waits short
+    # and leave the streams half-started.
+    syslog_started = _start_run_syslog(run_id, _run_syslog_pis(steps))
     live = run_control.register_run(run_id, results)
     run_control.set_current_run(run_id)
     # A suite "stop now" that arrived after the suite launched this run but
@@ -1220,7 +1292,9 @@ def _run_testcase(run_id: int):
                     # now rather than only "pending" right up until it
                     # completes. In memory only - see RESULTS_FLUSH_SECONDS.
                     with live.lock:
-                        results[pos].update({"status": "running"})
+                        # started_at now too, so the Results tab's test log
+                        # can show the Pis' syslog while the step is running.
+                        results[pos].update({"status": "running", "started_at": datetime.now(timezone.utc).isoformat()})
                         live.current = pos
                         live.bump()
 
@@ -1303,6 +1377,7 @@ def _run_testcase(run_id: int):
     finally:
         run_control.set_current_run(None)
         run_control.unregister_run(run_id)
+        _stop_run_syslog(run_id, syslog_started)
 
 
 @router.post("/{testcase_id}/run", response_model=TestRunOut)

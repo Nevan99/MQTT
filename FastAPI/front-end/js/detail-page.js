@@ -1219,9 +1219,10 @@ function routeApp() {
     showPiDetail(decodeURIComponent(piMatch[1]));
     return;
   }
-  // One run's result page (results-tab.js reads the kind/id back out of the
-  // hash on "tabshown"), so a run has its own link and Back returns to the list.
-  if (/^results\/(testcase|testsuite)\/\d+$/.test(hash)) {
+  // One run's result page, or one of its tests' log page (results-tab.js
+  // reads kind/id/seq back out of the hash on "tabshown"), so each has its
+  // own link and Back returns to where you were.
+  if (/^results\/(testcase|testsuite)\/\d+(\/tests\/\d+)?$/.test(hash)) {
     showTabView('results');
     return;
   }

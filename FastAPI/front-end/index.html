@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="assets/kaon-favicon-180.png">
 <link id="faviconSvg" rel="icon" type="image/svg+xml" href="assets/kaon-favicon.svg">
 <link rel="stylesheet" href="themes.css?v=3">
-<link rel="stylesheet" href="styles.css?v=13">
+<link rel="stylesheet" href="styles.css?v=14">
 <!-- Applies the saved theme before first paint (no dark flash for a
      light-theme user) - same keys/logic as js/settings.js's applyTheme. -->
 <script>
@@ -392,6 +392,40 @@
           <nav id="resTestsNav" class="res-pager-nav" aria-label="Test pages"></nav>
         </div>
       </div>
+    </div>
+  </div>
+  <!-- One test's log (#results/<kind>/<id>/tests/<seq>), like CDRouter's
+       test log page: the syslog its Pis produced while it ran, one SECTION
+       per step, PASS/FAIL lines for the outcome. Follows a live test. See
+       results-tab.js ("one test's log"). -->
+  <div id="resLogView" class="res-log-page hidden">
+    <div class="panel res-log-head" id="resLogHead">
+      <div class="res-log-heading">
+        <h2 class="res-log-title"><span id="resLogTitle"></span>
+          <button type="button" class="res-link res-log-run" id="resLogRunLink" title="Back to this run"></button></h2>
+        <div class="res-log-meta" id="resLogMeta"></div>
+      </div>
+      <div class="res-log-tools">
+        <div class="res-log-nav" role="group" aria-label="Other tests in this run">
+          <button type="button" data-nav="first" title="First test" aria-label="First test">&#9198;</button>
+          <button type="button" data-nav="prev" title="Previous test" aria-label="Previous test">&#9194;</button>
+          <button type="button" data-nav="next" title="Next test" aria-label="Next test">&#9193;</button>
+          <button type="button" data-nav="last" title="Last test" aria-label="Last test">&#9197;</button>
+        </div>
+        <button type="button" id="resLogDownloadBtn" title="Download this log as text">&#8681; Download</button>
+        <input type="text" id="resLogFilter" class="field" placeholder="Filter logs..." aria-label="Filter log lines">
+        <select id="resLogKind" class="field" aria-label="Which lines">
+          <option value="all">All Lines</option>
+          <option value="syslog">Syslog Only</option>
+          <option value="passfail">Pass/Fail Only</option>
+          <option value="problems">Errors &amp; Warnings</option>
+        </select>
+        <select id="resLogPi" class="field" aria-label="Pi"><option value="">All Pis</option></select>
+        <label class="res-log-follow"><input type="checkbox" id="resLogFollow" checked> Follow</label>
+      </div>
+    </div>
+    <div class="panel res-log-panel">
+      <div class="res-log-lines" id="resLogLines" role="log" aria-live="off"></div>
     </div>
   </div>
 </section>
@@ -915,11 +949,11 @@
 <script src="js/testsuites-tab.js?v=11"></script>
 <!-- After testcases-tab.js: reuses its tcRenderRunSteps/tcStatusClass so a
      run's step detail renders identically in both places. -->
-<script src="js/results-tab.js?v=12"></script>
+<script src="js/results-tab.js?v=13"></script>
 <script src="js/wifi-scan.js?v=2"></script>
 <script src="js/wifi-info-modal.js?v=5"></script>
 <script src="js/log-rendering.js"></script>
 <script src="js/wireshark-table.js"></script>
-<script src="js/detail-page.js?v=16"></script>
+<script src="js/detail-page.js?v=17"></script>
 </body>
 </html>

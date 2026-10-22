@@ -9,7 +9,7 @@ from pathlib import Path
 
 from database.database import get_session_direct
 from database.models import Capture
-from service import recordings
+from service import recordings, run_logs
 from service.pcap_decoder import PcapStreamDecoder
 from src.connection_manager import manager
 
@@ -138,6 +138,7 @@ class _CaptureHandler(socketserver.StreamRequestHandler):
             if not line:
                 continue
             recordings.append_log_line(pi_id, line)
+            run_logs.append(pi_id, line)
             _relay(pi_id, "logs", line)
 
     def _relay_packets(self, pi_id, interface, decoded):

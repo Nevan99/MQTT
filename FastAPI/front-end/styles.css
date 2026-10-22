@@ -842,3 +842,50 @@ table.res-table tr.res-archived > td { opacity: 0.7; }
 @media (prefers-reduced-motion: reduce) {
   .res-progress-bar > span { transition: none; }
 }
+
+/* Results: one test's log page (#results/<kind>/<id>/tests/<seq>), after
+   CDRouter's - a status-tinted header and a line-numbered log. */
+.res-log-page { display: flex; flex-direction: column; gap: 0.75rem; flex: 1 1 auto; min-height: 0; }
+.res-log-page.hidden { display: none; }
+.res-log-head { flex: 0 0 auto; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 0.75rem 1.5rem; overflow: visible; border-left: 4px solid var(--border-strong); }
+.res-log-head.res-log-passed { background: color-mix(in srgb, var(--success-bg) 55%, var(--surface)); border-left-color: var(--success); }
+.res-log-head.res-log-failed { background: color-mix(in srgb, var(--danger-bg) 55%, var(--surface)); border-left-color: var(--danger); }
+.res-log-head.res-log-running { background: color-mix(in srgb, var(--warn-bg) 55%, var(--surface)); border-left-color: var(--warning); }
+.res-log-head.res-log-stopped { border-left-color: var(--orange); }
+.res-log-title { margin: 0; font-size: 1.45rem; font-weight: 400; color: var(--text); display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.6rem; }
+.res-log-run { font-size: 0.95rem; }
+.res-log-meta { margin-top: 0.3rem; font-size: 0.8rem; color: var(--text-3); }
+.res-log-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+.res-log-nav { display: inline-flex; }
+.res-log-nav button { border-radius: 0; padding: 0.3rem 0.6rem; margin-left: -1px; }
+.res-log-nav button:first-child { border-radius: 4px 0 0 4px; margin-left: 0; }
+.res-log-nav button:last-child { border-radius: 0 4px 4px 0; }
+.res-log-tools .field { width: auto; font-size: 0.8rem; }
+#resLogFilter { width: 11rem; }
+.res-log-follow { display: inline-flex; align-items: center; gap: 0.3rem; margin: 0; font-size: 0.78rem; }
+.res-log-panel { flex: 1 1 auto; min-height: 320px; padding: 0; overflow: hidden; display: flex; }
+.res-log-lines {
+  flex: 1 1 auto; overflow: auto; padding: 0.4rem 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.76rem; line-height: 1.5;
+}
+.ll { display: flex; align-items: baseline; gap: 0.6rem; padding: 0 0.75rem 0 0; white-space: pre-wrap; word-break: break-word; }
+.ll:hover { background: var(--hover-tint); }
+.ll.ll-filtered, .ll.ll-folded { display: none; }
+.ll .ln { flex: 0 0 3.2rem; text-align: right; color: var(--text-disabled); user-select: none; border-right: 1px solid var(--border-subtle); padding-right: 0.5rem; }
+.ll .lt { flex: 0 0 auto; color: var(--text-dim); white-space: nowrap; }
+.ll .lk { flex: 0 0 auto; font-weight: 600; white-space: nowrap; }
+.ll .lx { flex: 1 1 auto; min-width: 0; }
+.ll .lc { flex: 0 0 auto; color: var(--text-dim); }
+.ll-header .lx { color: var(--text-3); }
+.ll-syslog .lk { color: var(--info-text-2); }
+.ll-lv-warning .lx { color: var(--warning); }
+.ll-syslog.ll-lv-error .lx { color: var(--danger); }
+.ll-section { margin-top: 0.4rem; background: var(--surface-3); }
+.ll-section .lk { color: var(--accent); }
+.ll-section .lx { font-weight: 600; color: var(--text); }
+.ll-fold { padding: 0; width: 1rem; border: none; background: transparent; color: var(--text-dim); line-height: 1; cursor: pointer; }
+.ll-fold:hover { background: transparent; color: var(--text); }
+.ll-pass .lx { color: var(--success); font-weight: 600; }
+.ll-fail .lx { color: var(--danger); font-weight: 600; }
+.ll-note .lx { color: var(--text-faint); font-style: italic; }
+.res-log-cell { white-space: nowrap; }

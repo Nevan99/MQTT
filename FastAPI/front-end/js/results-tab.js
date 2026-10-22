@@ -54,6 +54,7 @@ const resSelected = new Map();
 function resStopPolling() {
   resStopRunPolling();
   resStopListPolling();
+  resStopLogPolling();
 }
 
 function resStopListPolling() {
@@ -66,7 +67,9 @@ function resStopListPolling() {
 function showResListView() {
   resStopPolling();
   resDetailCurrent = null;
+  resLogCurrent = null;
   document.getElementById('resDetailView').classList.add('hidden');
+  document.getElementById('resLogView').classList.add('hidden');
   document.getElementById('resListView').classList.remove('hidden');
   resSyncControlsFromState();
   loadResults();
@@ -75,7 +78,10 @@ function showResListView() {
 function showResDetailView() {
   resStopListPolling();
   resStopRunPolling();
+  resStopLogPolling();
+  resLogCurrent = null;
   document.getElementById('resListView').classList.add('hidden');
+  document.getElementById('resLogView').classList.add('hidden');
   document.getElementById('resDetailView').classList.remove('hidden');
 }
 
@@ -813,7 +819,7 @@ function renderResTests(data) {
   }
   const kind = data.summary.kind;
   body.innerHTML = data.items.map(t => {
-    const hasLog = kind === 'testcase' ? t.status !== 'pending' : !!t.run_id;
+    const hasDetails = kind === 'testcase' ? t.status !== 'pending' : !!t.run_id;
     const open = resRunOpenLogs.has(t.seq);
     return `
     <tr class="res-test-row${t.seq === resRunFocusSeq ? ' res-test-focus' : ''}${t.status === 'running' ? ' res-test-running' : ''}" data-seq="${t.seq}">
@@ -823,7 +829,11 @@ function renderResTests(data) {
         ? `<button type="button" class="res-link" data-open-run="${t.run_id}" title="Open this testcase run">${tcEsc(t.name)}</button>`
         : tcEsc(t.name)}</td>
       <td class="res-test-desc">${tcEsc(t.description)}${t.error ? ` <span class="res-test-error">${tcEsc(t.error)}</span>` : ''}</td>
-      <td>${hasLog ? `<button type="button" class="res-link res-log-btn" aria-expanded="${open}">${open ? 'hide' : 'log'}</button>` : '<span class="hint">–</span>'}</td>
+      <td class="res-log-cell">${t.status === 'pending'
+        ? '<span class="hint">–</span>'
+        : `<button type="button" class="res-link res-log-open" title="This test's syslog">log</button>`}${hasDetails
+        ? ` <button type="button" class="res-link res-log-btn" aria-expanded="${open}" title="Step results, checks and per-Pi output">${open ? 'hide' : 'details'}</button>`
+        : ''}</td>
       <td class="res-num">${t.seq}</td>
     </tr>
     ${open ? `<tr class="res-log-row" data-log-for="${t.seq}"><td colspan="6"><div class="res-log-body"></div></td></tr>` : ''}`;
@@ -836,9 +846,10 @@ function renderResTests(data) {
   if (focus) focus.scrollIntoView({ block: 'nearest' });
 }
 
-// The Log column: a suite's testcase shows that testcase run's full step
-// detail (the same renderer the old views used); a testcase's step shows
-// that one step's logs, checks and per-Pi results.
+// The Log column's "details": a suite's testcase shows that testcase run's
+// full step detail (the same renderer the old views used); a testcase's
+// step shows that one step's checks and per-Pi results. "log" opens the
+// test's syslog page instead (see "one test's log" below).
 async function resFillLog(el, t, summary) {
   if (!el.childElementCount) el.innerHTML = '<div class="pi-log-empty">loading…</div>';
   if (summary.kind === 'testsuite') {
@@ -993,6 +1004,206 @@ async function resRunExportCsv() {
     URL.revokeObjectURL(url);
   } catch (err) {
     alert(`Failed to export: ${err.message}`);
+  }
+}
+
+// --- one test's log: CDRouter-style test log page ----------------------------
+// #results/<kind>/<id>/tests/<seq>. The syslog the test's Pis streamed while
+// it ran (captured per run on the backend - service/run_logs.py), one
+// collapsible SECTION per step with its line count, and PASS/FAIL lines for
+// each Pi result and the step. Filter box, line-type and Pi filters, prev/
+// next test, download. A live test is followed every 2s.
+
+let resLogCurrent = null;     // { kind, id, seq }
+let resLogData = null;
+let resLogPollTimer = null;
+let resLogSig = null;
+const resLogCollapsed = new Set();   // section line numbers folded shut
+
+function resStopLogPolling() {
+  if (resLogPollTimer) {
+    clearTimeout(resLogPollTimer);
+    resLogPollTimer = null;
+  }
+}
+
+function resLogFromHash() {
+  const m = location.hash.match(/^#results\/(testcase|testsuite)\/(\d+)\/tests\/(\d+)$/);
+  return m ? { kind: m[1], id: Number(m[2]), seq: Number(m[3]) } : null;
+}
+
+function openResTestLog(kind, id, seq) {
+  location.hash = `#results/${kind}/${id}/tests/${seq}`;
+}
+
+function showResLogView() {
+  resStopListPolling();
+  resStopRunPolling();
+  document.getElementById('resListView').classList.add('hidden');
+  document.getElementById('resDetailView').classList.add('hidden');
+  document.getElementById('resLogView').classList.remove('hidden');
+}
+
+async function resShowTestLog(kind, id, seq) {
+  const same = resLogCurrent && resLogCurrent.kind === kind && resLogCurrent.id === id && resLogCurrent.seq === seq;
+  if (!same) {
+    resLogCurrent = { kind, id, seq };
+    resLogData = null;
+    resLogSig = null;
+    resLogCollapsed.clear();
+    document.getElementById('resLogLines').innerHTML = '<div class="pi-log-empty">Loading… please wait while the log loads.</div>';
+    document.getElementById('resLogTitle').textContent = '';
+    document.getElementById('resLogMeta').textContent = '';
+  }
+  showResLogView();
+  await loadResTestLog();
+}
+
+async function loadResTestLog() {
+  if (!resLogCurrent) return;
+  const { kind, id, seq } = resLogCurrent;
+  resStopLogPolling();
+  try {
+    const res = await apiFetch(`${API}/results/${kind}/${id}/tests/${seq}/log`);
+    if (!resLogCurrent || resLogCurrent.kind !== kind || resLogCurrent.id !== id || resLogCurrent.seq !== seq) return;
+    if (!res.ok) {
+      document.getElementById('resLogLines').innerHTML = `<div class="pi-log-empty">${res.status === 404 ? 'This test or run no longer exists.' : 'Failed to load the log.'}</div>`;
+      return;
+    }
+    const data = await res.json();
+    resLogData = data;
+    const sig = JSON.stringify([data.test.status, data.test.duration_s, data.lines.length, data.lines[data.lines.length - 1]]);
+    if (sig !== resLogSig) {
+      resLogSig = sig;
+      renderResLogHead(data);
+      renderResLogLines(data);
+    }
+    if (data.running && !document.getElementById('resLogView').classList.contains('hidden')) {
+      resLogPollTimer = setTimeout(loadResTestLog, 2000);
+    }
+  } catch {
+    if (resLogData && resLogData.running) resLogPollTimer = setTimeout(loadResTestLog, 4000);
+  }
+}
+
+function renderResLogHead(data) {
+  const t = data.test;
+  const head = document.getElementById('resLogHead');
+  head.className = `panel res-log-head res-log-${t.status === 'timeout' ? 'failed' : t.status}`;
+  document.getElementById('resLogTitle').textContent = t.name;
+  document.getElementById('resLogRunLink').textContent = `${data.kind === 'testsuite' ? 'testsuite' : 'testcase'} run #${data.run_id}`;
+  const time = resTestTime(t);
+  document.getElementById('resLogMeta').innerHTML =
+    `Test result: <strong>${tcEsc(t.status)}</strong>${time ? ` (${time})` : ''} · test ${data.seq} of ${data.total} · ${tcEsc(data.run_name)}`;
+  const nav = { first: 1, prev: data.seq - 1, next: data.seq + 1, last: data.total };
+  document.querySelectorAll('#resLogView [data-nav]').forEach(b => {
+    const target = nav[b.dataset.nav];
+    b.dataset.seq = String(target);
+    b.disabled = target < 1 || target > data.total || target === data.seq;
+  });
+  const piSel = document.getElementById('resLogPi');
+  const chosen = piSel.value;
+  piSel.innerHTML = '<option value="">All Pis</option>' + data.pis.map(p => `<option value="${tcEsc(p)}">${tcEsc(p)}</option>`).join('');
+  piSel.value = data.pis.includes(chosen) ? chosen : '';
+}
+
+// 2026-10-22 15:40:27.123, in the app's display time zone.
+function resLogTime(iso) {
+  if (!iso) return '';
+  const d = parseApiDate(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: VN_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+  }).formatToParts(d).map(p => [p.type, p.value]));
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}.${String(d.getMilliseconds()).padStart(3, '0')}`;
+}
+
+const RES_LOG_TAG = {
+  section: () => '&#8597;SECTION',
+  syslog: (ln) => `SYSLOG(${tcEsc(ln.src || '?')})`,
+  pass: () => '',
+  fail: () => '',
+  info: () => 'INFO',
+};
+
+function renderResLogLines(data) {
+  const box = document.getElementById('resLogLines');
+  const follow = document.getElementById('resLogFollow').checked;
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  let n = 0;
+  const out = data.header.map(h => `<div class="ll ll-header"><span class="ln">${++n}</span><span class="lx">${tcEsc(h)}</span></div>`);
+  let section = null;
+  data.lines.forEach(ln => {
+    n += 1;
+    if (ln.kind === 'section') section = n;
+    const cls = [`ll`, `ll-${ln.kind}`, `ll-lv-${ln.level}`];
+    const inSection = ln.kind !== 'section' && section !== null;
+    if (inSection && resLogCollapsed.has(section)) cls.push('ll-folded');
+    out.push(`<div class="${cls.join(' ')}" data-n="${n}" ${inSection ? `data-section="${section}"` : ''} data-kind="${ln.kind}" data-level="${ln.level}" data-src="${tcEsc(ln.src || '')}">`
+      + `<span class="ln">${n}</span><span class="lt">${resLogTime(ln.t)}</span>`
+      + (ln.kind === 'section'
+        ? `<button type="button" class="ll-fold" aria-expanded="${!resLogCollapsed.has(n)}" title="Fold this section">${resLogCollapsed.has(n) ? '&#9656;' : '&#9662;'}</button>`
+        : '')
+      + `<span class="lk">${RES_LOG_TAG[ln.kind] ? RES_LOG_TAG[ln.kind](ln) : ''}</span>`
+      + `<span class="lx">${tcEsc(ln.text)}</span>`
+      + (ln.kind === 'section' ? `<span class="lc">${ln.count}</span>` : '')
+      + '</div>');
+  });
+  if (!data.lines.length) out.push('<div class="pi-log-empty">No log lines.</div>');
+  else if (!data.lines.some(l => l.kind === 'syslog')) {
+    out.push(`<div class="ll ll-note"><span class="ln"></span><span class="lx">No syslog was captured for this test${
+      data.running ? ' yet' : ' - its Pis may have been offline, or it ran before syslog capture existed'}.</span></div>`);
+  }
+  box.innerHTML = out.join('');
+  applyResLogFilters();
+  if (data.running && follow && (atBottom || !resLogSig)) box.scrollTop = box.scrollHeight;
+}
+
+function applyResLogFilters() {
+  const q = document.getElementById('resLogFilter').value.trim().toLowerCase();
+  const kind = document.getElementById('resLogKind').value;
+  const pi = document.getElementById('resLogPi').value;
+  document.querySelectorAll('#resLogLines .ll[data-kind]').forEach(el => {
+    const k = el.dataset.kind;
+    let show = true;
+    if (kind === 'syslog') show = k === 'syslog' || k === 'section';
+    else if (kind === 'passfail') show = k === 'pass' || k === 'fail' || k === 'section';
+    else if (kind === 'problems') show = el.dataset.level === 'error' || el.dataset.level === 'warning' || k === 'section';
+    if (show && pi && k !== 'section') show = el.dataset.src === pi;
+    if (show && q && k !== 'section') show = el.textContent.toLowerCase().includes(q);
+    el.classList.toggle('ll-filtered', !show);
+  });
+}
+
+function resLogToggleSection(n) {
+  const open = !resLogCollapsed.has(n);
+  if (open) resLogCollapsed.add(n); else resLogCollapsed.delete(n);
+  document.querySelectorAll(`#resLogLines .ll[data-section="${n}"]`).forEach(el => el.classList.toggle('ll-folded', open));
+  const btn = document.querySelector(`#resLogLines .ll[data-n="${n}"] .ll-fold`);
+  if (btn) {
+    btn.innerHTML = open ? '&#9656;' : '&#9662;';
+    btn.setAttribute('aria-expanded', String(!open));
+  }
+}
+
+async function resLogDownload() {
+  if (!resLogCurrent) return;
+  const { kind, id, seq } = resLogCurrent;
+  try {
+    const res = await apiFetch(`${API}/results/${kind}/${id}/tests/${seq}/log.txt`);
+    if (!res.ok) { alert(`Failed to download: ${res.status}`); return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = (res.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/)?.[1] || 'test.log';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert(`Failed to download: ${err.message}`);
   }
 }
 
@@ -1153,6 +1364,11 @@ document.querySelector('#resDetailView .res-run-info').addEventListener('click',
 resById('resTestsBody').addEventListener('click', (e) => {
   const open = e.target.closest('[data-open-run]');
   if (open) { openResDetail('testcase', Number(open.dataset.openRun)); return; }
+  const logLink = e.target.closest('.res-log-open');
+  if (logLink && resDetailCurrent) {
+    openResTestLog(resDetailCurrent.kind, resDetailCurrent.id, Number(logLink.closest('tr').dataset.seq));
+    return;
+  }
   const logBtn = e.target.closest('.res-log-btn');
   if (!logBtn || !resRunSummary) return;
   const row = logBtn.closest('tr');
@@ -1161,7 +1377,7 @@ resById('resTestsBody').addEventListener('click', (e) => {
   if (resRunOpenLogs.has(seq)) {
     resRunOpenLogs.delete(seq);
     if (next && next.classList.contains('res-log-row')) next.remove();
-    logBtn.textContent = 'log';
+    logBtn.textContent = 'details';
     logBtn.setAttribute('aria-expanded', 'false');
     return;
   }
@@ -1185,13 +1401,32 @@ resById('resTestsPageSize').addEventListener('change', (e) => resRunSetFilter({ 
 
 resById('resRunningNow').addEventListener('click', () => resSetFilter({ view: 'current', status: 'running' }));
 
-// #results is the list; #results/<kind>/<id> is one run's page (detail-page.js
-// routes both here).
+// Test log page
+resById('resLogRunLink').addEventListener('click', () => {
+  if (resLogCurrent) openResDetail(resLogCurrent.kind, resLogCurrent.id);
+});
+document.querySelectorAll('#resLogView [data-nav]').forEach(b => b.addEventListener('click', () => {
+  if (resLogCurrent && !b.disabled) openResTestLog(resLogCurrent.kind, resLogCurrent.id, Number(b.dataset.seq));
+}));
+resById('resLogDownloadBtn').addEventListener('click', resLogDownload);
+resById('resLogFilter').addEventListener('input', debounce(applyResLogFilters, 150));
+resById('resLogKind').addEventListener('change', applyResLogFilters);
+resById('resLogPi').addEventListener('change', applyResLogFilters);
+resById('resLogLines').addEventListener('click', (e) => {
+  const fold = e.target.closest('.ll-fold');
+  if (fold) resLogToggleSection(Number(fold.closest('.ll').dataset.n));
+});
+
+// #results is the list, #results/<kind>/<id> one run's page and
+// #results/<kind>/<id>/tests/<seq> one test's log (detail-page.js routes all
+// three here).
 document.addEventListener('tabshown', (e) => {
   if (e.detail.viewId !== 'results') {
     resStopPolling();
     return;
   }
+  const log = resLogFromHash();
+  if (log) { resShowTestLog(log.kind, log.id, log.seq); return; }
   const run = resRunFromHash();
   if (run) resShowRun(run.kind, run.id);
   else showResListView();

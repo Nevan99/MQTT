@@ -1,7 +1,8 @@
 import csv
 import io
 import json
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -10,7 +11,7 @@ from sqlmodel import Session, select
 from database.database import get_session
 from database.models import TestCase, TestRun, TestSuite, TestSuiteRun
 from schemas.schemas import ResultBulkRequest, ResultFlagsRequest
-from service import run_control
+from service import run_control, run_logs
 from service.auth import get_current_user
 from routers.TestCases import _resolve_targets, _run_results
 
@@ -371,6 +372,7 @@ def bulk_results(req: ResultBulkRequest, session: Session = Depends(get_session)
             # Same as the single-run DELETE endpoints: stop it before the row goes.
             if key.kind == "testcase":
                 run_control.request_run_stop(run.id, run_control.STOP_NOW)
+                run_logs.delete(run.id)
             else:
                 run_control.request_suite_stop(run.id, run_control.STOP_NOW)
             session.delete(run)
@@ -596,4 +598,210 @@ def export_result_tests(kind: str, run_id: int, session: Session = Depends(get_s
     return Response(
         content=buf.getvalue(), media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{kind}-run-{run_id}-tests.csv"'},
+    )
+
+
+# --- one test's log (CDRouter's test log page) -------------------------------
+# A test's log is the syslog its Pis produced while it ran (captured per run
+# by service/run_logs.py), grouped under one SECTION per step execution and
+# closed by PASS/FAIL lines for each Pi's result and the step itself. For a
+# testcase run a test is one step execution; for a testsuite run it's one
+# testcase, so its log is that testcase run's whole log, step by step.
+
+SYSLOG_GRACE_SECONDS = 1.5   # lines that arrive just after a step's result
+_JOURNAL_RE = re.compile(r"^[A-Z][a-z]{2}\s+\d+\s+\d\d:\d\d:\d\d\s+(\S+)\s+([^:]+):\s?(.*)$")
+_ERROR_RE = re.compile(r"\b(error|exception|traceback|failed|critical)\b", re.I)
+_WARN_RE = re.compile(r"\bwarn(ing)?\b", re.I)
+
+
+def _parse_dt(value) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return _as_utc(datetime.fromisoformat(value) if isinstance(value, str) else value)
+    except ValueError:
+        return None
+
+
+def _syslog_line(rec: dict) -> dict:
+    m = _JOURNAL_RE.match(rec["line"])
+    text = f"{m.group(2)}: {m.group(3)}" if m else rec["line"]
+    level = "error" if _ERROR_RE.search(text) else ("warning" if _WARN_RE.search(text) else "info")
+    return {"t": rec["t"], "kind": "syslog", "level": level, "src": rec["pi"], "text": text}
+
+
+def _step_label(e: dict, steps: list) -> tuple[str, dict]:
+    idx = e.get("step_index")
+    step = steps[idx] if isinstance(idx, int) and 0 <= idx < len(steps) else {}
+    target = _target_text({**step, **({"target": e["target"]} if e.get("target") else {})})
+    return f"Step {(idx if isinstance(idx, int) else 0) + 1}: {e.get('action') or step.get('action') or '?'} -> {target}", step
+
+
+def _step_pis(e: dict, step: dict, captured: set) -> set:
+    pis = {str(x["pi_id"]) for x in (e.get("entries") or []) if x.get("pi_id")}
+    if pis:
+        return pis
+    targets = set(_resolve_targets({**step, **({"target": e["target"]} if e.get("target") else {})}))
+    return captured if "all" in targets or not targets else {str(t) for t in targets}
+
+
+def _step_log_lines(e: dict, steps: list, syslog: list, now: datetime,
+                    next_start: Optional[datetime] = None) -> list:
+    """One step execution: SECTION, its Pis' syslog in its window, then a
+    PASS/FAIL line per Pi result and one for the step. The window runs a
+    little past the step's result (late-arriving lines) but never into the
+    next step."""
+    label, step = _step_label(e, steps)
+    status = e.get("status", "pending")
+    start = _parse_dt(e.get("started_at"))
+    end = _parse_dt(e.get("completed_at"))
+    lines = [{"t": start, "kind": "section", "level": "info", "src": None,
+              "text": label + ("" if start else f" ({status})")}]
+    if start is not None:
+        until = (end + timedelta(seconds=SYSLOG_GRACE_SECONDS)) if end else now
+        pis = _step_pis(e, step, {r["pi"] for r in syslog})
+        # The next step's start is exclusive: a line stamped that very
+        # instant belongs to the next step.
+        lines += [_syslog_line(r) for r in syslog
+                  if r["pi"] in pis and start <= r["t"] <= until and (next_start is None or r["t"] < next_start)]
+    for x in e.get("entries") or []:
+        who = x.get("pi_id") or "?"
+        if x.get("interface"):
+            who = f"{who}/{x['interface']}"
+        st = x.get("status", "")
+        if not x.get("pi_id") and x.get("error"):
+            lines.append({"t": end, "kind": "fail", "level": "error", "src": None, "text": f"FAIL: {x['error']}"})
+            continue
+        took = f" in {x['duration_ms'] / 1000:.1f}s" if x.get("duration_ms") is not None else ""
+        detail = x.get("reason") or x.get("error") or ""
+        lines.append({
+            "t": _parse_dt(x.get("completed_at")) or end, "kind": "pass" if st == "passed" else "fail",
+            "level": "info" if st == "passed" else "error", "src": x.get("pi_id"),
+            "text": f"{'PASS' if st == 'passed' else 'FAIL'}: {who} {st}{took}{f' - {detail}' if detail else ''}",
+        })
+        for c in x.get("checks") or []:
+            ok = c.get("passed")
+            lines.append({
+                "t": _parse_dt(x.get("completed_at")) or end, "kind": "pass" if ok else "fail",
+                "level": "info" if ok else "error", "src": x.get("pi_id"),
+                "text": f"{'PASS' if ok else 'FAIL'}: {who} check {c.get('field') or '<result>'} {c.get('op')} "
+                        f"{c.get('value')!r} (actual {c.get('actual')!r})",
+            })
+    if status in ("passed", "failed", "timeout", "stopped"):
+        took = f" ({e['duration_ms'] / 1000:.1f}s)" if e.get("duration_ms") is not None else ""
+        lines.append({"t": end, "kind": "pass" if status == "passed" else "fail",
+                      "level": "info" if status == "passed" else "error", "src": None,
+                      "text": f"{'PASS' if status == 'passed' else 'FAIL'}: {label} {status}{took}"})
+    elif status == "running":
+        lines.append({"t": None, "kind": "info", "level": "info", "src": None, "text": "... still running"})
+    # Syslog sorted by arrival; the section opens first and results close it.
+    head, body = lines[0], lines[1:]
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    body.sort(key=lambda ln: (ln["kind"] not in ("syslog",) and ln["t"] is None, ln["t"] or epoch,
+                              0 if ln["kind"] == "syslog" else 1))
+    head["count"] = len(body)
+    return [head] + body
+
+
+def _step_header(steps: list, e: Optional[dict] = None) -> list:
+    """The step definition(s), the way CDRouter opens a log with the test's
+    description."""
+    def fmt(i, step):
+        out = [f"    step {i + 1}. {step.get('action', '?')} -> {_target_text(step)}"]
+        for k, v in (step.get("params") or {}).items():
+            if v not in (None, "", [], {}):
+                out.append(f"            {k} = {v if isinstance(v, str) else json.dumps(v)}")
+        exp = step.get("expected")
+        for x in (exp if isinstance(exp, list) else [exp] if exp else []):
+            out.append(f"            expect {x.get('field') or '<result>'} {x.get('op', 'eq')} {x.get('value')!r}")
+        if (step.get("repeat_count") or 1) > 1:
+            out.append(f"            repeat x{step['repeat_count']}")
+        return out
+    if e is not None:
+        idx = e.get("step_index")
+        if isinstance(idx, int) and 0 <= idx < len(steps):
+            return fmt(idx, steps[idx])
+        return []
+    out = []
+    for i, step in enumerate(steps):
+        out += fmt(i, step)
+    return out
+
+
+@router.get("/{kind}/{run_id}/tests/{seq}/log")
+def get_test_log(kind: str, run_id: int, seq: int, session: Session = Depends(get_session)):
+    """One test's log: a description header plus line records
+    {t, kind: section|syslog|pass|fail|info, level, src (Pi), text}."""
+    run = _get_run(session, kind, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    tests, _ = _run_tests(session, kind, run)
+    if not 1 <= seq <= len(tests):
+        raise HTTPException(status_code=404, detail="No such test in this run")
+    test = tests[seq - 1]
+    now = datetime.now(timezone.utc)
+    rule = "-" * 78
+    header = [rule]
+    lines = []
+    if kind == "testcase":
+        results, live = _run_results(run)
+        entries = _locked_copy(results, live) if live is not None else list(results)
+        e = entries[seq - 1]
+        steps = json.loads(run.steps_json or "[]")
+        testcase = session.get(TestCase, run.testcase_id)
+        header += [f"Test: {test['name']}  ({test['description']})",
+                   f"Testcase: {run.testcase_name} - run #{run.id}"]
+        if testcase and testcase.description:
+            header.append(f"Description: {testcase.description}")
+        header += ["", *_step_header(steps, e)]
+        nxt = _parse_dt(entries[seq].get("started_at")) if seq < len(entries) else None
+        lines = _step_log_lines(e, steps, run_logs.read(run.id), now, nxt)
+        log_running = run.status == "running"
+    else:
+        child = session.get(TestRun, test["run_id"]) if test.get("run_id") else None
+        testcase = session.get(TestCase, test["testcase_id"]) if test.get("testcase_id") else None
+        header += [f"Test: {test['name']}", f"Testsuite: {run.testsuite_name} - run #{run.id}"
+                   + (f", testcase run #{child.id}" if child else "")]
+        if testcase and testcase.description:
+            header.append(f"Description: {testcase.description}")
+        steps = json.loads(child.steps_json or "[]") if child else (testcase.steps if testcase else [])
+        if steps:
+            header += ["", *_step_header(steps)]
+        if child is not None:
+            results, live = _run_results(child)
+            entries = _locked_copy(results, live) if live is not None else list(results)
+            syslog = run_logs.read(child.id)
+            for i, e in enumerate(entries):
+                if e.get("status") == "pending":
+                    continue
+                nxt = _parse_dt(entries[i + 1].get("started_at")) if i + 1 < len(entries) else None
+                lines += _step_log_lines(e, steps, syslog, now, nxt)
+            log_running = child.status == "running"
+        else:
+            note = test.get("error") or ("not run yet" if test["status"] == "pending" else f"{test['status']} - nothing ran")
+            lines.append({"t": None, "kind": "info", "level": "info", "src": None, "text": note})
+            log_running = False
+    header.append(rule)
+    return {
+        "kind": kind, "run_id": run.id, "run_name": run.testcase_name if kind == "testcase" else run.testsuite_name,
+        "run_status": run.status, "seq": seq, "total": len(tests),
+        "test": test, "running": log_running or test["status"] == "running",
+        "header": header,
+        "lines": [{**ln, "t": ln["t"].isoformat() if ln["t"] else None} for ln in lines],
+        "pis": sorted({ln["src"] for ln in lines if ln.get("src")}),
+    }
+
+
+@router.get("/{kind}/{run_id}/tests/{seq}/log.txt")
+def download_test_log(kind: str, run_id: int, seq: int, session: Session = Depends(get_session)):
+    """The same log as plain text (the log page's Files > Download)."""
+    data = get_test_log(kind, run_id, seq, session)
+    out = list(data["header"])
+    for ln in data["lines"]:
+        stamp = ln["t"][:23].replace("T", " ") if ln["t"] else " " * 23
+        tag = {"section": "SECTION", "syslog": f"SYSLOG({ln['src']})"}.get(ln["kind"], "")
+        out.append(f"{stamp} {tag + ': ' if tag else ''}{ln['text']}")
+    return Response(
+        content="\n".join(out) + "\n", media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{kind}-run-{run_id}-test-{seq}.log"'},
     )
