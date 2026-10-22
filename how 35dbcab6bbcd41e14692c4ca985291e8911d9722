@@ -1,0 +1,941 @@
+[33mcommit 35dbcab6bbcd41e14692c4ca985291e8911d9722[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfeature/theme-settings[m[33m, [m[1;31morigin/feature/theme-settings[m[33m)[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Thu Oct 22 14:58:54 2026 +0700
+
+    S error
+
+[33mcommit cb406d082ffbf68324916cd324b9a999f82bd1a2[m
+Merge: fcc9b85 cc560ed
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Thu Oct 22 14:54:29 2026 +0700
+
+    Merge conflict fix
+
+[33mcommit fcc9b858fe3ca0e833f61b8ddb5dbbd4c164b5ee[m[33m ([m[1;31morigin/master[m[33m, [m[1;31morigin/HEAD[m[33m)[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Thu Oct 22 14:50:10 2026 +0700
+
+    Reload nearby hotspot
+
+[33mcommit cc560edc9ddc5d94daab26ec62f9ffe195d31d10[m
+Author: Alex[Le Van Thi] <f260105@kaonmedia.com>
+Date:   Thu Oct 22 14:48:12 2026 +0700
+
+    Update new front-end
+
+[33mcommit 99767c30fc0e091e2761e5791812a4581923cfdc[m
+Author: Alex[Le Van Thi] <f260105@kaonmedia.com>
+Date:   Thu Oct 22 14:42:45 2026 +0700
+
+    Use theme-aware Kaon Broadband logo in header, footer and favicon
+    
+    The header and copyright footer now show the Kaon Broadband logo as two
+    alpha masks (lettering + power mark) filled from --logo-text/--logo-mark,
+    so it recolors with the selected theme. The favicon is the power mark as
+    an SVG that settings.js redraws in the active theme's colors, with PNG
+    fallbacks for browsers without SVG favicon support.
+    
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+[33mcommit 58d5a0c88b891dcfb961dac60e88d470ebd5bd6b[m
+Author: Alex[Le Van Thi] <f260105@kaonmedia.com>
+Date:   Thu Oct 22 14:36:54 2026 +0700
+
+    Add theme settings with light, slate and system themes
+    
+    A gear button in the header opens a Settings popup to pick a theme
+    (Dark, Slate, Light, System) and an accent color (Cyan, Blue, Green,
+    Violet, Amber). The choice is stored in localStorage and applied before
+    first paint to avoid a dark flash.
+    
+    Hardcoded colors in styles.css are replaced with CSS custom properties
+    defined per theme in the new themes.css; Dark keeps the original palette.
+    
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+[33mcommit f76ec6945107e0afb7c484c648ef687ba2c6f656[m[33m ([m[1;32mmaster[m[33m)[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Thu Oct 22 09:43:06 2026 +0700
+
+    Recent fix
+
+[33mcommit ff6c91520cd0e2a320c56439825b73800a84201c[m
+Author: Nevan99 <levanthi1999@gmail.com>
+Date:   Thu Oct 8 10:33:03 2026 +0700
+
+    Fix band 6Ghz error
+
+[33mcommit 42dc5042b408e26ccbf1f7445fde47af06ecd1ad[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Wed Oct 7 15:45:43 2026 +0700
+
+    Update ping to client feature
+
+[33mcommit d3c1496550c493cc4394fac7b1c677976c333891[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Wed Oct 7 15:13:33 2026 +0700
+
+    Update proxy for webui
+
+[33mcommit 5965289285b0de4fe31401b70ba472f994860efe[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Tue Oct 6 16:02:26 2026 +0700
+
+    Update WPA3 EAP, OWE and PK
+
+[33mcommit f868400b7fc746203a30369a536869eee522e592[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Tue Oct 6 15:33:38 2026 +0700
+
+    Update WPA3-PCM
+
+[33mcommit 1ef76980946d86c2c724d827a74667abf0e9119d[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Tue Oct 6 15:07:25 2026 +0700
+
+    Update feature for reboot/restart
+
+[33mcommit d6241d8cdd9d43d9416a2e9d3155b10b398af4f9[m
+Author: Nevan99 <levanthi1999@gmail.com>
+Date:   Tue Oct 6 15:03:39 2026 +0700
+
+    Update restart/reboot button
+
+[33mcommit e9453987fe6b8b36eb2ca95234d6caa0385a4f10[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Fri Oct 2 15:01:41 2026 +0700
+
+    Update 6Ghz monitoring mode
+
+[33mcommit bb3eb6e0e1dbb521378b122d848ef6a6a5100fdf[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Fri Oct 2 13:43:36 2026 +0700
+
+    Update for syslog
+
+[33mcommit 6b8b8563be6f84616c31b3336b10d2f1f3859b1d[m
+Author: Nevan99 <levanthi1999@gmail.com>
+Date:   Fri Oct 2 13:33:06 2026 +0700
+
+    Update logging mechanism
+
+[33mcommit ea9742f09eac226af8094b4e709142d4bf0977f7[m
+Author: Nevan99 <levanthi1999@gmail.com>
+Date:   Thu Oct 1 16:30:38 2026 +0700
+
+    Update multi link operation
+
+[33mcommit 8db17da2b8fcc424465cbc197e1ee402908ab1fc[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Thu Oct 1 16:14:59 2026 +0700
+
+    Stop tracking .pyc files
+
+[33mcommit eb7b9c867c6720cf9b4544e54f4477ef3d210d6b[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Thu Oct 1 16:11:18 2026 +0700
+
+    Stop tracking pi_fleet.db
+
+[33mcommit a539e7d3cef14b16a411f5e8d372c10bd461f1fe[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Thu Oct 1 16:08:12 2026 +0700
+
+    Update tags
+
+[33mcommit 6c6c857d7fb6c96073e5481ef6bcf6e1c0c37662[m
+Author: Alex[Le Van Thi] <f260105@kaonmedia.com>
+Date:   Thu Oct 1 16:04:22 2026 +0700
+
+    Update logic for MLO
+
+[33mcommit 72588411077a9a0b31cb18cc65170cdb8d8b72cf[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Thu Oct 1 12:05:14 2026 +0700
+
+    update max standard support on each wlan
+
+[33mcommit abe5d7bae2dddb46e8a4bb0e397e545ac453ece5[m
+Author: Nevan99 <levanthi1999@gmail.com>
+Date:   Thu Oct 1 11:45:05 2026 +0700
+
+    Update tag for wifi 7
+
+[33mcommit 725aad1d19dc0966b1f91d3e43f3b2381b0f64df[m
+Author: Nevan99 <levanthi1999@gmail.com>
+Date:   Thu Oct 1 11:34:04 2026 +0700
+
+    Update iw version check
+
+[33mcommit fd4865288ecc5afd5384d990f3cb60431b99ef61[m
+Merge: 5433848 a3cd460
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Thu Oct 1 11:20:10 2026 +0700
+
+    Merge branch 'master' of https://github.com/Nevan99/MQTT
+
+[33mcommit 54338488212c08fa4683e0544176bc480586e016[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Thu Oct 1 11:19:53 2026 +0700
+
+    Update wpa3 security option
+
+[33mcommit a3cd4603a2b237557611583e7c8640e4b468c0a8[m
+Author: Alex[Le Van Thi] <f260105@kaonmedia.com>
+Date:   Wed Sep 30 10:11:02 2026 +0700
+
+    Update connect mechanism
+
+[33mcommit 1ab2f15df5b832a0667f51548205414cd0505019[m
+Author: Alex[Le Van Thi] <f260105@kaonmedia.com>
+Date:   Wed Sep 30 09:40:40 2026 +0700
+
+    Update connect/disconnect mechanism
+
+[33mcommit 2520951bbc1b8d25527fa8d7b0be6b32a8760ddd[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Tue Sep 29 17:40:20 2026 +0700
+
+    Update testsuite/testrun for Pi's fleet
+
+[33mcommit c2ff4fc6bbf66b1b9a05f45566bfc3e29f68f7a4[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Wed Sep 23 13:36:45 2026 +0700
+
+    Update fix
+
+[33mcommit 3ae0e71abd1080dc681d4ba880b215cd0df9bbc2[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Wed Sep 23 13:29:23 2026 +0700
+
+    Fix TLS on AP config
+
+[33mcommit 170b3242f9e9c2a75fc640f52d4af0d728875717[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Wed Sep 23 13:19:52 2026 +0700
+
+    Update AP config
+
+[33mcommit d873e908230de2493c0fd470252c74c315203211[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Wed Sep 23 13:14:33 2026 +0700
+
+    Update AP config
+
+[33mcommit 40a47539c6f0e04549d2a43e838dac31a832fbca[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Wed Sep 23 11:41:49 2026 +0700
+
+    Update
+
+[33mcommit 6aaf0e22c30147c1a9fa5688a527548e5c9df46d[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Wed Sep 23 11:38:24 2026 +0700
+
+    Update
+
+[33mcommit 065183d26d171a8807db12f55c5c235f1e735ae3[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Wed Sep 23 11:33:49 2026 +0700
+
+    Update for AP config
+
+[33mcommit 8a1ac12b58e58c404caf5d46cbf85238d24fa524[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Wed Sep 23 11:26:22 2026 +0700
+
+    Update for AP config
+
+[33mcommit 210ba7af3e82f490b6f709e51ee86cd6addfbb99[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Wed Sep 23 11:13:39 2026 +0700
+
+    Update for AP config
+
+[33mcommit 60ad84362e5b742cc842f8bcce612cf7ac07f216[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Wed Sep 23 11:05:24 2026 +0700
+
+    Update for AP config
+
+[33mcommit 0fb03ecf839ab215c39bf198caa72c7e088726f0[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Wed Sep 23 10:53:17 2026 +0700
+
+    Update for AP config
+
+[33mcommit dd70c8a916c5fa0d14160e6dbc550b2e76984a6c[m
+Merge: ed8f27b 984c98f
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Wed Sep 23 10:38:31 2026 +0700
+
+    Merge branch 'master' of https://github.com/Nevan99/MQTT
+
+[33mcommit ed8f27b413db533b3cd60e88beb67691c256ffd7[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Wed Sep 23 10:38:15 2026 +0700
+
+    Update for AP config
+
+[33mcommit 984c98f8fb2184825af9aa0fde94a24fd135e077[m
+Merge: 464ff20 62d98f3
+Author: Alex[Le Van Thi] <f260105@kaonmedia.com>
+Date:   Fri Sep 18 10:09:35 2026 +0700
+
+    Merge branch 'master' of https://github.com/Nevan98/MQTT
+    OK
+
+[33mcommit 464ff2044c9ab56c86a3fad76ab1222ea6a6a14c[m
+Author: Alex[Le Van Thi] <f260105@kaonmedia.com>
+Date:   Fri Sep 18 10:09:22 2026 +0700
+
+    Update install.sh
+
+[33mcommit 62d98f369bee85d74c992a7a4297353809194db2[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Thu Sep 17 17:57:06 2026 +0700
+
+    Update info about radio type and key_mgmt
+
+[33mcommit cce17513e5880895ee185dc45f0e1aa4e5ee973b[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Thu Sep 10 17:37:33 2026 +0700
+
+    Update 802.11 feature
+
+[33mcommit ac97d29435c9975e6d1515ed2498ccc9674570e4[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Thu Sep 10 13:44:18 2026 +0700
+
+    Update features for maximum 802.11 standards
+
+[33mcommit 88802623a03452af607d88377db97a4c9f854a31[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Wed Sep 9 17:23:56 2026 +0700
+
+    Update link_info
+
+[33mcommit 1851ae427f33e952f7392f4f0c91a6833ce94af7[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Wed Sep 9 09:40:27 2026 +0700
+
+    Update link_info action
+
+[33mcommit 7dbd57a31386b043e42ef4b991ff5b50f2626389[m
+Merge: e86bdf0 089b72e
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Mon Sep 7 09:44:58 2026 +0700
+
+    Fixed
+
+[33mcommit e86bdf067ad5bb1a54753e8994957fe9b67cd188[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Mon Sep 7 09:43:41 2026 +0700
+
+    Fix merge
+
+[33mcommit 089b72e452011768b940d1453c50a67ddeddeb7b[m
+Author: Alex[Le Van Thi] <f260105@kaonmedia.com>
+Date:   Mon Sep 7 09:42:56 2026 +0700
+
+    update test run status
+
+[33mcommit 5d7f1ea4217189bdf26dcdb55a300626b090fc93[m
+Merge: bee9ab2 7efcb91
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Thu Aug 27 15:33:23 2026 +0700
+
+    Merge branch 'master' of https://github.com/Nevan99/MQTT
+
+[33mcommit 7efcb91c433782e7b39a61a93553f65be432bb60[m
+Author: Alex[Le Van Thi] <f260105@kaonmedia.com>
+Date:   Thu Aug 27 15:33:03 2026 +0700
+
+    Update for pi's dropdown list
+
+[33mcommit bee9ab21d83d78f8b18d003d5bdf0c11f0a7fcb0[m
+Merge: 273cb15 4ae8644
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Thu Aug 27 15:13:21 2026 +0700
+
+    merge conflict
+
+[33mcommit 4ae8644e29e7239d922a2f7676da46da4fdfe351[m
+Author: Alex[Le Van Thi] <f260105@kaonmedia.com>
+Date:   Thu Aug 27 15:12:22 2026 +0700
+
+    Update testcases creation feature
+
+[33mcommit 273cb1507bda9290a181b5d6b45ac92223f7224d[m
+Merge: efb6e04 a8e177f
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Thu Aug 27 15:00:01 2026 +0700
+
+    Fix merge conflict
+
+[33mcommit efb6e04f0a05b4f1c9bae7c6c752e0f8114c3a23[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Thu Aug 27 14:59:15 2026 +0700
+
+    Fix merge conflict
+
+[33mcommit a8e177fd89f7d3cde185b2fbdf1b756b307001fa[m
+Author: Alex[Le Van Thi] <f260105@kaonmedia.com>
+Date:   Thu Aug 27 14:57:46 2026 +0700
+
+    Update for result tabs and fix on testsuite tab
+
+[33mcommit deb7b1f80215251cb690859214baf62f37101874[m
+Author: Alex[Le Van Thi] <f260105@kaonmedia.com>
+Date:   Thu Aug 27 14:21:55 2026 +0700
+
+    Update testsuite tab
+
+[33mcommit a691db637efdb5d84abe917524b51352570a8a02[m
+Author: Nevan99 <levanthi1999@gmail.com>
+Date:   Thu Aug 27 13:42:49 2026 +0700
+
+    Fixing logging issue for connect_wifi
+
+[33mcommit 934b531d83860078808327f700883f8dee9dbf8f[m
+Author: Nevan99 <levanthi1999@gmail.com>
+Date:   Thu Aug 27 11:42:50 2026 +0700
+
+    Update fix for the going offline problem
+
+[33mcommit 92df7e5360fddbe7f9ee1be50b61404f16c83f02[m
+Author: Alex[Le Van Thi] <f260105@kaonmedia.com>
+Date:   Wed Aug 26 11:09:03 2026 +0700
+
+    Update logic of running/verifying subprocess return value
+
+[33mcommit 993e2865a65c5012433a25cdb7e3d9eda41056a0[m
+Author: Alex[Le Van Thi] <f260105@kaonmedia.com>
+Date:   Tue Aug 25 17:02:57 2026 +0700
+
+    Fix the connect/disconnect error
+
+[33mcommit cd4b43f723d6c337f592d78b9f88301b51aefda6[m
+Author: Alex[Le Van Thi] <f260105@kaonmedia.com>
+Date:   Tue Aug 25 14:36:37 2026 +0700
+
+    Update semaphore for disconnect request
+
+[33mcommit 4cf783be5dac673c1a15cd97172736ef75031a6b[m
+Author: Alex[Le Van Thi] <f260105@kaonmedia.com>
+Date:   Tue Aug 25 14:27:54 2026 +0700
+
+    Hot fix for connect/disconnect wifi
+
+[33mcommit ca66680bc4003d4388307bfd3fde85e4839939f9[m
+Author: Alex[Le Van Thi] <f260105@kaonmedia.com>
+Date:   Tue Aug 25 13:08:17 2026 +0700
+
+    hotfix for new wifi connect/disconnect/scan feature
+
+[33mcommit f1590f58b1392f3f9ed1cbe966f7cc40a3390cfa[m
+Merge: 1bc057f 39762a8
+Author: Alex[Le Van Thi] <f260105@kaonmedia.com>
+Date:   Tue Aug 25 11:42:44 2026 +0700
+
+    resolve merge conflict
+
+[33mcommit 1bc057f6a0c3cabe54f05870f55b84dfcd855a85[m
+Author: Alex[Le Van Thi] <f260105@kaonmedia.com>
+Date:   Tue Aug 25 11:40:18 2026 +0700
+
+    Update mechanism for connect/disconnect wifi
+
+[33mcommit 39762a82261df617999a29391cb50442ebfadd6a[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Mon Aug 24 16:18:53 2026 +0700
+
+    Update debug logs
+
+[33mcommit a0168fbcbd18e95b5e3f14538a8be6e0df031c9c[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Mon Aug 24 15:26:27 2026 +0700
+
+    Update wifi.py for better connecting wifi
+
+[33mcommit 38a21db3b0bd4303308d92e65c77e4f3e19b2cdb[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Mon Aug 24 14:52:24 2026 +0700
+
+    Update wifi.scan
+
+[33mcommit 3789debab336c765a2ed16a4495c0dce2fa6a465[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Mon Aug 24 14:32:57 2026 +0700
+
+    Update mgmt force to wired connection
+
+[33mcommit 29d54b64a1070e42885fbd6bd792c5aaa24976ec[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Mon Aug 24 11:54:07 2026 +0700
+
+    Update monitor mode switch feature
+
+[33mcommit f85bd6e36de13c77e3c6fa737a29a55bfedf3fea[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Mon Aug 24 10:56:48 2026 +0700
+
+    Update auto-reconnect
+
+[33mcommit 969c76477799c7073d9fe7cf7ac3b1523ff5ce4d[m
+Author: Alex[Le Van Thi] <f260105@kaonmedia.com>
+Date:   Fri Aug 21 18:21:02 2026 +0700
+
+    update wifi scan feature
+
+[33mcommit bd1868810416e0cbbf69e10a230237098733c852[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Fri Aug 21 17:48:04 2026 +0700
+
+    Update UI
+
+[33mcommit 4dd4678326152f21b3282795ceedaf8ed24d916b[m
+Merge: 26e822d d09528b
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Fri Aug 21 17:34:16 2026 +0700
+
+    merge conflict
+
+[33mcommit 26e822dded62aef3b986c2e23af6ed92fc2fc28c[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Fri Aug 21 17:33:33 2026 +0700
+
+    fix conflict
+
+[33mcommit d09528b279323fdce95bc282279dff0ac9bc9807[m
+Author: Alex[Le Van Thi] <f260105@kaonmedia.com>
+Date:   Fri Aug 21 17:29:18 2026 +0700
+
+    Fix scan_wifi returning no networks: use iw, not NetworkManager
+    
+    The "Nearby networks" list came back empty on every Pi in the fleet.
+    
+    get_wifi_scan was the last scan path still built on NetworkManager:
+    
+        nmcli -t -f SSID,BSSID,... dev wifi list ifname wlan1 --rescan yes
+    
+    but install.sh ships 99-pi-agent-unmanaged-wifi.conf, which sets
+    `unmanaged-devices=interface-name:wl*`. NetworkManager neither scans nor
+    reports BSSes for a device it does not manage, so the command exited 0
+    and printed nothing, the parse loop iterated zero lines, and the action
+    reported `networks: []`. It failed silently precisely because the exit
+    code was fine - an empty list is indistinguishable from "nothing in
+    range".
+    
+    get_wifi_scan_detail never had the problem: `iw` talks to cfg80211
+    directly and is indifferent to NM's management state.
+    
+    So get_wifi_scan now goes through the same scan as the detail path and
+    flattens the result to the smaller shape the list renders, via
+    _flatten_scan_entry. Cache-first, for the same reason wifi_detail_scan
+    is: it runs inline on the MQTT message loop and must not sit on a
+    multi-second radio scan there. Falls back to a real scan when the cache
+    is empty - a freshly booted Pi, or an interface the background loop
+    hasn't reached yet, would otherwise show the same empty list this change
+    exists to fix.
+    
+    The frontend contract is unchanged: wifi-scan.js and command-builder.js
+    read ssid/bssid/mode/channel/frequency_mhz/band/rate/signal_percent/
+    security off each entry, so the flattened entry keeps those names rather
+    than the detail scan's, and `rate` keeps its "<n> Mbit/s" string form
+    since it is rendered as-is.
+    
+    Verified by driving get_wifi_scan through the real _parse_scan_bss_block
+    with representative `iw scan dump` output (WPA2 2.4GHz, open 5GHz, and an
+    IBSS cell): no nmcli invoked, all nine fields present, and mode/band/
+    channel/security resolving correctly on each.
+    
+    This bug predates the asyncio conversion - it dates from ed34e69, which
+    added the unmanaged-devices config. Four other NM calls are no-ops on
+    these Pis for the same reason (the `managed yes` handback and nmcli
+    fallback in disconnect_wifi, and the pair in set_interface_mode); those
+    are left alone here.
+    
+    Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+[33mcommit fbdd36b3dc678cf81ad1b092ffbbaed3ba02fd11[m
+Author: Alex[Le Van Thi] <f260105@kaonmedia.com>
+Date:   Fri Aug 21 16:48:08 2026 +0700
+
+    Update asyncio for pi-agent
+
+[33mcommit 396efd86201cdab64c39fea3ed0fb62829751647[m
+Author: Alex[Le Van Thi] <f260105@kaonmedia.com>
+Date:   Fri Aug 21 16:47:03 2026 +0700
+
+    Convert pi_agent to asyncio
+    
+    The agent ran a thread per command and per background loop, each blocked
+    in subprocess.run waiting on a CLI tool. On the 4-radios-per-Pi rigs that
+    meant four threads mostly parked on `iw`. It now runs on one event loop:
+    a task per command, a task per loop, and the waiting done by
+    asyncio.create_subprocess_exec.
+    
+    Scope is the agent only. The backend was deliberately left alone: FastAPI
+    already runs its sync `def` endpoints in a threadpool, so they never block
+    the event loop, and converting them without also moving SQLModel/SQLite to
+    an async driver would make things worse, not better.
+    
+    New modules:
+    
+    - agent/proc.py - the single seam every mixin's CLI calls go through.
+      `run` wraps create_subprocess_exec with a timeout that kills rather than
+      raises, since callers branch on returncode. `run_hard` additionally
+      kills the whole process group, which is what dhcpcd/nmcli need: they
+      fork helpers that inherit the pipes, so killing only the direct child
+      leaves communicate() hanging. Being one seam also means the tests fake
+      the entire CLI layer by patching two functions.
+    
+    - agent/wpa_events.py - wpa_supplicant's control socket, replacing the
+      once-a-second `wpa_cli status` poll in _wait_for_wpa_state. Faster, but
+      the real gain is detail: the async events carry reason/status codes
+      (CTRL-EVENT-ASSOC-REJECT status_code=17) that a state poll never shows,
+      so a rejected association returns immediately with a reason instead of
+      sitting out its 60s timeout. Surfaced as connect_wifi's new
+      failure_reason field. Falls back to polling when the socket isn't
+      attachable, so behavior degrades rather than breaks.
+    
+    Converted throughout:
+    
+    - threading.Lock -> asyncio.Lock; the guard lock around _wifi_locks is
+      gone, since creation has no await in it and is atomic against other
+      tasks. The scanner's acquire(blocking=False) became Lock.locked().
+    - Detached daemon threads -> tracked tasks. The background scan and
+      interface-status loops now gather their per-interface work concurrently
+      instead of spawning threads nobody joins, so a failure is reported
+      rather than dying silently.
+    - streaming.py's relay threads -> tasks reading the child's StreamReader
+      and writing an asyncio StreamWriter, so a stalled backend socket parks a
+      task instead of pinning a thread.
+    - webui_proxy.py's threading.Timer -> a cancellable task.
+    - paho -> aiomqtt. handle_command is a coroutine; each message is handled
+      as its own task so a slow action doesn't stop the loop pulling the next.
+      _dispatch_wifi_command stays fire-and-forget but now keeps a strong task
+      reference, since asyncio only holds weak ones and a task nobody
+      references can be collected mid-command.
+    - __init__ can no longer await, so the startup iptables sweep moved to a
+      new start() coroutine, which pi_agent.py drives via asyncio.run.
+    
+    Testing: the 57-test baseline was carried over and extended to 70 (5 skip
+    on Windows, needing AF_UNIX). Because the concurrency assertions were
+    written against elapsed time and ordering rather than against
+    threading.Lock, they survived the move to asyncio.Lock unchanged in intent
+    - the threads became tasks and the acquires became `async with`, but what
+    is asserted did not change. Two new ones cover the async-specific hazards:
+    four radios' scans overlapping rather than serialising, and dispatched
+    tasks being strongly referenced.
+    
+    Re-ran the mutation battery against the converted code; all four
+    regressions are still caught (pending check removed, blocking scan
+    restored, wifi_detail_scan back on the message loop, task reference
+    dropped).
+    
+    Not verified on real hardware. The conversion is mechanical in places and
+    was checked by a cross-module pass for un-awaited coroutines, but only a
+    Pi will exercise the actual subprocess, socket and MQTT paths.
+    
+    Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+[33mcommit 50625dd75b47edb74a22b4189bd1941dd55385d0[m
+Author: Alex[Le Van Thi] <f260105@kaonmedia.com>
+Date:   Fri Aug 21 16:23:07 2026 +0700
+
+    Add a pi_agent test suite as a baseline for the async conversion
+    
+    The agent had no tests. Converting it to asyncio means rewriting the
+    locking, the subprocess layer and the MQTT loop at once, so pin the
+    current behavior down first and make the conversion verifiable rather
+    than hoped-for.
+    
+    57 tests over four files, all against the sync implementation as it
+    stands:
+    
+      test_wifi_scan.py    - trigger/dump split, cache vs fresh scan, both
+                             modes parsing to the same fields, EBUSY handling
+      test_wifi_locking.py - who waits for whom on an interface: scan/command
+                             starvation, the pending counter, per-interface
+                             isolation, dispatch semantics
+      test_wifi_connect.py - the wpa_supplicant + dhcpcd sequence, bssid
+                             resolution and its fresh-scan fallback, the
+                             disconnect teardown chain
+      test_commands.py     - handle_command routing, which actions dispatch
+                             off-thread, result correlation fields
+    
+    conftest.py fakes the two things the agent is built on: a FakeCommands
+    subprocess double that replays scripted results with realistic durations
+    (3s full scan, 20ms trigger, 50ms dump), and a paho Client double that
+    records publishes. Timing-based assertions use those durations, so the
+    concurrency tests measure real elapsed behavior rather than asserting on
+    threading internals - which is what lets them survive the move to
+    asyncio.Lock.
+    
+    Verified by mutation rather than by passing alone. Three regressions were
+    reintroduced deliberately and the suite caught each:
+    
+      - background cycle doing a full blocking scan again  -> 4 failures
+      - wifi_detail_scan served live on the MQTT thread    -> 2 failures
+      - the pending-command check deleted from the scanner -> 2 failures
+    
+    The third initially slipped through: the test held the interface lock as
+    well as setting the pending flag, so the non-blocking acquire skipped the
+    scan on its own and the flag was never actually exercised. Rewritten to
+    leave the lock free, which is the real window the flag exists for, plus
+    an end-to-end race test alongside it.
+    
+    requirements-dev.txt needed git add -f: .gitignore carries a blanket
+    *.txt rule, which the tracked FastAPI/back-end/requirements.txt predates.
+    
+    Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+[33mcommit b32ba98b1a180195b42a77745df6bed6a8b69872[m
+Author: Alex[Le Van Thi] <f260105@kaonmedia.com>
+Date:   Fri Aug 21 16:12:12 2026 +0700
+
+    Split wifi scans into a locked trigger and a lock-free cache read
+    
+    The previous commit reduced connect/disconnect stalls by scheduling
+    around the background scan loop's lock. This mostly removes the
+    contention instead of scheduling around it.
+    
+    Every scan path drove the radio through a full blocking `iw dev <if>
+    scan` (2-5s) while holding the interface's wifi lock - the same lock
+    connect_wifi/disconnect_wifi take. That is why a lock was needed at all:
+    the loop wasn't reading state, it was commandeering the radio.
+    
+    `iw` already separates the two halves, the same way Windows' WLAN
+    AutoConfig service does for tools that poll it:
+    
+      iw dev <if> scan trigger  - start a scan, return immediately (ms)
+      iw dev <if> scan dump     - read cfg80211's cached BSS list, no radio
+    
+    So the background loop now holds the lock only for the trigger and reads
+    results outside it. Lock occupancy per cycle drops from seconds to
+    milliseconds.
+    
+    Changes:
+    
+    - Add _scan_trigger/_scan_dump, and a use_cache flag on
+      get_wifi_scan_detail selecting between the cache read and the existing
+      blocking scan. Both modes emit identical `BSS ...` blocks, so
+      _parse_scan_bss_block is unchanged. Responses gain a from_cache field.
+    
+    - _wifi_background_scan_one triggers under the lock, releases, then dumps
+      lock-free. EBUSY on trigger is no longer retried with backoff *while
+      holding the lock* (that slept up to 7s); the next cycle is along
+      shortly and NetworkManager's own scan fills the same cache anyway.
+    
+    - The wifi_detail_scan MQTT action serves from cache. It previously ran a
+      fresh blocking scan directly on the MQTT network thread, starving
+      paho's keepalive for seconds and queueing behind any in-flight
+      connect/disconnect. The popup is now served in milliseconds.
+    
+    - connect_wifi's bssid->ssid resolution checks the cache first and falls
+      back to a fresh scan only when the BSSID isn't there (new AP, or an
+      interface not scanned since a mode switch), via _find_bssid_in_scan.
+    
+    - Scan interval 12s -> 6s. Lock contention no longer bounds it; what
+      does is RF airtime from the radio going off-channel to probe.
+    
+    - Add a missing timeout to the `iw dev <if> link` call.
+    
+    Testing: with iw timings simulated (3s full scan, 20ms trigger, 50ms
+    dump), a disconnect arriving 0.2s into a scan cycle stalled 2.80s on the
+    old path and 0.00s on the new one. Cache dumps parse to the same fields,
+    BSSID lookup is case-insensitive, and a cache miss returns None so
+    connect_wifi's fresh-scan fallback engages.
+    
+    Not verified on real hardware - `scan dump` output format and cache
+    retention should be confirmed on a Pi before rollout.
+    
+    Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+[33mcommit fac00a16b954d4a7bc0c0599913848c684dd1073[m[33m ([m[1;31morigin/fix/wifi-disconnect-latency[m[33m, [m[1;32mfix/wifi-disconnect-latency[m[33m)[m
+Author: Alex[Le Van Thi] <f260105@kaonmedia.com>
+Date:   Fri Aug 21 15:13:09 2026 +0700
+
+    Cut wifi connect/disconnect latency caused by scan lock contention
+    
+    A user-triggered disconnect_wifi could take tens of seconds to reply.
+    The wait was almost entirely contention with the background scan loop
+    rather than the disconnect work itself.
+    
+    _dispatch_wifi_command blocks on the per-interface wifi lock, and the
+    background scanner takes that same lock. The scanner ran every 3s while
+    a real `iw scan` takes 2-5s (longer with _run_scan_with_busy_retry EBUSY
+    backoff), so the lock was held essentially continuously and an arriving
+    command almost always had to wait out a scan first.
+    
+    The scanner's existing non-blocking acquire did not help: it only skips
+    when the lock is already held, but a command *queued* on the lock holds
+    nothing, so each new scan cycle won the race ahead of it.
+    
+    Changes:
+    
+    - Track a per-interface pending-command count, set before the blocking
+      acquire in _dispatch_wifi_command and cleared after the command runs.
+      _wifi_background_scan_one now checks it first and skips the cycle, so a
+      queued command waits for at most the one scan already in flight.
+    
+    - Raise WIFI_BACKGROUND_SCAN_INTERVAL_SECONDS from 3 to 12, leaving real
+      gaps between scans instead of a ~100% lock duty cycle.
+    
+    - Trim disconnect_wifi's serial timeout chain (terminate 15->5, dhcpcd -k
+      15->8, nmcli managed yes 15->8, ip addr flush 15->5), taking the
+      worst-case tail from 60s to 26s. These are hang budgets; each call is
+      normally sub-second. ip addr flush also moves onto _run_hard_timeout so
+      a forked helper inheriting its pipe cannot hang it past its timeout.
+    
+    - Lower set_interface_mode's nmcli device disconnect timeout from 300s to
+      30s. It runs under the same interface lock, so a stuck call there could
+      block every later connect/disconnect on that interface for 5 minutes.
+    
+    - Update two comments that still cited the removed nmcli timeout=300 as
+      the rationale for the locking design.
+    
+    Verified: all three modules byte-compile, and the preemption logic was
+    exercised directly - with a scan in flight and a command arriving
+    mid-scan, the next scan cycle skips and the pending count clears without
+    leaking.
+    
+    Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+[33mcommit ed34e69eb37a342431b3b49e8e2471c55a2574c7[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Fri Aug 21 13:57:15 2026 +0700
+
+    Fix old nmcli bug
+
+[33mcommit 2a6a369cbe413572bf6e4cb073effdcebd4494f6[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Fri Aug 21 13:10:40 2026 +0700
+
+    Update nearby hotspot mechanism
+
+[33mcommit d430a328673349b6c623ec9371a9e5716eff5d82[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Fri Aug 21 11:34:46 2026 +0700
+
+    Update wifi connection
+
+[33mcommit e5abec742d3f6bdbac0e9b55ec693dfcb3fba65f[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Fri Aug 21 10:32:26 2026 +0700
+
+    Update
+
+[33mcommit 886a54b4a36e371756630f4ac8fa15dcebabaad6[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Fri Aug 14 16:17:09 2026 +0700
+
+    update
+
+[33mcommit 4b663bbc0e7d42883f443319a4db98569c74e186[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Wed Aug 12 17:50:45 2026 +0700
+
+    update new architecture
+
+[33mcommit b46affc1bf8b985bd1d63f63a6f7dd7b31bf5dd4[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Wed Aug 12 11:10:38 2026 +0700
+
+    update new feature
+
+[33mcommit 5c1a64f25572c9d5846ae10431168b5ff16c1e00[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Thu Aug 6 18:25:38 2026 +0700
+
+    Update new code
+
+[33mcommit cd232e97071ad773fd2f47d2d5fd67d4d589c207[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Tue Aug 4 13:43:45 2026 +0700
+
+    Update features
+
+[33mcommit 58fb1a94713f28eea09de148945171884594251b[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Mon Aug 3 17:42:37 2026 +0700
+
+    Update
+
+[33mcommit cfb36fb2632e777f9ec9b70461c88553e7781b35[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Thu Jul 30 17:54:50 2026 +0700
+
+    Update features
+
+[33mcommit d361f69b8ffcc1fd987a7979fdb80d64b3a6999b[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Wed Jul 29 10:13:36 2026 +0700
+
+    update README
+
+[33mcommit 191730b37cd5abd240dce93d64d22a389f44c238[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Tue Jul 28 15:42:01 2026 +0700
+
+    update install.sh
+
+[33mcommit b63051870907bc28dc9fc11181f56c5b7f436bab[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Tue Jul 28 15:40:06 2026 +0700
+
+    Update Pi agent
+
+[33mcommit 977cc6c368e04f59739246a6301190547504a2f2[m
+Author: Nevan99 <levanthi1999@gmail.com>
+Date:   Tue Jul 28 15:38:15 2026 +0700
+
+    Test credentials
+
+[33mcommit 4ff4bb7fa3e78aea0c19067e2aba3d301f2c41c2[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Tue Jul 28 14:35:42 2026 +0700
+
+    Update MQTT
+
+[33mcommit 0a3909b58ec2d6547c5434e70ac45fc77c8bcb57[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Fri Jul 24 17:53:38 2026 +0700
+
+    update Pi agent
+
+[33mcommit bc7128e4bc20b66adce0d9a9c19913e1196ba712[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Fri Jul 24 16:24:32 2026 +0700
+
+    Update system
+
+[33mcommit 50a12b1d21112dcf6dfa0e0d69af5e498c1495cf[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Wed Jul 22 17:21:13 2026 +0700
+
+    Delete venv
+
+[33mcommit 70b5846ea510d646cf11fb2e838204e750e6da56[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Wed Jul 22 17:16:31 2026 +0700
+
+    Revert "Revert "First commit""
+    
+    This reverts commit e8020ec97b7270009e94a9d3132be030db02c0e3.
+
+[33mcommit e8020ec97b7270009e94a9d3132be030db02c0e3[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Wed Jul 22 17:12:17 2026 +0700
+
+    Revert "First commit"
+    
+    This reverts commit 672e4fad3cfb6e6d57615ae7868e45230f29ff09.
+
+[33mcommit 672e4fad3cfb6e6d57615ae7868e45230f29ff09[m
+Author: Alexle <Alexle@kaonbroadband.com>
+Date:   Wed Jul 22 17:12:03 2026 +0700
+
+    First commit
