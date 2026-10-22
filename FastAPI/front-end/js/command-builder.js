@@ -32,6 +32,11 @@ const ACTION_PARAMS = {
   reboot_pi: [],
   tcpdump: [{ name: 'interface', label: 'Interface', type: 'interface', required: true }],
   stop_tcpdump: [{ name: 'interface', label: 'Interface', type: 'interface', required: true }],
+  start_pcap_capture: [
+    { name: 'interface', label: 'Interface', type: 'interface', required: true },
+    { name: 'name', label: 'Capture name (optional)', type: 'text' },
+  ],
+  stop_pcap_capture: [{ name: 'interface', label: 'Interface', type: 'interface', required: true }],
   connect_wifi: [
     { name: 'ssid', label: 'SSID (ignored if BSSID is set)', type: 'text' },
     { name: 'bssid', label: 'BSSID (optional - overrides SSID)', type: 'text' },
@@ -65,16 +70,16 @@ const ACTION_PARAMS = {
     },
     { name: 'identity', label: 'Enterprise: identity', type: 'text', showIf: { security: ['enterprise', 'enterprise_192'] } },
     { name: 'anonymous_identity', label: 'Enterprise: anonymous identity (optional)', type: 'text', showIf: { security: ['enterprise', 'enterprise_192'] } },
-    { name: 'eap_password', label: 'Enterprise: password (PEAP/TTLS/PWD)', type: 'password', showIf: { security: ['enterprise'] } },
+    { name: 'eap_password', label: 'Enterprise: password', type: 'password', showIf: { security: ['enterprise'], eap_method: ['PEAP', 'TTLS', 'PWD'] } },
     {
-      name: 'phase2', label: 'Enterprise: inner auth (PEAP/TTLS)', type: 'select', showIf: { security: ['enterprise'] },
+      name: 'phase2', label: 'Enterprise: inner auth', type: 'select', showIf: { security: ['enterprise'], eap_method: ['PEAP', 'TTLS'] },
       options: [{ value: '', label: 'default (PEAP: MSCHAPV2, TTLS: PAP)' }, { value: 'MSCHAPV2', label: 'MSCHAPV2' }, { value: 'PAP', label: 'PAP' }, { value: 'GTC', label: 'GTC' }],
     },
     { name: 'domain_suffix_match', label: 'Enterprise: server domain (optional)', type: 'text', showIf: { security: ['enterprise', 'enterprise_192'] } },
     { name: 'ca_cert_pem', label: 'Enterprise: CA certificate PEM (optional - blank = server not validated)', type: 'textarea', showIf: { security: ['enterprise', 'enterprise_192'] } },
-    { name: 'client_cert_pem', label: 'Enterprise: client certificate PEM (TLS)', type: 'textarea', showIf: { security: ['enterprise', 'enterprise_192'] } },
-    { name: 'private_key_pem', label: 'Enterprise: private key PEM (TLS)', type: 'textarea', showIf: { security: ['enterprise', 'enterprise_192'] } },
-    { name: 'private_key_passwd', label: 'Enterprise: private key password (optional)', type: 'password', showIf: { security: ['enterprise', 'enterprise_192'] } },
+    { name: 'client_cert_pem', label: 'Enterprise: client certificate PEM', type: 'textarea', showIf: { security: ['enterprise', 'enterprise_192'], eap_method: ['TLS'] } },
+    { name: 'private_key_pem', label: 'Enterprise: private key PEM', type: 'textarea', showIf: { security: ['enterprise', 'enterprise_192'], eap_method: ['TLS'] } },
+    { name: 'private_key_passwd', label: 'Enterprise: private key password (optional)', type: 'password', showIf: { security: ['enterprise', 'enterprise_192'], eap_method: ['TLS'] } },
     // WPA3-Personal Compatibility Mode: the WPA3 part is in the AP's RSN
     // Override elements, only read with rsn_overriding on (agent default: force).
     {
@@ -230,6 +235,18 @@ const ACTION_RESULT_FIELDS = {
   stop_tcpdump: [
     { name: 'streaming', type: 'boolean' },
     { name: 'stopped', type: 'boolean' },
+    { name: 'interface', type: 'text' },
+  ],
+  start_pcap_capture: [
+    { name: 'capturing', type: 'boolean' },
+    { name: 'already_running', type: 'boolean' },
+    { name: 'interface', type: 'text' },
+  ],
+  stop_pcap_capture: [
+    { name: 'capturing', type: 'boolean' },
+    { name: 'saved', type: 'boolean' },
+    { name: 'capture_id', type: 'number' },
+    { name: 'byte_count', type: 'number' },
     { name: 'interface', type: 'text' },
   ],
   connect_wifi: [
@@ -403,6 +420,7 @@ function renderParamFields() {
   paramFields.querySelectorAll('.iface-dropdown-mount[data-param]').forEach(mount => {
     const box = buildIfaceDropdown();
     box.dataset.param = mount.dataset.param;
+    setSingleTargetPiId(box);
     setDropdownOptions(box, interfaces, []);
     mount.replaceWith(box);
   });
@@ -473,8 +491,17 @@ function refreshInterfaceOptions() {
 
   paramFields.querySelectorAll('.iface-dropdown[data-param]').forEach(box => {
     const current = getDropdownSelected(box);
+    setSingleTargetPiId(box);
     setDropdownOptions(box, interfaces, current.filter(v => interfaces.includes(v)));
   });
+}
+
+// Tells setDropdownOptions which Pi to pull wifiN tags for - only when Target
+// is a single Pi (all/multicast have no interface list to tag).
+function setSingleTargetPiId(box) {
+  const target = targetSelect.value;
+  if (target && target !== 'all' && target !== 'multicast') box.dataset.piId = target;
+  else delete box.dataset.piId;
 }
 
 actionSelect.addEventListener('change', renderParamFields);

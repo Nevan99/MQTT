@@ -116,8 +116,27 @@ document.addEventListener('click', (e) => {
   btn.title = showing ? 'Show password' : 'Hide password';
 });
 
+// Last-known max standard per (Pi, interface), so a rebuilt dropdown shows
+// its wifiN tags immediately instead of waiting on the buffer fetch below.
+const ifaceStdCache = {};
+
+// Fills the wifiN tags of a dropdown carrying data-pi-id (the Action panel
+// and Pi detail action bar) from the InterfaceStatus buffer.
+async function loadDropdownStdTags(wrap, piId) {
+  const statusList = await fetchInterfaceStatusBuffer(piId);
+  if (wrap.dataset.piId !== piId) return;
+  const cache = ifaceStdCache[piId] = ifaceStdCache[piId] || {};
+  statusList.forEach(status => {
+    const standard = maxStandardOf(status);
+    if (standard) cache[status.interface] = standard;
+    const row = wrap.querySelector(`.iface-row[data-iface="${CSS.escape(status.interface)}"]`);
+    applyWifiStdTag(row, status);
+  });
+}
+
 function setDropdownOptions(wrap, interfaces, selectedValues, onChange) {
   const panel = wrap.querySelector('.iface-dropdown-panel');
+  const piId = wrap.dataset.piId;
   if (!interfaces.length) {
     panel.innerHTML = '<div class="pi-log-empty">no interfaces</div>';
     updateDropdownLabel(wrap);
@@ -129,7 +148,11 @@ function setDropdownOptions(wrap, interfaces, selectedValues, onChange) {
       <input type="checkbox" class="iface-select-all">
       Select all
     </label>
-  ` + interfaces.map(i => `<label class="iface-row"><input type="checkbox" value="${i}">${i}</label>`).join('');
+  ` + interfaces.map(i => {
+    const tag = piId && isWifiInterface(i) ? wifiStdTagHtml((ifaceStdCache[piId] || {})[i] || null) : '';
+    return `<label class="iface-row" data-iface="${i}"><input type="checkbox" value="${i}">${i}${tag}</label>`;
+  }).join('');
+  if (piId) loadDropdownStdTags(wrap, piId);
 
   const selectAllCb = panel.querySelector('.iface-select-all');
   const itemCbs = [...panel.querySelectorAll('input[type="checkbox"]:not(.iface-select-all)')];
@@ -268,6 +291,7 @@ async function toggleCapture(piId, spec, entry, btn) {
     }
     entry.captureState[spec.kind] = { name };
     setCaptureBtn(btn, true);
+    announceRecordingChange();
     return;
   }
 
@@ -284,6 +308,7 @@ async function toggleCapture(piId, spec, entry, btn) {
       alert('Failed to stop the recording on the server.');
       return;
     }
+    announceRecordingChange();
     await loadCaptures();
   } catch {
     alert('Failed to stop the recording.');
@@ -307,9 +332,14 @@ function applyRecordingState(piId, active, targets) {
       setCaptureBtn(t.logsBtn, !!logs);
     }
     if (t.pcapBtn && !t.pcapBtn.disabled) {
-      const want = t.iface || (t.state.pcapState && t.state.pcapState.interface);
+      // t.iface may be a function (detail page: whatever interface is
+      // selected right now), so the button tracks that interface's own
+      // recording and other interfaces stay free to start theirs.
+      const iface = typeof t.iface === 'function' ? t.iface() : t.iface;
+      const want = iface || (t.state.pcapState && t.state.pcapState.interface);
       const pcap = mine.find(r => r.category === 'pcap' && (!want || r.interface === want));
-      if (pcap && !t.state.pcapState) {
+      const cur = t.state.pcapState;
+      if (pcap && (!cur || cur.interface !== pcap.interface)) {
         t.state.pcapState = { name: pcap.name, interface: pcap.interface };
         setCaptureBtn(t.pcapBtn, true);
         if (t.onPcapIface) t.onPcapIface(pcap.interface);
@@ -346,13 +376,38 @@ function fleetRecordingTargets(entry) {
 }
 
 // Runs on every 5s refresh so all open tabs converge on the backend's view.
+// Detail page / capture tab first, and each part guarded, so a problem in
+// one fleet row can't leave the visible page's buttons stale.
 async function syncRecordingButtons() {
   const active = await fetchActiveRecordings();
   if (!active) return;
-  piRows.forEach((entry, piId) => applyRecordingState(piId, active, fleetRecordingTargets(entry)));
   if (typeof detailLogEntry !== 'undefined' && detailLogEntry && detailPiId) {
-    applyRecordingState(detailPiId, active, detailRecordingTargets(detailLogEntry));
+    try {
+      applyRecordingState(detailPiId, active, detailRecordingTargets(detailLogEntry));
+    } catch (err) {
+      console.error('[recordings] detail sync failed:', err);
+    }
   }
+  piRows.forEach((entry, piId) => {
+    try {
+      applyRecordingState(piId, active, fleetRecordingTargets(entry));
+    } catch (err) {
+      console.error(`[recordings] fleet sync failed for ${piId}:`, err);
+    }
+  });
+}
+
+// Other browser tabs of this app hear about a start/stop right away
+// instead of on their next 5s poll (which browsers also throttle in
+// background tabs), and a tab re-syncs whenever it becomes visible.
+const recordingChannel = 'BroadcastChannel' in window ? new BroadcastChannel('pi-fleet-recordings') : null;
+if (recordingChannel) recordingChannel.onmessage = () => syncRecordingButtons();
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') syncRecordingButtons();
+});
+
+function announceRecordingChange() {
+  if (recordingChannel) recordingChannel.postMessage('changed');
 }
 
 async function togglePcapCapture(piId, entry, btn) {
@@ -383,6 +438,7 @@ async function togglePcapCapture(piId, entry, btn) {
     }
 
     entry.pcapState = { name, interface: iface };
+    announceRecordingChange();
     btn.innerHTML = '&#9209;';
     btn.title = 'Stop Capture';
     btn.classList.add('recording');
@@ -411,6 +467,7 @@ async function togglePcapCapture(piId, entry, btn) {
       alert('PCAP capture stopped but was not saved on the server.');
       return;
     }
+    announceRecordingChange();
     await loadCaptures();
   } catch (err) {
     alert(`Failed to stop PCAP capture: ${err.message}`);
@@ -475,9 +532,32 @@ function bandMatchesChannel(band, channel) {
   return band === (channel <= 14 ? 'bg' : 'a');
 }
 
+// One control per Pi+interface+mode, kept across re-renders. The card body
+// is rebuilt on every 5s status refresh; rebuilding this control too reset
+// whatever band/channel was being picked and wiped the Applied/error
+// message every few seconds. The same element is re-attached instead, and
+// only resynced to the saved default while the user hasn't touched it.
+const ifaceDefaultControls = new Map();
+
+// True while the user is inside a band/channel control - the card
+// re-renders skip that refresh entirely so focus/typing isn't interrupted.
+function isEditingIfaceDefault(container) {
+  const a = document.activeElement;
+  return !!(a && container.contains(a) && a.closest('.iface-default-row'));
+}
+
 function renderInterfaceDefaultControl(container, piId, iface, current, onSaved, isMonitor) {
+  const key = `${piId}::${iface}::${isMonitor ? 'monitor' : 'station'}`;
+  const cached = ifaceDefaultControls.get(key);
+  if (cached) {
+    cached.onSaved = onSaved;
+    if (!cached.dirty && !cached.saving) cached.sync(current);
+    container.appendChild(cached.wrap);
+    return;
+  }
+
   const wrap = document.createElement('div');
-  wrap.className = 'wifi-connect-row';
+  wrap.className = 'wifi-connect-row iface-default-row';
   // Monitor interfaces get a 6GHz option: its channel numbers overlap
   // 2.4/5GHz ones, so set_monitor_channel needs the band to tune by
   // frequency. Station (connect_wifi) defaults stay 2.4/5GHz.
@@ -525,6 +605,8 @@ function renderInterfaceDefaultControl(container, piId, iface, current, onSaved,
 
     const btn = wrap.querySelector('.iface-default-save');
     btn.disabled = true;
+    const st0 = ifaceDefaultControls.get(key);
+    if (st0) st0.saving = true;
     try {
       const res = await apiFetch(`${API}/pis/${encodeURIComponent(piId)}/interfaces/${encodeURIComponent(iface)}/default`, {
         method: 'PUT',
@@ -536,7 +618,9 @@ function renderInterfaceDefaultControl(container, piId, iface, current, onSaved,
         return;
       }
       const updated = await res.json();
-      if (onSaved) onSaved(updated.interface_defaults);
+      const st = ifaceDefaultControls.get(key);
+      if (st) st.dirty = false;
+      if (st && st.onSaved) st.onSaved(updated.interface_defaults);
 
       if (!band && !channel) {
         successEl.textContent = 'Cleared.';
@@ -564,6 +648,8 @@ function renderInterfaceDefaultControl(container, piId, iface, current, onSaved,
       errorEl.textContent = `Failed to save default: ${err.message}`;
     } finally {
       btn.disabled = false;
+      const st1 = ifaceDefaultControls.get(key);
+      if (st1) st1.saving = false;
     }
   }
 
@@ -579,6 +665,17 @@ function renderInterfaceDefaultControl(container, piId, iface, current, onSaved,
     errorEl.textContent = '';
     save(null, null);
   });
+
+  const state = {
+    wrap, onSaved, dirty: false, saving: false,
+    sync(cur) {
+      bandEl.value = (cur && cur.band) || '';
+      channelEl.value = (cur && cur.channel) || '';
+    },
+  };
+  // Touched = keep the user's values over the saved default until saved.
+  [bandEl, channelEl].forEach(el => el.addEventListener('input', () => { state.dirty = true; }));
+  ifaceDefaultControls.set(key, state);
 
   container.appendChild(wrap);
 }
@@ -849,6 +946,7 @@ async function loadFleetIfaceInfo(piId, entry, iface) {
 const wifiModeSwitchInFlight = new Set();
 
 function renderFleetIfaceBody(entry, cardState) {
+  if (isEditingIfaceDefault(cardState.infoEl)) return;
   const details = (entry.ifaceDetailsCache || []).find(d => d.name === cardState.iface);
   const link = entry.linkInfoCache[cardState.iface];
   const rows = [];
@@ -1473,11 +1571,16 @@ async function refreshPis() {
     const res = await apiFetch(`${API}/pis`);
     if (!res.ok) return;
     pis = await res.json();
-    renderPis();
-    syncRecordingButtons();
   } catch {
     // backend unreachable; keep last known list
+    return;
   }
+  try {
+    renderPis();
+  } catch (err) {
+    console.error('[fleet] render failed:', err);
+  }
+  syncRecordingButtons();
 }
 
 refreshPis();

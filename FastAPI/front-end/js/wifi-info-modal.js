@@ -193,15 +193,17 @@ function openWifiHotspotDetailModal(piId, iface, net) {
   wifiHotspotModalState = { overlay };
 }
 
-// Every non-empty filter input has to match (AND, not OR).
+// Every non-empty filter input has to match (AND, not OR). Prefix match,
+// ignoring case (spaces still count), so "ho" finds "Home-5G" but not
+// "MyHotspot".
 function wifiInfoRowMatchesFilters(bodyEl, net) {
   const inputs = bodyEl.querySelectorAll('.table-filter-input');
   for (const input of inputs) {
-    const q = input.value.trim().toLowerCase();
+    const q = input.value.toLowerCase();
     if (!q) continue;
     const col = WIFI_INFO_COLUMNS.find(([label]) => label === input.dataset.key);
     const value = wifiInfoCellValue(col[1](net));
-    if (!String(value).toLowerCase().includes(q)) return false;
+    if (!String(value).toLowerCase().startsWith(q)) return false;
   }
   return true;
 }

@@ -27,6 +27,7 @@ function renderDetailParamFields(container, actionSelectEl, piId) {
   container.querySelectorAll('.iface-dropdown-mount[data-param]').forEach(mount => {
     const box = buildIfaceDropdown();
     box.dataset.param = mount.dataset.param;
+    box.dataset.piId = piId;
     setDropdownOptions(box, interfaces, []);
     mount.replaceWith(box);
   });
@@ -357,6 +358,7 @@ const detailWifiModeSwitchInFlight = new Set();
 
 function renderDetailIfaceBody(body, name) {
   const info = body.querySelector('.pd-iface-info') || body;
+  if (isEditingIfaceDefault(info)) return;
   const details = (detailIfaceDetailsCache || []).find(d => d.name === name);
   const link = detailLinkInfoCache[name];
   const rows = [];
@@ -743,10 +745,12 @@ async function toggleWifiScan(piId, iface, btn, resultsEl, listEl) {
 // Hides scanned-network cards whose SSID doesn't contain the typed text -
 // pure client-side narrowing of the last scan, no re-scan involved.
 function applyWifiSearchFilter(listEl, query) {
-  const q = query.trim().toLowerCase();
+  // Prefix match ignoring case (spaces still count), same as the hotspot
+  // window's column filters (wifiInfoRowMatchesFilters).
+  const q = query.toLowerCase();
   listEl.querySelectorAll('.pd-iface-card').forEach(card => {
     const ssid = (card.querySelector('.pd-iface-name')?.textContent || '').toLowerCase();
-    card.classList.toggle('hidden', !!q && !ssid.includes(q));
+    card.classList.toggle('hidden', !!q && !ssid.startsWith(q));
   });
 }
 
@@ -919,8 +923,8 @@ function renderDetailInterfaceList(piId) {
 // for a table row's state works without any changes to that logic. Unlike
 // the fleet table, both windows are always "expanded" here (no toggle),
 // so the socket opens immediately and closes when leaving the page.
-function buildDetailLogEntry(piId) {
-  const entry = { captureState: null, pcapState: null, ws: null, tcpdumpStreaming: false, logsStreaming: false };
+function buildDetailLogEntry(piId, lockedIface = null) {
+  const entry = { captureState: null, pcapState: null, ws: null, tcpdumpStreaming: false, logsStreaming: false, lockedIface };
   document.querySelectorAll('#pdLogPanel .pd-log-block').forEach(block => {
     const kind = block.dataset.kind;
     const spec = PANELS.find(p => p.kind === kind);
@@ -951,7 +955,20 @@ function buildDetailLogEntry(piId) {
       const ifaceSelect = block.querySelector('.pi-stream-iface');
       entry.tcpdumpIfaceSelect = ifaceSelect;
       ifaceSelect.value = '';
+      ifaceSelect.disabled = !!lockedIface;
       ifaceSelect.onchange = (e) => onDetailTcpdumpIfaceChange(piId, entry, streamBtn, e.target.value);
+
+      // Each popped-out tab has its own page state and WebSocket, filtered
+      // to its own interface (connectPiLog), so several interfaces can be
+      // streamed/captured at once - the backend keys pcap recordings by
+      // Pi+interface already.
+      block.querySelector('.pi-log-popout').onclick = () => {
+        if (!ifaceSelect.value) {
+          alert('Select an interface to open in a new tab.');
+          return;
+        }
+        window.open(captureTabHash(piId, ifaceSelect.value), '_blank');
+      };
     }
 
     const captureBtn = block.querySelector('.pi-log-capture');
@@ -1018,6 +1035,16 @@ async function onDetailTcpdumpIfaceChange(piId, entry, btn, newIface) {
   const spec = PANELS.find(p => p.kind === 'tcpdump');
   if (panel) resetLogPanel(panel, spec);
 
+  // A recording on the previous interface keeps running on the Pi; the
+  // button just switches to the new interface's state (off until
+  // restoreRecordingState finds one running there).
+  const captureBtn = document.querySelector('#pdLogPanel .pd-log-block[data-kind="tcpdump"] .pi-log-capture');
+  if (entry.pcapState && entry.pcapState.interface !== newIface && captureBtn && !captureBtn.disabled) {
+    entry.pcapState = null;
+    setCaptureBtn(captureBtn, false);
+  }
+  restoreRecordingState(piId, detailRecordingTargets(entry));
+
   if (entry.tcpdumpActiveIface && entry.tcpdumpActiveIface !== newIface) {
     const prevIface = entry.tcpdumpActiveIface;
     entry.tcpdumpStreaming = false;
@@ -1033,7 +1060,19 @@ async function onDetailTcpdumpIfaceChange(piId, entry, btn, newIface) {
   }
 }
 
+function captureTabHash(piId, iface) {
+  return `#capture/${encodeURIComponent(piId)}/${encodeURIComponent(iface)}`;
+}
+
 function refreshDetailLogIfaceOptions(piId, entry) {
+  // A capture tab stays on its one interface, even before the Pi list has
+  // loaded (piInterfaces is empty on a fresh tab's first render).
+  if (entry.lockedIface) {
+    const select = entry.tcpdumpIfaceSelect;
+    select.innerHTML = `<option value="${escapeCaptureHtml(entry.lockedIface)}">${escapeCaptureHtml(entry.lockedIface)}</option>`;
+    select.value = entry.lockedIface;
+    return;
+  }
   const interfaces = piInterfaces(piId);
   PANELS.forEach(spec => {
     const select = entry[spec.kind + 'IfaceSelect'];
@@ -1048,6 +1087,9 @@ function refreshDetailLogIfaceOptions(piId, entry) {
 function detailRecordingTargets(logEntry) {
   return [{
     state: logEntry,
+    // The record button belongs to the selected interface (or a capture
+    // tab's locked one), not to whichever interface happens to be recording.
+    iface: () => logEntry.lockedIface || (logEntry.tcpdumpIfaceSelect && logEntry.tcpdumpIfaceSelect.value) || undefined,
     logsBtn: document.querySelector('#pdLogPanel .pd-log-block[data-kind="logs"] .pi-log-capture'),
     pcapBtn: document.querySelector('#pdLogPanel .pd-log-block[data-kind="tcpdump"] .pi-log-capture'),
     // The pcap stop command needs the interface, so show which one it is.
@@ -1088,7 +1130,9 @@ function refreshDetailView() {
   if (detailLogEntry) refreshDetailLogIfaceOptions(detailPiId, detailLogEntry);
 }
 
-function showPiDetail(piId) {
+const APP_TITLE = document.title;
+
+function showPiDetail(piId, captureIface = null) {
   closeDetailLogEntry();
   closeWifiInfoModal();
   // Bypasses showTabView/its "tabshown" event (this isn't a tab), so every
@@ -1106,14 +1150,17 @@ function showPiDetail(piId) {
   detailLinkInfoCache = {};
   tabs.forEach(b => b.classList.remove('active'));
   views.forEach(v => v.classList.remove('active'));
-  document.getElementById('piDetail').classList.add('active');
-  document.getElementById('piDetailTitle').textContent = piId;
+  const detailEl = document.getElementById('piDetail');
+  detailEl.classList.add('active');
+  detailEl.classList.toggle('capture-only', !!captureIface);
+  document.getElementById('piDetailTitle').textContent = captureIface ? `${piId} · ${captureIface}` : piId;
+  document.title = captureIface ? `${captureIface} @ ${piId}` : APP_TITLE;
   renderPowerButtons(document.getElementById('piDetailPower'), piId);
 
   renderDetailInfo(piId);
   renderDetailInterfaceList(piId);
 
-  detailLogEntry = buildDetailLogEntry(piId);
+  detailLogEntry = buildDetailLogEntry(piId, captureIface);
   refreshDetailLogIfaceOptions(piId, detailLogEntry);
   detailLogEntry.ws = connectPiLog(piId, detailLogEntry);
   restoreRecordingState(piId, detailRecordingTargets(detailLogEntry));
@@ -1133,6 +1180,7 @@ const KNOWN_VIEWS = [...tabs].map(b => b.dataset.view);
 
 function showTabView(viewId) {
   closeDetailLogEntry();
+  document.title = APP_TITLE;
   closeWifiInfoModal();
   detailPiId = null;
   document.getElementById('piDetail').classList.remove('active');
@@ -1161,6 +1209,11 @@ document.getElementById('piDetailBack').addEventListener('click', () => {
 // tab click handler and fleet-table.js's #pi/<id> links).
 function routeApp() {
   const hash = location.hash.slice(1);
+  const captureMatch = hash.match(/^capture\/([^/]+)\/(.+)$/);
+  if (captureMatch) {
+    showPiDetail(decodeURIComponent(captureMatch[1]), decodeURIComponent(captureMatch[2]));
+    return;
+  }
   const piMatch = hash.match(/^pi\/(.+)$/);
   if (piMatch) {
     showPiDetail(decodeURIComponent(piMatch[1]));

@@ -132,7 +132,25 @@ class StreamingMixin:
         used to take so long."""
         async with self._pcap_lock:
             if interface in self._pcap_procs:
-                return False
+                old_process = self._pcap_procs[interface]
+                old_state = self._pcap_state.get(interface)
+                # Only a capture that's still recording blocks a new one. If
+                # tcpdump exited or the upload socket died (e.g. the backend
+                # restarted), its relay task has already finished and the
+                # backend no longer knows about it - drop the stale entry
+                # instead of answering "already running" forever.
+                # The backend never sends anything before its final ack, so
+                # EOF on the reader means its end of the socket is gone -
+                # the only sign of that on a quiet interface, where nothing
+                # gets written that would fail.
+                relay_done = old_state is not None and old_state["done"].is_set()
+                backend_gone = old_state is not None and old_state["reader"].at_eof()
+                if old_process.returncode is None and not relay_done and not backend_gone:
+                    return False
+                self._pcap_procs.pop(interface, None)
+                self._pcap_state.pop(interface, None)
+                if old_process.returncode is None:
+                    await self._terminate(old_process)
             process = await self._spawn_tcpdump(interface)
 
             capture_name = name or f"{self.pi_id}-pcap-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}"
@@ -147,7 +165,7 @@ class StreamingMixin:
 
             state = {
                 "error": None, "capture_id": None, "byte_count": 0,
-                "done": asyncio.Event(),
+                "done": asyncio.Event(), "reader": reader,
             }
             task = asyncio.create_task(
                 self._relay_pcap(process, reader, writer, state), name=f"pcap-relay-{interface}",

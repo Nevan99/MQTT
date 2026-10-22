@@ -184,6 +184,16 @@ class TestCase(SQLModel, table=True):
         return json.loads(self.steps_json)
 
 
+class StepBulkEdit(SQLModel, table=True):
+    """Undo record for one applied mass step edit (TestCases.bulk_edit_steps):
+    each affected testcase's steps_json as it was before."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    created_at: datetime = Field(default_factory=utcnow)
+    summary: str = ""
+    before_json: str = "{}"     # {testcase_id: old steps_json}
+    undone: bool = False
+
+
 class TestRun(SQLModel, table=True):
     # A run snapshots the testcase's steps/config at launch time (steps_json,
     # stop_on_failure, repeat_count) - editing or deleting the testcase

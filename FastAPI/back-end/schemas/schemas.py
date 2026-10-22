@@ -131,6 +131,17 @@ class TestCaseBulkRequest(BaseModel):
     ids: list[int] = []
 
 
+class TestCaseBulkEditStepsRequest(TestCaseBulkRequest):
+    """Mass step edit - see service/step_bulk_edit.py for filter/ops.
+    all_testcases ignores ids. dry_run only previews. exclude lists
+    "<testcase_id>:<step_index>" changes unticked in the preview."""
+    all_testcases: bool = False
+    filter: dict[str, Any] = {}
+    ops: list[dict[str, Any]] = []
+    exclude: list[str] = []
+    dry_run: bool = True
+
+
 class TestCaseBulkTagRequest(TestCaseBulkRequest):
     """Bulk tag edit. `mode` decides what happens to each testcase's existing
     tags: "add" merges (the common case - tagging a batch without disturbing

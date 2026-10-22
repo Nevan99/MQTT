@@ -7,11 +7,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlmodel import Session, select
 
 from database.database import get_session, get_session_direct
-from database.models import TestCase, TestRun, Command, Pi, InterfaceStatus
+from database.models import TestCase, TestRun, Command, Pi, InterfaceStatus, StepBulkEdit
 from schemas.schemas import (
+    TestCaseBulkEditStepsRequest,
     TestCaseRequest, TestCaseOut, TestRunOut, CommandRequest,
-    TestCaseBulkRequest, TestCaseBulkTagRequest,
+    TestCaseBulkRequest, TestCaseBulkTagRequest, TestCaseStep,
 )
+from service import step_bulk_edit
 from service.mqtt_service import mqtt_service
 from service import run_control
 from service.auth import get_current_user
@@ -386,6 +388,93 @@ def bulk_tag_testcases(req: TestCaseBulkTagRequest, session: Session = Depends(g
     for testcase in updated:
         session.refresh(testcase)
     return [_testcase_to_out(t) for t in updated]
+
+
+@router.post("/bulk/edit-steps")
+def bulk_edit_steps(req: TestCaseBulkEditStepsRequest, session: Session = Depends(get_session)):
+    """Find-and-replace over steps. dry_run=true returns the preview only;
+    false applies every change in one commit and keeps an undo record.
+    Edited steps go through the same TestCaseStep validation as a normal
+    save, so a mass edit can't produce a step the editor couldn't."""
+    testcases = (session.exec(select(TestCase).order_by(TestCase.id)).all()
+                 if req.all_testcases else _testcases_by_ids(session, req.ids))
+    try:
+        planned = step_bulk_edit.plan(testcases, req.filter, req.ops, set(req.exclude))
+        validated = {}
+        for tc, new_steps, _ in planned:
+            if new_steps is not None:
+                try:
+                    validated[tc.id] = [TestCaseStep(**s).model_dump() for s in new_steps]
+                except Exception as e:
+                    raise step_bulk_edit.BulkEditError(f'testcase "{tc.name}": edited step is invalid: {e}')
+    except (step_bulk_edit.BulkEditError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    changes = [
+        {"testcase_id": tc.id, "testcase_name": tc.name, **c}
+        for tc, _, cs in planned for c in cs
+    ]
+    result = {
+        "dry_run": req.dry_run,
+        "changes": changes,
+        "steps_changed": sum(1 for c in changes if not c["excluded"]),
+        "testcases_changed": len(validated),
+        "testcases_scanned": len(testcases),
+    }
+    if req.dry_run or not validated:
+        return result
+
+    before = {}
+    now = datetime.now(timezone.utc)
+    for tc, _, _ in planned:
+        if tc.id in validated:
+            before[tc.id] = tc.steps_json
+            tc.steps_json = json.dumps(validated[tc.id])
+            tc.updated_at = now
+            session.add(tc)
+    record = StepBulkEdit(
+        summary=f"{result['steps_changed']} step(s) in {len(validated)} testcase(s)",
+        before_json=json.dumps(before),
+    )
+    session.add(record)
+    session.commit()
+    result["undo_id"] = record.id
+    return result
+
+
+def _last_step_bulk_edit(session):
+    return session.exec(
+        select(StepBulkEdit).where(StepBulkEdit.undone == False)  # noqa: E712
+        .order_by(StepBulkEdit.id.desc())
+    ).first()
+
+
+@router.get("/bulk/edit-steps/last")
+def last_step_bulk_edit(session: Session = Depends(get_session)):
+    rec = _last_step_bulk_edit(session)
+    return {"id": rec.id, "summary": rec.summary, "created_at": rec.created_at} if rec else None
+
+
+@router.post("/bulk/edit-steps/undo")
+def undo_step_bulk_edit(session: Session = Depends(get_session)):
+    """Restore the steps of every testcase the last (not yet undone) mass
+    edit touched. Testcases deleted since are skipped."""
+    rec = _last_step_bulk_edit(session)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="Nothing to undo")
+    restored = []
+    for tc_id, steps_json in json.loads(rec.before_json).items():
+        tc = session.get(TestCase, int(tc_id))
+        if tc is None:
+            continue
+        tc.steps_json = steps_json
+        tc.updated_at = datetime.now(timezone.utc)
+        session.add(tc)
+        restored.append(tc.id)
+    rec.undone = True
+    session.add(rec)
+    session.commit()
+    return {"undone": rec.id, "summary": rec.summary, "restored_testcases": restored}
 
 
 @router.post("/bulk/delete")

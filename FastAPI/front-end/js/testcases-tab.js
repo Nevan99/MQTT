@@ -360,6 +360,8 @@ function tcRenderBulkBar() {
     n ? `${n} selected` : 'none selected';
   ['tcBulkRunBtn', 'tcBulkDuplicateBtn', 'tcBulkTagBtn', 'tcBulkAddToSuiteBtn', 'tcBulkExportBtn', 'tcBulkDeleteBtn']
     .forEach(id => { document.getElementById(id).disabled = n === 0; });
+  // "Edit steps…" stays enabled with nothing ticked - its dialog can also
+  // target all testcases (see tc-bulk-edit.js).
 }
 
 function tcClearSelection() {
@@ -804,7 +806,19 @@ async function populateTcClientPicker(picker, current) {
 function renderTcStepParamFields(container, step) {
   const fields = ACTION_PARAMS[step.action] || [];
   const targetPis = tcTargetPis(step);
-  container.innerHTML = fields.map(f => {
+  // showIf fields (e.g. the enterprise ones, only for security =
+  // WPA3-Enterprise) are wrapped so applyShowIf can hide them.
+  const wrapShowIf = (f, html) => (f.showIf
+    ? `<div class="param-field" data-show-if='${JSON.stringify(f.showIf)}'>${html}</div>`
+    : html);
+  container.innerHTML = fields.map(f => wrapShowIf(f, tcStepParamFieldHtml(f, step))).join('')
+    || '<div class="hint">this action has no parameters</div>';
+  applyShowIf(container);
+  tcWireStepParamWidgets(container, step, targetPis);
+}
+
+function tcStepParamFieldHtml(f, step) {
+  {
     const saved = step.params[f.name];
     if (f.type === 'interface') {
       // No separate "all interfaces" mode to pick - a fresh step already
@@ -849,8 +863,14 @@ function renderTcStepParamFields(container, step) {
         <div class="hint">pi:&lt;pi&gt;/&lt;interface&gt; is resolved to that radio's current IP when the step runs</div>
       `;
     }
+    if (f.type === 'textarea') {
+      return `<label>${f.label}</label><textarea class="field tc-step-param param-textarea" data-param="${f.name}" rows="4" spellcheck="false" placeholder="-----BEGIN ...-----">${String(value).replace(/</g, '&lt;')}</textarea>`;
+    }
     return `<label>${f.label}</label><input class="field tc-step-param" data-param="${f.name}" type="${f.type}" value="${value}">`;
-  }).join('') || '<div class="hint">this action has no parameters</div>';
+  }
+}
+
+function tcWireStepParamWidgets(container, step, targetPis) {
 
   container.querySelectorAll('.tc-ping-target-picker').forEach(picker => {
     const input = picker.previousElementSibling;
@@ -875,6 +895,7 @@ function renderTcStepParamFields(container, step) {
       // correct if the target is later pointed at a different Pi.
       const own = tcPiInterfaces(targetPis[0]);
       const box = buildIfaceDropdown();
+      box.dataset.piId = targetPis[0].pi_id;
       setDropdownOptions(box, own, tcIfaceFlatSelection(saved, own));
       pick.appendChild(box);
     } else {
@@ -887,7 +908,7 @@ function renderTcStepParamFields(container, step) {
             const own = tcPiInterfaces(p);
             const sel = tcIfaceSelectedForPi(saved, p);
             return `
-              <div class="tc-iface-pi" data-pi="${p.pi_id}">
+              <div class="tc-iface-pi" data-pi="${p.pi_id}" data-pi-id="${p.pi_id}">
                 <div class="tc-iface-pi-hdr">
                   <button type="button" class="icon-btn tc-iface-pi-toggle" title="Show/hide interfaces">${chevronIconSvg('right')}</button>
                   <span class="tc-iface-pi-name">${p.pi_id}</span>
@@ -900,8 +921,8 @@ function renderTcStepParamFields(container, step) {
                     </label>
                   ` : ''}
                   ${own.map(i => `
-                    <label class="iface-row">
-                      <input type="checkbox" value="${i}" ${sel.includes(i) ? 'checked' : ''}>${i}
+                    <label class="iface-row" data-iface="${i}">
+                      <input type="checkbox" value="${i}" ${sel.includes(i) ? 'checked' : ''}>${i}${isWifiInterface(i) ? wifiStdTagHtml((ifaceStdCache[p.pi_id] || {})[i] || null) : ''}
                     </label>
                   `).join('') || '<div class="hint">no interfaces reported for this Pi</div>'}
                 </div>
@@ -910,6 +931,8 @@ function renderTcStepParamFields(container, step) {
         : '<div class="hint">no Pis targeted - pick some above</div>';
 
       pick.querySelectorAll('.tc-iface-pi').forEach(section => {
+        // Same wifiN tags as the Action panel dropdown - see loadDropdownStdTags.
+        loadDropdownStdTags(section, section.dataset.piId);
         const all = section.querySelector('.tc-iface-pi-all');
         if (!all) return;
         const items = [...section.querySelectorAll('.tc-iface-pi-list input[type="checkbox"]:not(.tc-iface-pi-all)')];
@@ -959,6 +982,7 @@ function tcStepShapeFromCard(card, overrides = {}) {
 function collectTcStepParams(card) {
   const params = {};
   card.querySelectorAll('.tc-step-param').forEach(el => {
+    if (isHiddenParam(el)) return;   // showIf field not applicable - not saved
     const name = el.dataset.param;
     if (el.value === '') return;
     params[name] = el.type === 'number' ? Number(el.value) : el.value;

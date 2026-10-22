@@ -79,6 +79,16 @@
      grows a second, outer scrollbar that never fires that listener, so
      dragging it to the bottom never re-pins the view. */
   #pdLogPanel { overflow: hidden; }
+  /* #capture/<pi>/<iface>: a tab showing only one interface's tcpdump
+     panel, so several interfaces can be captured side by side in separate
+     browser tabs. !important beats layout.js's inline gutter-drag columns. */
+  #piDetail.capture-only #piDetailGrid { grid-template-columns: 1fr !important; }
+  #piDetail.capture-only #pdInfoPanel,
+  #piDetail.capture-only #pdActionPanel,
+  #piDetail.capture-only #piDetailGrid .gutter,
+  #piDetail.capture-only .pd-log-block[data-kind="logs"],
+  #piDetail.capture-only .pi-log-popout { display: none; }
+  #piDetail.capture-only .pd-log-block + .pd-log-block { margin-top: 0; border-top: 0; padding-top: 0; }
   .pd-results-panel { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; margin-top: 0.75rem; border: 1px solid #333; border-radius: 6px; overflow: hidden; }
   .pd-results-heading { flex: 0 0 auto; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; color: #888; padding: 0.4rem 0.6rem; border-bottom: 1px solid #262626; background: #181818; }
   .pd-results-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0.5rem; }
@@ -414,6 +424,20 @@
   .tc-editor-modal { max-width: 900px; max-height: 88vh; }
   .tc-editor-modal .wifi-info-modal-body { max-height: 80vh; }
   .tc-bulk-tag-modal { max-width: 420px; }
+  .tc-bulk-edit-modal { max-width: 860px; width: 95vw; }
+  .tc-be-h { margin: 1rem 0 0.4rem; font-size: 0.85rem; color: #ddd; display: flex; align-items: center; gap: 0.6rem; }
+  .tc-be-h:first-child { margin-top: 0; }
+  .tc-be-add { font-size: 0.75rem; padding: 0.15rem 0.5rem; }
+  .tc-be-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.5rem; }
+  .tc-be-grid label, .tc-be-op label { margin: 0; display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.75rem; }
+  .tc-be-op { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-end; padding: 0.4rem; border: 1px solid #2a2a2a; border-radius: 4px; margin-bottom: 0.4rem; background: #161616; }
+  .tc-be-op > label { flex: 1 1 130px; }
+  .tc-be-op .tc-be-op-kind { flex: 0 0 190px; }
+  .tc-be-preview { max-height: 300px; overflow: auto; margin-top: 0.5rem; font-size: 0.8rem; }
+  .tc-be-preview table { width: 100%; border-collapse: collapse; }
+  .tc-be-preview td { padding: 0.25rem 0.4rem; border-bottom: 1px solid #262626; vertical-align: top; }
+  .tc-be-preview .tc-be-diff { font-family: monospace; white-space: pre-wrap; color: #cfc; }
+  .tc-be-preview tr.excluded td { opacity: 0.4; text-decoration: line-through; }
 
   /* Testcases bulk toolbar + checkbox column + pager. The toolbar is always
      rendered rather than shown on first selection, so ticking a row doesn't
