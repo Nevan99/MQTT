@@ -361,6 +361,7 @@
   }
   .wifi-info-modal-status { flex: 1 1 auto; margin: 0; }
   .wifi-info-modal-close { font-size: 1.4rem; }
+  .wifi-info-rescan-btn { flex: 0 0 auto; padding: 0.2rem 0.6rem; font-size: 0.8rem; }
   .wifi-info-modal-body { padding: 0 0.9rem 0.75rem; overflow: auto; }
   table.wifi-info-table { border-collapse: collapse; font-family: ui-monospace, monospace; font-size: 0.75rem; white-space: nowrap; }
   table.wifi-info-table th, table.wifi-info-table td { padding: 0.25rem 0.6rem; border-bottom: 1px solid #262626; text-align: left; }

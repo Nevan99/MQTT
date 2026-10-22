@@ -376,7 +376,17 @@ class PiAgent(WifiMixin, WifiScanMixin, InterfacesMixin, StreamingMixin, WebUiPr
                 # queue behind any connect/disconnect holding the radio. A
                 # cache read needs no lock and returns in milliseconds, at
                 # the cost of results up to one background cycle stale.
-                result = await self.get_wifi_scan_detail(payload.get("interface"), use_cache=True)
+                #
+                # fresh=true (the Nearby Hotspot popup's Re-scan button) is
+                # the exception: a real `iw scan` right now, taken under the
+                # interface's wifi lock like a connect would, for when the
+                # user wants this instant's air rather than the last cycle's.
+                interface = payload.get("interface")
+                if payload.get("fresh") and interface:
+                    async with self._wifi_lock_for(interface):
+                        result = await self.get_wifi_scan_detail(interface, use_cache=False)
+                else:
+                    result = await self.get_wifi_scan_detail(interface, use_cache=True)
             elif action == "set_monitor_channel":
                 result = await self.set_monitor_channel(
                     payload.get("interface"), payload.get("channel"),

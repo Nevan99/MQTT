@@ -340,6 +340,32 @@ async function refreshWifiInfoModal(bodyEl, statusEl, piId, iface) {
   }
 }
 
+// Re-scan button: a fresh `iw scan` on the Pi right now (wifi_detail_scan
+// with fresh=true - see pi_agent core.py) rather than the background
+// cycle's cached results. The backend rolls the result into the same
+// wifi-history buffer, so a normal refresh then shows it.
+async function rescanWifiInfoModal(btn, bodyEl, statusEl, piId, iface) {
+  btn.disabled = true;
+  const label = btn.innerHTML;
+  btn.innerHTML = 'Scanning&hellip;';
+  statusEl.textContent = `Scanning ${iface}…`;
+  try {
+    const res = await postCmd(piId, 'wifi_detail_scan', { interface: iface, fresh: true });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    const data = await res.json();
+    const result = await awaitCommandResult(data.command_id, 30);
+    if (result && result.error) throw new Error(result.error);
+    // The popup may have been closed (or reopened elsewhere) mid-scan.
+    if (!wifiInfoModalState || !document.body.contains(bodyEl)) return;
+    await refreshWifiInfoModal(bodyEl, statusEl, piId, iface);
+  } catch (err) {
+    statusEl.textContent = `Re-scan failed: ${err.message}`;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = label;
+  }
+}
+
 function openWifiInfoModal(piId, iface) {
   closeWifiInfoModal();
 
@@ -353,6 +379,7 @@ function openWifiInfoModal(piId, iface) {
           <span class="wifi-scanning-dot"></span>Scanning
         </span>
         <span class="wifi-info-modal-status hint"></span>
+        <button type="button" class="wifi-info-rescan-btn" title="Run a fresh scan on this interface now instead of waiting for the next background cycle">&#8635; Re-scan</button>
         <button type="button" class="icon-btn wifi-info-modal-close" title="Close">&times;</button>
       </div>
       <div class="wifi-info-modal-body">
@@ -370,6 +397,9 @@ function openWifiInfoModal(piId, iface) {
 
   const bodyEl = overlay.querySelector('.wifi-info-modal-body');
   const statusEl = overlay.querySelector('.wifi-info-modal-status');
+
+  const rescanBtn = overlay.querySelector('.wifi-info-rescan-btn');
+  rescanBtn.addEventListener('click', () => rescanWifiInfoModal(rescanBtn, bodyEl, statusEl, piId, iface));
 
   const fallbackTimer = setInterval(() => refreshWifiInfoModal(bodyEl, statusEl, piId, iface), WIFI_INFO_FALLBACK_POLL_MS);
   wifiInfoModalState = { piId, iface, fallbackTimer, overlay, ws: connectWifiInfoLiveScan(piId, iface, bodyEl, statusEl) };
