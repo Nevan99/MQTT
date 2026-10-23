@@ -128,6 +128,24 @@ def list_commands(response: Response, limit: int = 50, offset: int = 0,
     ]
 
 
+@router.delete("/commands")
+def delete_commands(pi_id: str | None = None, action: str | None = None,
+                    status: str | None = None, q: str | None = None,
+                    session: Session = Depends(get_session)):
+    """Delete every stored command matching the same filters as the list
+    (none = the whole history). Pending commands are kept: a running
+    testcase is still waiting on their result row."""
+    match = _filtered_commands(select(Command), pi_id, action, status, q)
+    commands = session.exec(match.where(Command.status != "pending")).all()
+    skipped = session.exec(_filtered_commands(
+        select(func.count()).select_from(Command), pi_id, action, status, q)
+        .where(Command.status == "pending")).one()
+    for command in commands:
+        session.delete(command)
+    session.commit()
+    return {"deleted": len(commands), "skipped_pending": skipped}
+
+
 @router.get("/commands/stats")
 def command_stats(session: Session = Depends(get_session)):
     """Totals for the History tab's summary and filter options, over every

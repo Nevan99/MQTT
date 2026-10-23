@@ -18,6 +18,7 @@ const histPageInfo = document.getElementById('histPageInfo');
 const histPrev = document.getElementById('histPrev');
 const histNext = document.getElementById('histNext');
 const histPageSize = document.getElementById('histPageSize');
+const histDeleteAllBtn = document.getElementById('histDeleteAllBtn');
 const checkedHistoryIds = new Set();
 const openHistoryIds = new Set();
 
@@ -123,6 +124,7 @@ function renderHistoryPager() {
   histPageInfo.textContent = `Page ${histPage + 1} of ${pages}`;
   histPrev.disabled = histPage === 0;
   histNext.disabled = histPage >= pages - 1;
+  updateHistoryDeleteAllBtn();
 }
 
 function historyEmptyHtml() {
@@ -193,16 +195,61 @@ function renderHistory() {
   updateHistoryDeleteBtn();
 }
 
-function historyQuery() {
-  const size = historyPageSize();
-  const params = new URLSearchParams({ limit: size, offset: histPage * size });
+// The active filters as query params - shared by the list and "Delete all".
+function historyFilterParams() {
+  const params = new URLSearchParams();
   const q = histSearch.value.trim();
   if (q) params.set('q', q);
   if (histStatus) params.set('status', histStatus);
   if (histPiFilter.value) params.set('pi_id', histPiFilter.value);
   if (histActionFilter.value) params.set('action', histActionFilter.value);
+  return params;
+}
+
+function historyQuery() {
+  const size = historyPageSize();
+  const params = historyFilterParams();
+  params.set('limit', size);
+  params.set('offset', histPage * size);
   return params.toString();
 }
+
+// "Delete all" removes every command matching the filters (the whole
+// history when none are set), on every page; pending ones are kept since a
+// running testcase is still waiting on them.
+function updateHistoryDeleteAllBtn() {
+  const filtered = historyFilterParams().toString() !== '';
+  histDeleteAllBtn.disabled = histTotal === 0;
+  histDeleteAllBtn.textContent = filtered
+    ? `Delete all ${histTotal.toLocaleString('en-US')} matching…`
+    : `Delete all ${histTotal.toLocaleString('en-US')}…`;
+}
+
+histDeleteAllBtn.addEventListener('click', async () => {
+  const params = historyFilterParams();
+  const filtered = params.toString() !== '';
+  const what = filtered
+    ? `all ${histTotal.toLocaleString('en-US')} commands matching the current filters`
+    : `the entire command history (${histTotal.toLocaleString('en-US')} commands)`;
+  if (!confirm(`Delete ${what}?\n\nPending commands are kept. This cannot be undone.`)) return;
+  histDeleteAllBtn.disabled = true;
+  try {
+    const res = await apiFetch(`${API}/commands${filtered ? `?${params}` : ''}`, { method: 'DELETE' });
+    if (!res.ok) {
+      alert('Failed to delete the command history.');
+      return;
+    }
+    const { skipped_pending: skipped } = await res.json();
+    if (skipped) alert(`${skipped} pending command(s) were kept - they are still waiting for a result.`);
+    checkedHistoryIds.clear();
+    openHistoryIds.clear();
+    histPage = 0;
+  } catch {
+    alert('Failed to delete the command history.');
+  } finally {
+    await loadHistory();
+  }
+});
 
 async function loadHistory() {
   try {
@@ -222,7 +269,11 @@ async function loadHistory() {
     const seenIds = new Set(allCommands.map(c => c.command_id));
     [...checkedHistoryIds].forEach(id => { if (!seenIds.has(id)) checkedHistoryIds.delete(id); });
     [...openHistoryIds].forEach(id => { if (!seenIds.has(id)) openHistoryIds.delete(id); });
+    const queried = historyQuery();
     refreshHistoryOptions();
+    // A Pi/action filter whose last command was just deleted drops out of
+    // its dropdown (back to "All") - fetch again so the list matches it.
+    if (historyQuery() !== queried) return loadHistory();
     renderHistory();
   } catch {
     // backend unreachable; leave the last known list in place
