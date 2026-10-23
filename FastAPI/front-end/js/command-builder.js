@@ -324,34 +324,37 @@ function currentTargetInterfaces() {
   return (pi && pi.metadata && Array.isArray(pi.metadata.interfaces)) ? pi.metadata.interfaces : [];
 }
 
-// Shared by the Action panel and the Pi detail page's action bar.
+// Shared by the Action panel and the Pi detail page's action bar. Each
+// field gets its own id so its <label for> names it for screen readers.
+let paramFieldSeq = 0;
 function paramFieldHtml(f) {
   const value = f.default !== undefined ? `value="${f.default}"` : '';
+  const id = `param-${f.name}-${++paramFieldSeq}`;
   let html;
   if (f.type === 'password') {
     html = `
-      <label>${f.label}</label>
+      <label for="${id}">${f.label}</label>
       <div class="password-wrap">
-        <input class="field" data-param="${f.name}" type="password" ${value}>
-        <button type="button" class="password-toggle" title="Show password">${EYE_ICON_SVG}</button>
+        <input class="field" id="${id}" data-param="${f.name}" type="password" ${value}>
+        <button type="button" class="password-toggle" title="Show password" aria-label="Show password">${EYE_ICON_SVG}</button>
       </div>
     `;
   } else if (f.type === 'select') {
     html = `
-      <label>${f.label}</label>
-      <select class="field" data-param="${f.name}">
+      <label for="${id}">${f.label}</label>
+      <select class="field" id="${id}" data-param="${f.name}">
         ${f.options.map(o => `<option value="${o.value}">${o.label}</option>`).join('')}
       </select>
     `;
   } else if (f.type === 'textarea') {
     html = `
-      <label>${f.label}</label>
-      <textarea class="field param-textarea" data-param="${f.name}" rows="4" spellcheck="false" placeholder="-----BEGIN ...-----"></textarea>
+      <label for="${id}">${f.label}</label>
+      <textarea class="field param-textarea" id="${id}" data-param="${f.name}" rows="4" spellcheck="false" placeholder="-----BEGIN ...-----"></textarea>
     `;
   } else {
     html = `
-      <label>${f.label}</label>
-      <input class="field" data-param="${f.name}" type="${f.type}" ${value}>
+      <label for="${id}">${f.label}</label>
+      <input class="field" id="${id}" data-param="${f.name}" type="${f.type}" ${value}>
     `;
   }
   // showIf: { otherParam: [values...] } - only shown (and only sent) while
@@ -396,10 +399,11 @@ function renderParamFields() {
       return `<label>${f.label}</label><div class="iface-dropdown-mount" data-param="${f.name}"></div>`;
     }
     if (f.pingTargetPicker) {
+      const id = `param-${f.name}-${++paramFieldSeq}`;
       return `
-        <label>${f.label}</label>
-        <input class="field" data-param="${f.name}" type="${f.type}" ${f.default !== undefined ? `value="${f.default}"` : ''}>
-        <select class="field ping-target-picker"><option value="">— or pick a Pi radio to ping —</option></select>
+        <label for="${id}">${f.label}</label>
+        <input class="field" id="${id}" data-param="${f.name}" type="${f.type}" ${f.default !== undefined ? `value="${f.default}"` : ''}>
+        <select class="field ping-target-picker" aria-label="Pick a Pi radio to ping"><option value="">— or pick a Pi radio to ping —</option></select>
       `;
     }
     return paramFieldHtml(f);

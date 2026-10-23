@@ -9,8 +9,8 @@
 <link rel="alternate icon" type="image/png" sizes="64x64" href="assets/kaon-favicon-64.png">
 <link rel="apple-touch-icon" href="assets/kaon-favicon-180.png">
 <link id="faviconSvg" rel="icon" type="image/svg+xml" href="assets/kaon-favicon.svg">
-<link rel="stylesheet" href="themes.css?v=4">
-<link rel="stylesheet" href="styles.css?v=34">
+<link rel="stylesheet" href="themes.css?v=5">
+<link rel="stylesheet" href="styles.css?v=39">
 <!-- Applies the saved theme before first paint (no dark flash for a
      light-theme user) - same keys/logic as js/settings.js's applyTheme. -->
 <script>
@@ -528,7 +528,7 @@
            less frequent actions sit in the More menu. -->
       <div class="tc-bulk-bar pkg-bulk-bar">
         <span id="tcBulkCount" class="tc-bulk-count">none selected</span>
-        <button type="button" id="tcBulkRunBtn">&#9654; Run</button>
+        <button type="button" id="tcBulkRunBtn"><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg> Run</button>
         <button type="button" id="tcBulkAddToSuiteBtn">Add to Testsuite&hellip;</button>
         <button type="button" id="tcBulkTagBtn">Tag&hellip;</button>
         <div class="pkg-more">
@@ -1116,19 +1116,19 @@
 <script src="js/settings.js?v=3"></script>
 <script src="js/auth.js?v=3"></script>
 <script src="js/layout.js?v=6"></script>
-<script src="js/fleet-table.js?v=8"></script>
+<script src="js/fleet-table.js?v=9"></script>
 <script src="js/interfaces-tab.js?v=3"></script>
 <script src="js/captures.js?v=4"></script>
-<script src="js/history.js?v=4"></script>
-<script src="js/command-builder.js?v=11"></script>
+<script src="js/history.js?v=5"></script>
+<script src="js/command-builder.js?v=13"></script>
 <!-- ?v= busts the browser's cache on each edit - these three change often
      during active development and have no other cache-busting (StaticFiles
      serves them with only Last-Modified/ETag, which Chrome's heuristic
      cache treats as "reuse without revalidating" for a warm tab), so a
      plain reload can otherwise keep serving a stale copy indefinitely. -->
-<script src="js/testcases-tab.js?v=18"></script>
+<script src="js/testcases-tab.js?v=19"></script>
 <script src="js/tc-bulk-edit.js?v=1"></script>
-<script src="js/testsuites-tab.js?v=13"></script>
+<script src="js/testsuites-tab.js?v=14"></script>
 <!-- After testcases-tab.js: reuses its tcRenderRunSteps/tcStatusClass so a
      run's step detail renders identically in both places. -->
 <script src="js/results-tab.js?v=17"></script>

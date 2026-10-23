@@ -1426,7 +1426,7 @@ function createPiRow(piId) {
   summaryRow.className = 'pi-row';
   summaryRow.dataset.piId = piId;
   summaryRow.innerHTML = `
-    <td><input type="checkbox" class="pi-select-checkbox" title="Select for multicast"></td>
+    <td><input type="checkbox" class="pi-select-checkbox" title="Select for multicast" aria-label="Select ${piId} for multicast"></td>
     <td><a href="#" class="c-id-link pi-id-link"></a></td>
     <td class="c-ip"></td>
     <td class="c-role"></td>

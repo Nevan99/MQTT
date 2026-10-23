@@ -365,18 +365,18 @@ function renderTcTable() {
   }
   body.innerHTML = tcList.map(t => `
     <tr class="${tcSelected.has(t.id) ? 'tc-row-selected' : ''}" data-id="${t.id}">
-      <td class="tc-check-col"><input type="checkbox" class="tc-row-check" data-id="${t.id}" ${tcSelected.has(t.id) ? 'checked' : ''}></td>
-      <td class="tc-name-cell">${t.name}</td>
+      <td class="tc-check-col"><input type="checkbox" class="tc-row-check" data-id="${t.id}" aria-label="Select ${tcEsc(t.name)}" ${tcSelected.has(t.id) ? 'checked' : ''}></td>
+      <td class="tc-name-cell">${tcEsc(t.name)}</td>
       <td class="pkg-tags">${pkgTagChips(t.tags, 'tc')}</td>
       <td><span class="kt-pill kt-tc-${t.status}">${t.status}</span></td>
       <td class="res-num">${t.steps.length}</td>
       <td class="kt-author">${t.author || ''}</td>
       <td class="res-date">${ktDateTimeHtml(t.updated_at)}</td>
       <td class="capture-actions">
-        <button class="icon-btn tc-run-btn" data-id="${t.id}" title="Run">&#9654;</button>
-        <button class="icon-btn tc-edit-btn" data-id="${t.id}" title="Edit">&#9998;</button>
-        <button class="icon-btn tc-dup-btn" data-id="${t.id}" title="Duplicate">${DUPLICATE_ICON_SVG}</button>
-        <button class="icon-btn tc-delete-btn" data-id="${t.id}" title="Delete">&#128465;</button>
+        <button class="icon-btn tc-run-btn" data-id="${t.id}" title="Run" aria-label="Run ${tcEsc(t.name)}">${ROW_RUN_SVG}</button>
+        <button class="icon-btn tc-edit-btn" data-id="${t.id}" title="Edit" aria-label="Edit ${tcEsc(t.name)}">${ROW_EDIT_SVG}</button>
+        <button class="icon-btn tc-dup-btn" data-id="${t.id}" title="Duplicate" aria-label="Duplicate ${tcEsc(t.name)}">${DUPLICATE_ICON_SVG}</button>
+        <button class="icon-btn tc-delete-btn" data-id="${t.id}" title="Delete" aria-label="Delete ${tcEsc(t.name)}">${ROW_DELETE_SVG}</button>
       </td>
     </tr>
   `).join('');
@@ -394,6 +394,12 @@ function renderTcTable() {
   }));
   tcSyncSelectAllCheckbox();
 }
+
+// Row action icons (SVG, not emoji, so they render the same everywhere and
+// follow the text color); shared with testsuites-tab.js.
+const ROW_RUN_SVG = '<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>';
+const ROW_EDIT_SVG = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
+const ROW_DELETE_SVG = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>';
 
 // --- selection + bulk toolbar --------------------------------------------
 

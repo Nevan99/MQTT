@@ -97,10 +97,10 @@ function renderTsTable() {
       <td class="kt-author">${tcEsc(s.author || '')}</td>
       <td class="res-date">${ktDateTimeHtml(s.updated_at)}</td>
       <td class="capture-actions">
-        <button class="icon-btn ts-run-btn" data-id="${s.id}" title="Run">&#9654;</button>
-        <button class="icon-btn ts-edit-btn" data-id="${s.id}" title="Edit">&#9998;</button>
-        <button class="icon-btn ts-dup-btn" data-id="${s.id}" title="Duplicate">${DUPLICATE_ICON_SVG}</button>
-        <button class="icon-btn ts-delete-btn" data-id="${s.id}" title="Delete">&#128465;</button>
+        <button class="icon-btn ts-run-btn" data-id="${s.id}" title="Run" aria-label="Run ${tcEsc(s.name)}">${ROW_RUN_SVG}</button>
+        <button class="icon-btn ts-edit-btn" data-id="${s.id}" title="Edit" aria-label="Edit ${tcEsc(s.name)}">${ROW_EDIT_SVG}</button>
+        <button class="icon-btn ts-dup-btn" data-id="${s.id}" title="Duplicate" aria-label="Duplicate ${tcEsc(s.name)}">${DUPLICATE_ICON_SVG}</button>
+        <button class="icon-btn ts-delete-btn" data-id="${s.id}" title="Delete" aria-label="Delete ${tcEsc(s.name)}">${ROW_DELETE_SVG}</button>
       </td>
     </tr>
   `).join('');

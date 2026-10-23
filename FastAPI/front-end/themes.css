@@ -36,7 +36,7 @@
   --text-label: #aaa;
   --text-muted: #999;
   --text-dim: #888;
-  --text-faint: #777;
+  --text-faint: #8a8a8a;
   --text-disabled: #666;
 
   --accent: #6cf;
@@ -223,12 +223,20 @@
 :root {
   --brand: #0E79E6;
   --brand-orange: #FA8A3B;
+  /* Brand colors that pass WCAG AA (4.5:1) - --brand itself is only 4.3:1
+     under white text and on white: --brand-fill behind white text, -ink
+     for brand-colored text on this theme's surfaces. */
+  --brand-fill: #0A6ACB;
+  --brand-ink: #4EA3F4;
+  --brand-orange-ink: #FA8A3B;
   --deco-wave: rgba(255, 255, 255, 0.07);
   --deco-mark-opacity: 0.10;
   --deco-arc: rgba(255, 255, 255, 0.16);
 }
 :root[data-theme="slate"] { --deco-wave: rgba(148, 197, 255, 0.09); --deco-arc: rgba(148, 197, 255, 0.2); }
 :root[data-mode="light"] {
+  --brand-ink: #0A5FB8;
+  --brand-orange-ink: #A84A0C;
   --deco-wave: rgba(15, 40, 80, 0.10);
   --deco-mark-opacity: 0.16;
   --deco-arc: rgba(30, 41, 59, 0.45);

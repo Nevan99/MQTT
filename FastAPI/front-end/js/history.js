@@ -106,7 +106,9 @@ function toggleHistoryRow(id, open) {
   if (!row || !detailRow) return;
   detailRow.classList.toggle('hidden', !open);
   row.classList.toggle('is-open', open);
-  row.querySelector('.history-toggle').innerHTML = chevronIconSvg(open ? 'down' : 'right');
+  const toggle = row.querySelector('.history-toggle');
+  toggle.innerHTML = chevronIconSvg(open ? 'down' : 'right');
+  toggle.setAttribute('aria-expanded', String(open));
   if (open) openHistoryIds.add(id); else openHistoryIds.delete(id);
   if (!open) return;
   const command = allCommands.find(c => c.command_id === id);
@@ -145,14 +147,14 @@ function renderHistory() {
     const exact = formatVnDateTime(c.created_at);
     return `
       <tr class="history-row" data-command-id="${c.command_id}">
-        <td class="tc-check-col"><input type="checkbox" class="history-select-checkbox" aria-label="Select" ${checkedHistoryIds.has(c.command_id) ? 'checked' : ''}></td>
+        <td class="tc-check-col"><input type="checkbox" class="history-select-checkbox" aria-label="Select ${escapeHistoryHtml(actionLabel(c.action))} on ${escapeHistoryHtml(c.pi_id)}" ${checkedHistoryIds.has(c.command_id) ? 'checked' : ''}></td>
         <td>${c.pi_id === 'all' ? '<span class="kt-muted">all Pis</span>'
           : `<a href="#pi/${encodeURIComponent(c.pi_id)}" class="pi-id-link kt-pi">${escapeHistoryHtml(c.pi_id)}</a>`}</td>
         <td><code class="kt-code">${escapeHistoryHtml(actionLabel(c.action))}</code></td>
         <td><span class="kt-pill kt-status-${status}">${status}</span></td>
         <td class="res-date" title="${exact}"><span class="kt-date">${historyAgo(c.created_at)}</span> <span class="kt-time">${exact}</span></td>
         <td class="capture-actions">
-          <button type="button" class="kt-act history-toggle" title="Show result">${chevronIconSvg('right')}</button>
+          <button type="button" class="kt-act history-toggle" title="Show result" aria-label="Show result" aria-expanded="false">${chevronIconSvg('right')}</button>
           <button type="button" class="kt-act kt-act-danger history-delete" data-command-id="${c.command_id}" title="Delete" aria-label="Delete">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button>
         </td>
