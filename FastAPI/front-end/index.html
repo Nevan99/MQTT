@@ -9,13 +9,13 @@
 <link rel="alternate icon" type="image/png" sizes="64x64" href="assets/kaon-favicon-64.png">
 <link rel="apple-touch-icon" href="assets/kaon-favicon-180.png">
 <link id="faviconSvg" rel="icon" type="image/svg+xml" href="assets/kaon-favicon.svg">
-<link rel="stylesheet" href="themes.css?v=3">
-<link rel="stylesheet" href="styles.css?v=26">
+<link rel="stylesheet" href="themes.css?v=4">
+<link rel="stylesheet" href="styles.css?v=28">
 <!-- Applies the saved theme before first paint (no dark flash for a
      light-theme user) - same keys/logic as js/settings.js's applyTheme. -->
 <script>
 (function () {
-  var d = document.documentElement, theme = 'dark', accent = 'cyan';
+  var d = document.documentElement, theme = 'dark', accent = 'kaon';
   try { theme = localStorage.getItem('pi_fleet_theme') || theme; accent = localStorage.getItem('pi_fleet_accent') || accent; } catch (e) {}
   var light = theme === 'light' || (theme === 'system' && window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches);
   d.setAttribute('data-theme', theme);
@@ -25,11 +25,22 @@
 </script>
 </head>
 <body>
+<!-- Login, styled as the Kaon slide template's cover: wave line-art, power
+     watermark, corner arcs with brand dots, "CONNECTED +" and the copyright
+     line (see "Kaon Broadband decoration" in styles.css). -->
 <div id="loginOverlay">
+  <div class="kaon-cover" aria-hidden="true">
+    <span class="kc-waves"></span><span class="kc-power"></span>
+    <span class="kc-arc kc-arc-tr"></span><span class="kc-arc kc-arc-bl"></span>
+    <span class="kc-dot kc-dot-a"></span><span class="kc-dot kc-dot-b"></span>
+  </div>
+  <div class="login-brand-side">
+    <span class="kaon-logo login-logo" role="img" aria-label="Kaon Broadband"><span class="kaon-logo-text"></span><span class="kaon-logo-mark"></span></span>
+    <h1 class="login-title">Pi Fleet Controller</h1>
+    <p class="login-sub">Wi-Fi test automation for the Kaon Broadband lab</p>
+  </div>
   <div class="login-box">
-    <span class="login-brand-wordmark"><span class="brand-kaon">KAON</span> <span class="brand-broadband">BROADBAND</span></span>
-    <span class="login-brand-slogan">connected+</span>
-    <h2>Pi Fleet Controller</h2>
+    <h2>Sign in</h2>
     <form id="loginForm">
       <label>Username</label>
       <input id="loginUsername" class="field" type="text" autocomplete="username" required>
@@ -44,6 +55,8 @@
       </div>
     </form>
   </div>
+  <div class="kaon-connected" aria-hidden="true">CONNECTED <b>+</b></div>
+  <div class="kaon-copyright">Copyright &copy; <span class="login-year"></span> KAON Broadband Co., Ltd. All rights reserved | Confidential</div>
 </div>
 <div id="appRoot" class="auth-hidden">
 <header>
@@ -992,9 +1005,14 @@
     </div>
   </div>
 </section>
+<!-- The Kaon slide template's content-slide footer. -->
 <footer id="appFooter">
-  <span class="kaon-logo" role="img" aria-label="Kaon Broadband"><span class="kaon-logo-text"></span><span class="kaon-logo-mark"></span></span>
-  <span>&copy; <span id="footerYear"></span> Kaon Broadband. All rights reserved.</span>
+  <span class="footer-brand">
+    <span class="kaon-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+    <span class="kaon-logo" role="img" aria-label="Kaon Broadband"><span class="kaon-logo-text"></span><span class="kaon-logo-mark"></span></span>
+    <span class="footer-corp">KAON BROADBAND Corp.</span>
+  </span>
+  <span class="footer-copy">Copyright &copy; <span id="footerYear"></span> KAON Broadband Co., Ltd. All rights reserved<span class="sep">|</span>Confidential</span>
 </footer>
 </div>
 
@@ -1026,7 +1044,7 @@
 
 <!-- Loaded in this exact order - plain global-scope scripts (no modules),
      later files call functions defined in earlier ones. -->
-<script src="js/settings.js?v=2"></script>
+<script src="js/settings.js?v=3"></script>
 <script src="js/auth.js?v=2"></script>
 <script src="js/layout.js?v=6"></script>
 <script src="js/fleet-table.js?v=8"></script>
@@ -1049,6 +1067,6 @@
 <script src="js/wifi-info-modal.js?v=5"></script>
 <script src="js/log-rendering.js"></script>
 <script src="js/wireshark-table.js"></script>
-<script src="js/detail-page.js?v=21"></script>
+<script src="js/detail-page.js?v=22"></script>
 </body>
 </html>

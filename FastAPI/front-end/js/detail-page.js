@@ -1391,3 +1391,4 @@ routeApp();
 
 const footerYearEl = document.getElementById('footerYear');
 if (footerYearEl) footerYearEl.textContent = new Date().getFullYear();
+document.querySelectorAll('.login-year').forEach(el => { el.textContent = new Date().getFullYear(); });

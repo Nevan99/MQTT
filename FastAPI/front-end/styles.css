@@ -314,21 +314,11 @@
 
   #loginOverlay {
     position: fixed; inset: 0; display: none; align-items: center; justify-content: center; z-index: 100;
-    background: linear-gradient(rgba(10, 14, 22, 0.65), rgba(10, 14, 22, 0.65)),
-      url('assets/brand2_img.jpg') center center / cover no-repeat,
-      var(--bg);
   }
   #loginOverlay.active { display: flex; }
   #appRoot { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
   #appRoot.auth-hidden { display: none; }
   .login-box { width: 280px; background: var(--surface-glass); backdrop-filter: blur(2px); border: 1px solid var(--border); border-radius: 8px; padding: 1.5rem; }
-  .login-brand-wordmark {
-    display: block; margin: 0 0 1.25rem; font-size: 1.35rem; font-weight: 800;
-    letter-spacing: 0.02em; font-family: system-ui, sans-serif;
-  }
-  .login-brand-wordmark .brand-kaon { color: #29b6f6; }
-  .login-brand-wordmark .brand-broadband { color: var(--text); font-weight: 600; }
-  .login-brand-slogan { display: block; margin: -1rem 0 1rem; font-size: 0.72rem; color: var(--text-disabled); letter-spacing: 0.03em; }
   .login-box h2 { margin: 0 0 1rem; font-size: 1.1rem; }
   .login-error { color: var(--danger); font-size: 0.8rem; min-height: 1.2em; margin-top: 0.5rem; }
   #logoutBtn { margin-left: 0.25rem; }
@@ -1122,3 +1112,93 @@ header nav button.tab { flex: 0 0 auto; white-space: nowrap; }
 .ll-sec-fail { margin-left: 0.4rem; padding: 0 0.35rem; border-radius: 3px; font-size: 0.68rem; font-weight: 700; background: var(--danger-bg); color: var(--danger-text); }
 .ll-sec-body { content-visibility: auto; }
 .ll-sec-body.ll-folded { display: none; }
+
+/* ---------------------------------------------------------------------------
+   Kaon Broadband decoration, from the company slide template ([KAON
+   BROADBAND] PPT Template): flowing wave line-art, a faint power-symbol
+   watermark, thin corner arcs with brand-blue dots, the three-dot motif
+   beside headings, "CONNECTED +" and the copyright footer. The wave and
+   watermark images are alpha masks (assets/deco/), filled from theme tokens
+   (themes.css --brand / --deco-*), so they suit every theme.
+   --------------------------------------------------------------------------- */
+body { font-family: "Pretendard", "Pretendard Variable", "Inter", system-ui, "Noto Sans KR", sans-serif; }
+
+/* Three dots - 100% / 75% / 40% brand blue - before the main headings. */
+.pkg-head h2::before, .pd-col-head h3::before, .pd-panel-header h3::before,
+.res-side-title::before, .pd-hero-title h2::before {
+  content: ''; display: inline-block; flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%;
+  margin-right: 28px; vertical-align: middle; position: relative; top: -2px;
+  background: var(--brand);
+  box-shadow: 10px 0 0 color-mix(in srgb, var(--brand) 75%, transparent), 20px 0 0 color-mix(in srgb, var(--brand) 40%, transparent);
+}
+.pd-hero-title h2::before { width: 8px; height: 8px; margin-right: 36px; top: -4px;
+  box-shadow: 13px 0 0 color-mix(in srgb, var(--brand) 75%, transparent), 26px 0 0 color-mix(in srgb, var(--brand) 40%, transparent); }
+
+/* Header: the template's thin brand line under the title area. */
+header { border-bottom: 1px solid color-mix(in srgb, var(--brand) 55%, var(--border)); }
+
+/* Header cards (Pi page, run summary): faint power watermark + corner arc. */
+.pd-hero, .res-run-summary { position: relative; isolation: isolate; overflow: hidden; }
+.pd-hero::after, .res-run-summary::after {
+  content: ''; position: absolute; z-index: -1; pointer-events: none;
+  width: 260px; height: 260px; right: -60px; top: -70px;
+  background: var(--brand); opacity: var(--deco-mark-opacity);
+  -webkit-mask: url('assets/deco/kaon-power.png') center / contain no-repeat;
+  mask: url('assets/deco/kaon-power.png') center / contain no-repeat;
+}
+.pd-hero::before, .res-run-summary::before {
+  content: ''; position: absolute; z-index: -1; pointer-events: none;
+  width: 340px; height: 340px; right: -170px; bottom: -230px; border-radius: 50%;
+  border: 1px solid var(--deco-arc);
+}
+
+/* Footer: the template's content-slide footer. */
+footer#appFooter { position: relative; justify-content: space-between; gap: 1rem; padding: 0.55rem 1.25rem;
+  border-top: 1px solid color-mix(in srgb, var(--brand) 55%, var(--border)); }
+.footer-brand { display: inline-flex; align-items: center; gap: 0.75rem; }
+.footer-corp { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em; color: var(--text-3); }
+.footer-copy { font-size: 0.72rem; color: var(--text-dim); text-align: right; }
+.footer-copy .sep { margin: 0 0.4rem; color: var(--text-disabled); }
+.kaon-dots { display: inline-flex; gap: 4px; }
+.kaon-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--brand); }
+.kaon-dots i:nth-child(2) { opacity: 0.75; }
+.kaon-dots i:nth-child(3) { opacity: 0.4; }
+footer#appFooter .kaon-logo { height: 30px; }
+@media (max-width: 700px) {
+  footer#appFooter { flex-direction: column; gap: 0.35rem; }
+  .footer-copy { text-align: center; }
+}
+
+/* Login: the template's cover slide. */
+#loginOverlay { background: var(--bg); overflow: hidden; }
+#loginOverlay.active { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr); align-items: center; padding: 3rem 6vw; gap: 3rem; }
+.kaon-cover { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+.kaon-cover > * { position: absolute; display: block; }
+.kc-waves { inset: 0; background: var(--deco-wave);
+  -webkit-mask: url('assets/deco/kaon-waves.png') center / cover no-repeat; mask: url('assets/deco/kaon-waves.png') center / cover no-repeat; }
+.kc-power { width: min(70vh, 54vw); aspect-ratio: 1; right: -6vw; bottom: -14vh; background: var(--brand); opacity: calc(var(--deco-mark-opacity) * 1.6);
+  -webkit-mask: url('assets/deco/kaon-power.png') center / contain no-repeat; mask: url('assets/deco/kaon-power.png') center / contain no-repeat; }
+.kc-arc { border: 1px solid var(--deco-arc); border-radius: 50%; }
+.kc-arc-tr { width: 34vh; height: 34vh; right: -17vh; top: -17vh; }
+.kc-arc-bl { width: 46vh; height: 46vh; left: -23vh; bottom: -23vh; }
+.kc-dot { border-radius: 50%; background: var(--brand); }
+.kc-dot-a { width: 6.5vh; height: 6.5vh; left: calc(23vh * 0.62); bottom: calc(23vh * 0.95); }
+.kc-dot-b { width: 2.6vh; height: 2.6vh; right: calc(17vh * 0.92); top: calc(17vh * 0.62); }
+.login-brand-side { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 1.25rem; }
+.login-logo { align-self: flex-start; width: auto; height: clamp(56px, 8vw, 96px); }
+.login-title { margin: 0; font-size: clamp(1.8rem, 3.6vw, 3rem); font-weight: 800; line-height: 1.1; color: var(--text); letter-spacing: -0.01em; }
+.login-sub { margin: 0; font-size: 0.95rem; color: var(--text-3); }
+#loginOverlay .login-box { position: relative; z-index: 1; justify-self: start; width: min(360px, 100%); padding: 1.75rem;
+  background: var(--surface-glass); backdrop-filter: blur(6px); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 12px 40px color-mix(in srgb, var(--bg) 60%, transparent); }
+#loginOverlay .login-box h2 { margin: 0 0 1.1rem; font-size: 1.15rem; font-weight: 700; }
+#loginOverlay #loginSubmit { background: var(--brand); border-color: var(--brand); color: #fff; font-weight: 600; padding: 0.55rem 1rem; }
+#loginOverlay #loginSubmit:hover { filter: brightness(1.08); background: var(--brand); }
+.kaon-connected { position: absolute; z-index: 1; right: 4.5vw; bottom: 3.2rem; font-family: Arial, sans-serif; font-weight: 700; font-size: 1.05rem; letter-spacing: 0.06em; color: var(--text); }
+.kaon-connected b { color: var(--brand); }
+.kaon-copyright { position: absolute; z-index: 1; right: 4.5vw; bottom: 1.3rem; font-size: 0.72rem; color: var(--text-dim); }
+@media (max-width: 860px) {
+  #loginOverlay.active { grid-template-columns: 1fr; align-content: center; padding: 2rem 1.25rem 6rem; gap: 2rem; }
+  #loginOverlay .login-box { justify-self: stretch; }
+  .kaon-connected, .kaon-copyright { right: 1.25rem; }
+}

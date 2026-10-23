@@ -185,11 +185,14 @@
 
 /* Accents - links, spinners, selected outlines, the active tab marker and
    focus rings. Each has a light-mode shade dark enough to read on white. */
+/* Kaon blue (the slide template's #0E79E6) - the default accent. */
+:root[data-accent="kaon"]   { --accent: #3d9bf2; }
 :root[data-accent="blue"]   { --accent: #6ab0ff; }
 :root[data-accent="green"]  { --accent: #4ade80; }
 :root[data-accent="violet"] { --accent: #a78bfa; }
 :root[data-accent="amber"]  { --accent: #fbbf24; }
 :root[data-mode="light"]                       { --accent: #0369a1; }
+:root[data-mode="light"][data-accent="kaon"]   { --accent: #0d71d9; }
 :root[data-mode="light"][data-accent="blue"]   { --accent: #1d4ed8; }
 :root[data-mode="light"][data-accent="green"]  { --accent: #15803d; }
 :root[data-mode="light"][data-accent="violet"] { --accent: #6d28d9; }
@@ -213,3 +216,20 @@
 :root { --logo-text: #e6e7ec; --logo-mark: #1e88f0; }
 :root[data-theme="slate"] { --logo-text: #f1f5f9; --logo-mark: #2b8ff2; }
 :root[data-mode="light"] { --logo-text: #3a3b4d; --logo-mark: #0e7ae6; }
+
+/* Kaon decoration (styles.css "Kaon Broadband decoration"): the template's
+   brand blue / orange, and how strongly its wave line-art, power watermark
+   and corner arcs show on each theme. */
+:root {
+  --brand: #0E79E6;
+  --brand-orange: #FA8A3B;
+  --deco-wave: rgba(255, 255, 255, 0.07);
+  --deco-mark-opacity: 0.10;
+  --deco-arc: rgba(255, 255, 255, 0.16);
+}
+:root[data-theme="slate"] { --deco-wave: rgba(148, 197, 255, 0.09); --deco-arc: rgba(148, 197, 255, 0.2); }
+:root[data-mode="light"] {
+  --deco-wave: rgba(15, 40, 80, 0.10);
+  --deco-mark-opacity: 0.16;
+  --deco-arc: rgba(30, 41, 59, 0.45);
+}
