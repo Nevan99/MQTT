@@ -1528,3 +1528,10 @@ button.res-tag { min-height: 24px; display: inline-flex; align-items: center; }
   .fleet-table-wrap, .res-table-wrap, .if-table-wrap { max-width: 100%; min-width: 0; }
   .view.active, #fleet.active, #piDetailGrid { min-width: 0; max-width: 100%; }
 }
+
+/* Bulk edit: "Set Pi's interfaces" checkbox picker (tc-bulk-edit.js). */
+.tc-be-ifaces { flex: 2 1 260px; display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.75rem; }
+.tc-be-iface-boxes { display: flex; flex-wrap: wrap; gap: 0.25rem 0.5rem; min-height: 24px; align-items: center; }
+.tc-be-op label.tc-be-iface { flex-direction: row; align-items: center; gap: 0.3rem; min-height: 24px; padding: 0 0.45rem; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 0.78rem; cursor: pointer; }
+.tc-be-op label.tc-be-iface:has(input:checked) { border-color: var(--brand-ink); color: var(--brand-ink); background: color-mix(in srgb, var(--brand) 9%, var(--surface)); }
+.tc-be-iface-other { font-size: 0.78rem; }

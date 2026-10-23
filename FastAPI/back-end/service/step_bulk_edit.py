@@ -24,6 +24,13 @@ ops (each a dict with "op"):
                                        pi:<from>/... client references
   rename_interface from, to            inside params.interface / .interfaces
                                        (list, string, or {pi: [...]} map)
+  set_interfaces   pi, interfaces      overwrite which of that Pi's interfaces
+                                       the step uses: the whole list when
+                                       the step targets only that Pi, that
+                                       Pi's entry when it's a {pi: [...]} map
+                                       (other Pis untouched). A shared list
+                                       on a multi-Pi step is left alone - it
+                                       would change the other Pis too.
   set_field        name, value         delay_before_seconds | repeat_count
   set_expected     field, cmp, value   add or replace that field's check
   remove_expected  field
@@ -134,6 +141,32 @@ def apply_ops(step: dict, ops: list) -> tuple[dict, list[str]]:
                     if renamed != p[key]:
                         diffs.append(f"{key}: {old} → {new}")
                         p[key] = renamed
+        elif kind == "set_interfaces":
+            pi = o.get("pi")
+            new = [str(i) for i in (o.get("interfaces") or []) if str(i).strip()]
+            if not pi:
+                raise BulkEditError("set_interfaces: pi is required")
+            if not new:
+                raise BulkEditError("set_interfaces: pick at least one interface")
+            only_this_pi = s.get("target") == pi or (
+                s.get("target") == "multicast" and (s.get("target_pi_ids") or []) == [pi])
+            in_step = only_this_pi or s.get("target") == "all" or pi in (s.get("target_pi_ids") or [])
+            if not in_step:
+                continue
+            for key in ("interface", "interfaces"):
+                if key not in p:
+                    continue
+                v = p[key]
+                if isinstance(v, dict):
+                    if v.get(pi) != new:
+                        diffs.append(f"{key} on {pi}: {_short(v.get(pi, '(none)'))} → {_short(new)}")
+                        p[key] = {**v, pi: new}
+                elif only_this_pi:
+                    # Keep a single-name string a string, as older steps saved it.
+                    val = new[0] if isinstance(v, str) and len(new) == 1 else new
+                    if v != val:
+                        diffs.append(f"{key}: {_short(v)} → {_short(val)}")
+                        p[key] = val
         elif kind == "set_field":
             name = o["name"]
             if name not in STEP_FIELDS:

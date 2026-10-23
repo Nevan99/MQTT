@@ -11,6 +11,7 @@ const TC_BE_OPS = {
   remove_param: { label: 'Remove parameter', fields: ['param'] },
   replace_target: { label: 'Change target Pi', fields: ['from', 'to'], hints: { from: 'e.g. pi03', to: 'e.g. pi01' } },
   rename_interface: { label: 'Rename interface', fields: ['from', 'to'], hints: { from: 'e.g. wlan1', to: 'e.g. wlan4' } },
+  set_interfaces: { label: "Set Pi's interfaces", fields: ['pi', 'ifaces'] },
   set_field: { label: 'Set delay / repeat', fields: ['stepField', 'value'] },
   set_expected: { label: 'Set expected result', fields: ['resultField', 'cmp', 'value'] },
   remove_expected: { label: 'Remove expected result', fields: ['resultField'] },
@@ -72,6 +73,49 @@ function tcBeKnownInterfaces() {
     (Array.isArray(v) ? v : v ? [v] : []).forEach(i => names.add(i));
   }));
   return [...names].sort();
+}
+
+// One Pi's interfaces: what it reports plus what steps aimed at it use.
+function tcBePiInterfaces(piId) {
+  const names = new Set();
+  const pi = pis.find(p => p.pi_id === piId);
+  ((pi && pi.metadata && pi.metadata.interfaces) || []).forEach(i => names.add(i));
+  tcList.forEach(t => (t.steps || []).forEach(s => {
+    if (s.target !== piId && !(s.target_pi_ids || []).includes(piId)) return;
+    ['interface', 'interfaces'].forEach(k => {
+      const v = s.params && s.params[k];
+      const own = v && !Array.isArray(v) && typeof v === 'object' ? v[piId] : (s.target === piId ? v : null);
+      (Array.isArray(own) ? own : own ? [own] : []).forEach(i => names.add(i));
+    });
+  }));
+  return [...names].sort();
+}
+
+// "Set Pi's interfaces": a checkbox per interface of the chosen Pi (plus an
+// "other" box for names it hasn't reported). The picked names live in the
+// hidden data-k="ifaces" input, so the row keeps them across re-renders.
+function tcBeIfacePickerHtml(piId, picked) {
+  const own = piId ? tcBePiInterfaces(piId) : [];
+  const extra = picked.filter(i => !own.includes(i));
+  const boxes = own.map(i => `<label class="tc-be-iface"><input type="checkbox" value="${tcBeEsc(i)}" ${picked.includes(i) ? 'checked' : ''}>${tcBeEsc(i)}</label>`).join('');
+  return `<div class="tc-be-ifaces">
+    <span class="tc-be-ifaces-label">Interfaces</span>
+    <div class="tc-be-iface-boxes">${boxes || `<span class="hint">${piId ? 'no interfaces known for this Pi' : 'pick a Pi first'}</span>`}</div>
+    <input class="field tc-be-iface-other" type="text" placeholder="other (comma separated)" value="${tcBeEsc(extra.join(', '))}" aria-label="Other interfaces">
+    <input type="hidden" data-k="ifaces" value="${tcBeEsc(picked.join(','))}">
+  </div>`;
+}
+
+function tcBeWireIfacePicker(row) {
+  const hidden = row.querySelector('[data-k="ifaces"]');
+  if (!hidden) return;
+  const sync = () => {
+    const ticked = [...row.querySelectorAll('.tc-be-iface-boxes input:checked')].map(cb => cb.value);
+    const other = row.querySelector('.tc-be-iface-other').value.split(',').map(x => x.trim()).filter(Boolean);
+    hidden.value = [...new Set([...ticked, ...other])].join(',');
+    tcBeInvalidate();
+  };
+  row.querySelectorAll('.tc-be-iface-boxes input, .tc-be-iface-other').forEach(el => el.addEventListener('input', sync));
 }
 
 // The shared <datalist>s behind those boxes, refilled when the modal opens.
@@ -141,6 +185,15 @@ function renderTcBeOpRow(row, kind) {
         const list = kind === 'replace_target' ? 'tcBePiList' : kind === 'rename_interface' ? 'tcBeIfaceList' : '';
         return `<label>${label}<input class="field" data-k="${f}" type="text" ${list ? `list="${list}" autocomplete="off"` : ''} value="${tcBeEsc(keep[f] || '')}" placeholder="${hint(f)}"></label>`;
       }
+      case 'pi': {
+        // Defaults to the Pi the steps are filtered on, if any.
+        const pi = keep.pi !== undefined ? keep.pi : tcBeEl('tcBePi').value.trim();
+        return `<label>Pi<input class="field" data-k="pi" type="text" list="tcBePiList" autocomplete="off" value="${tcBeEsc(pi)}" placeholder="e.g. pi01"></label>`;
+      }
+      case 'ifaces': {
+        const pi = keep.pi !== undefined ? keep.pi : tcBeEl('tcBePi').value.trim();
+        return tcBeIfacePickerHtml(pi, (keep.ifaces || '').split(',').filter(Boolean));
+      }
       case 'stepField':
         return `<label>Field<select class="field" data-k="stepField">
           <option value="delay_before_seconds" ${keep.stepField === 'delay_before_seconds' ? 'selected' : ''}>delay before (s)</option>
@@ -171,6 +224,10 @@ function renderTcBeOpRow(row, kind) {
   // Picking a result field can switch its value box to a true/false dropdown.
   const resultField = row.querySelector('[data-k="resultField"]');
   if (resultField && kind === 'set_expected') resultField.addEventListener('change', () => { renderTcBeOpRow(row, kind); tcBeInvalidate(); });
+  // A different Pi lists that Pi's own interfaces.
+  const piBox = row.querySelector('[data-k="pi"]');
+  if (piBox) piBox.addEventListener('change', () => { renderTcBeOpRow(row, kind); tcBeInvalidate(); });
+  tcBeWireIfacePicker(row);
   row.querySelector('.tc-be-remove').addEventListener('click', () => { row.remove(); tcBeInvalidate(); });
 }
 
@@ -217,6 +274,8 @@ function collectTcBeRequest() {
       case 'remove_param': need('param', 'parameter'); ops.push({ op: kind, name: v.param }); break;
       case 'replace_target':
       case 'rename_interface': need('from', '"from"'); need('to', '"to"'); ops.push({ op: kind, from: v.from.trim(), to: v.to.trim() }); break;
+      case 'set_interfaces': need('pi', 'Pi'); need('ifaces', 'at least one interface');
+        ops.push({ op: kind, pi: v.pi.trim(), interfaces: v.ifaces.split(',').filter(Boolean) }); break;
       case 'set_field': need('value', 'value'); ops.push({ op: kind, name: v.stepField, value: Number(v.value) }); break;
       case 'set_expected': need('resultField', 'result field');
         ops.push({ op: kind, field: v.resultField.trim(), cmp: v.cmp, value: tcBeLooseValue(v.value) }); break;
