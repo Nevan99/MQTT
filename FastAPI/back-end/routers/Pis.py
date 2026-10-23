@@ -9,6 +9,7 @@ from database.database import get_session
 from database.models import Pi, LogEntry, WifiScanHistory, WifiScanSnapshot, InterfaceStatus
 from schemas.schemas import PiOut, LogEntryOut, PrimaryInterfaceRequest, InterfaceDefaultRequest
 from service.auth import get_current_user
+from service.mqtt_service import mqtt_service
 
 router = APIRouter(prefix="/pis", tags=["pis"], dependencies=[Depends(get_current_user)])
 
@@ -42,6 +43,42 @@ def _wifi7_link_fields(r: InterfaceStatus) -> dict:
     }
 
 
+def _interface_dict(r: InterfaceStatus) -> dict:
+    return {
+        "pi_id": r.pi_id, "interface": r.interface, "mac_address": r.mac_address,
+        "state": r.state, "type": r.type, "ip_address": r.ip_address, "ipv6_address": r.ipv6_address,
+        "connected": r.connected, "ssid": r.ssid, "bssid": r.bssid,
+        "frequency_mhz": r.frequency_mhz, "band": r.band, "signal_dbm": r.signal_dbm,
+        "rx_bitrate_mbps": r.rx_bitrate_mbps, "tx_bitrate_mbps": r.tx_bitrate_mbps,
+        "gateway": r.gateway, "key_mgmt": r.key_mgmt, "pairwise_cipher": r.pairwise_cipher,
+        "group_cipher": r.group_cipher, "wpa_state": r.wpa_state, "address": r.address,
+        "wifi_generation": r.wifi_generation, "noise_dbm": r.noise_dbm,
+        "avg_signal_dbm": r.avg_signal_dbm, "link_speed_mbps": r.link_speed_mbps,
+        "channel_width": r.channel_width, "radio_type": r.radio_type,
+        "wifi7_capable": r.wifi7_capable,
+        "max_standard_capable": r.max_standard_capable,
+        **_wifi7_link_fields(r),
+        "updated_at": r.updated_at.isoformat(),
+        "pi_offline": False,
+    }
+
+
+def _offline_pi_ids(session: Session) -> set[str]:
+    return {p.pi_id for p in session.exec(select(Pi)).all() if p.status != "online"}
+
+
+def _interface_out(r: InterfaceStatus, offline: bool) -> dict:
+    """An interface row as the UI gets it. The row is only the last status
+    the Pi reported, so once the Pi is offline it would keep showing UP and
+    connected forever - report it as down instead (MAC, type and
+    capabilities stay; the live link fields are cleared)."""
+    d = _interface_dict(r)
+    if offline:
+        d.update({field: None for field in mqtt_service.LIVE_LINK_FIELDS})
+        d.update(state="DOWN", connected=None if r.connected is None else False, pi_offline=True)
+    return d
+
+
 @router.get("/interface-status", response_model=list[dict])
 def get_all_interface_status(session: Session = Depends(get_session)):
     """Fleet-wide flat view of every managed Pi's every interface's buffered
@@ -50,25 +87,8 @@ def get_all_interface_status(session: Session = Depends(get_session)):
     ahead of GET /{pi_id} below so this literal path isn't shadowed by that
     route's {pi_id} matching "interface-status" as a literal Pi id."""
     rows = session.exec(select(InterfaceStatus)).all()
-    return [
-        {
-            "pi_id": r.pi_id, "interface": r.interface, "mac_address": r.mac_address,
-            "state": r.state, "type": r.type, "ip_address": r.ip_address, "ipv6_address": r.ipv6_address,
-            "connected": r.connected, "ssid": r.ssid, "bssid": r.bssid,
-            "frequency_mhz": r.frequency_mhz, "band": r.band, "signal_dbm": r.signal_dbm,
-            "rx_bitrate_mbps": r.rx_bitrate_mbps, "tx_bitrate_mbps": r.tx_bitrate_mbps,
-            "gateway": r.gateway, "key_mgmt": r.key_mgmt, "pairwise_cipher": r.pairwise_cipher,
-            "group_cipher": r.group_cipher, "wpa_state": r.wpa_state, "address": r.address,
-            "wifi_generation": r.wifi_generation, "noise_dbm": r.noise_dbm,
-            "avg_signal_dbm": r.avg_signal_dbm, "link_speed_mbps": r.link_speed_mbps,
-            "channel_width": r.channel_width, "radio_type": r.radio_type,
-            "wifi7_capable": r.wifi7_capable,
-            "max_standard_capable": r.max_standard_capable,
-            **_wifi7_link_fields(r),
-            "updated_at": r.updated_at.isoformat(),
-        }
-        for r in rows
-    ]
+    offline = _offline_pi_ids(session)
+    return [_interface_out(r, r.pi_id in offline) for r in rows]
 
 
 @router.get("/{pi_id}", response_model=PiOut)
@@ -396,25 +416,8 @@ def get_interface_status(pi_id: str, session: Session = Depends(get_session)):
     rows = session.exec(
         select(InterfaceStatus).where(InterfaceStatus.pi_id == pi_id)
     ).all()
-    return [
-        {
-            "interface": r.interface, "mac_address": r.mac_address, "state": r.state, "type": r.type,
-            "ip_address": r.ip_address, "ipv6_address": r.ipv6_address,
-            "connected": r.connected, "ssid": r.ssid, "bssid": r.bssid,
-            "frequency_mhz": r.frequency_mhz, "band": r.band, "signal_dbm": r.signal_dbm,
-            "rx_bitrate_mbps": r.rx_bitrate_mbps, "tx_bitrate_mbps": r.tx_bitrate_mbps,
-            "gateway": r.gateway, "key_mgmt": r.key_mgmt, "pairwise_cipher": r.pairwise_cipher,
-            "group_cipher": r.group_cipher, "wpa_state": r.wpa_state, "address": r.address,
-            "wifi_generation": r.wifi_generation, "noise_dbm": r.noise_dbm,
-            "avg_signal_dbm": r.avg_signal_dbm, "link_speed_mbps": r.link_speed_mbps,
-            "channel_width": r.channel_width, "radio_type": r.radio_type,
-            "wifi7_capable": r.wifi7_capable,
-            "max_standard_capable": r.max_standard_capable,
-            **_wifi7_link_fields(r),
-            "updated_at": r.updated_at.isoformat(),
-        }
-        for r in rows
-    ]
+    offline = pi_id in _offline_pi_ids(session)
+    return [_interface_out(r, offline) for r in rows]
 
 
 @router.delete("/{pi_id}")
