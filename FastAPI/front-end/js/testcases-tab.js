@@ -2108,7 +2108,9 @@ document.getElementById('tcAddToSuiteModeNew').addEventListener('change', tcSync
 // the Pi detail page (which bypasses showTabView/this event entirely) is
 // handled separately, in showPiDetail (detail-page.js).
 // Packages sub-tabs, filters and the bulk bar's More menu.
-document.querySelectorAll('.pkg-tab').forEach(tab => {
+// Only the Packages switch's own tabs - the Pi page reuses .pkg-tab for its
+// look, and a click there must not navigate to #packages.
+document.querySelectorAll('.pkg-tab[data-pkg]').forEach(tab => {
   tab.addEventListener('click', () => { location.hash = `#packages/${tab.dataset.pkg}`; });
   tab.addEventListener('keydown', (e) => {
     if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;

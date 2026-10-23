@@ -144,3 +144,35 @@ setupNameColResize('tcTable', 'tcNameColResize', 'tcNameColWidth');
   });
 })();
 
+// --- Pi detail page: resizable Interfaces column ---------------------------
+
+(function setupPiDetailIfaceGutter() {
+  const main = document.getElementById('pdMainPanel');
+  const gutter = document.getElementById('pdGutterIface');
+  if (!main || !gutter) return;
+  const MIN = 260, MAX = 720;
+  let width = parseInt(localStorage.getItem('pdIfaceWidth'), 10);
+  if (!(width >= MIN && width <= MAX)) width = 400;
+  const apply = () => main.style.setProperty('--pd-iface-w', `${width}px`);
+  apply();
+
+  gutter.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    main.classList.add('dragging');
+    gutter.classList.add('active');
+    function onMove(moveEvent) {
+      const rect = main.getBoundingClientRect();
+      width = Math.max(MIN, Math.min(MAX, moveEvent.clientX - rect.left));
+      apply();
+    }
+    function onUp() {
+      main.classList.remove('dragging');
+      gutter.classList.remove('active');
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      localStorage.setItem('pdIfaceWidth', width);
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+})();

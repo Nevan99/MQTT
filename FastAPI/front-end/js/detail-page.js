@@ -1249,19 +1249,20 @@ function showPiDetail(piId, captureIface = null) {
   pdUpdateLiveDots();
 }
 
-// --- Pi page sub-tabs: Interfaces | Syslog | Packets ------------------------
-// One section at a time at full width. Both log windows are built and
-// connected on page open (buildDetailLogEntry) whichever tab is showing, so
-// switching tabs never stops a stream; a dot on the tab says it's live
-// (accent) or recording (red). The last tab used is remembered.
+// --- Pi page log tabs: Syslog | Packets ------------------------------------
+// Interfaces stay visible in their own column; the log column shows one
+// window at a time. Both log windows are built and connected on page open
+// (buildDetailLogEntry) whichever tab is showing, so switching tabs never
+// stops a stream; a dot on the tab says it's live (accent) or recording
+// (red). The last tab used is remembered.
 
 const PD_TAB_KEY = 'pi_fleet_pi_tab';
-const PD_TABS = ['interfaces', 'logs', 'tcpdump'];
+const PD_TABS = ['logs', 'tcpdump'];
 
 function pdSavedTab() {
   let t = null;
   try { t = localStorage.getItem(PD_TAB_KEY); } catch { /* storage blocked */ }
-  return PD_TABS.includes(t) ? t : 'interfaces';
+  return PD_TABS.includes(t) ? t : 'logs';
 }
 
 function pdShowTab(which, remember = false) {
@@ -1274,10 +1275,7 @@ function pdShowTab(which, remember = false) {
     tab.setAttribute('aria-selected', String(on));
     tab.tabIndex = on ? 0 : -1;
   });
-  document.getElementById('pdInterfacesPane').classList.toggle('hidden', which !== 'interfaces');
-  const logs = document.getElementById('pdLogPanel');
-  logs.classList.toggle('hidden', which === 'interfaces');
-  if (which !== 'interfaces') logs.dataset.show = which;
+  document.getElementById('pdLogPanel').dataset.show = which;
 }
 
 function pdUpdateLiveDots() {
