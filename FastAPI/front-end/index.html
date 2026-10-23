@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="assets/kaon-favicon-180.png">
 <link id="faviconSvg" rel="icon" type="image/svg+xml" href="assets/kaon-favicon.svg">
 <link rel="stylesheet" href="themes.css?v=4">
-<link rel="stylesheet" href="styles.css?v=32">
+<link rel="stylesheet" href="styles.css?v=34">
 <!-- Applies the saved theme before first paint (no dark flash for a
      light-theme user) - same keys/logic as js/settings.js's applyTheme. -->
 <script>
@@ -87,7 +87,7 @@
   </div>
   <div class="fleet-stat fleet-stat-side"><span class="fleet-stat-num" id="fleetStatRoles">–</span><span class="fleet-stat-label">roles</span></div>
 
-    <div class="panel fleet-list-panel">
+    <div class="panel kt-card fleet-list-panel">
       <div class="pkg-head">
         <h2>Pis</h2>
         <div class="fleet-select-info hidden" id="fleetSelectInfo">
@@ -108,7 +108,7 @@
         <select id="fleetRoleFilter" class="field" aria-label="Role"><option value="">All roles</option></select>
       </div>
       <div class="fleet-table-wrap">
-        <table class="fleet-table">
+        <table class="fleet-table kaon-table">
           <thead>
             <tr>
               <th class="tc-check-col"><input type="checkbox" id="fleetSelectAll" title="Select every Pi shown, for multicast" aria-label="Select every Pi shown"></th>
@@ -123,7 +123,7 @@
 
     <div class="gutter" id="fleetGutter"></div>
 
-    <div class="panel fleet-cmd-panel">
+    <div class="panel kt-card fleet-cmd-panel">
       <div class="pkg-head"><h2>Send command</h2></div>
       <label for="targetSelect">Target</label>
       <select id="targetSelect" class="field">
@@ -178,7 +178,7 @@
 </section>
 
 <section id="interfaces" class="view">
-  <div class="panel captures-panel if-panel">
+  <div class="panel captures-panel kt-card if-panel">
     <div class="pkg-head">
       <h2>Interfaces <span class="if-summary" id="ifSummary"></span></h2>
     </div>
@@ -203,7 +203,7 @@
       </div>
     </div>
     <div class="if-table-wrap">
-      <table class="wifi-info-table if-table">
+      <table class="wifi-info-table if-table kaon-table">
         <thead>
           <tr id="interfacesSortRow" class="table-sort-row"></tr>
           <tr id="interfacesFilterRow" class="table-filter-row hidden"></tr>
@@ -505,7 +505,7 @@
     </div>
 
     <!-- Testcases -->
-    <div id="pkgTestcases" class="panel captures-panel pkg-pane tc-list-panel" role="tabpanel" aria-labelledby="pkgTabTestcases">
+    <div id="pkgTestcases" class="panel captures-panel kt-card pkg-pane tc-list-panel" role="tabpanel" aria-labelledby="pkgTabTestcases">
       <div class="pkg-head">
         <h2>Testcases</h2>
         <div class="pkg-head-actions">
@@ -544,7 +544,7 @@
         <button type="button" id="tcBulkDeleteBtn" class="tc-bulk-danger">Delete&hellip;</button>
       </div>
 
-      <table id="tcTable">
+      <table id="tcTable" class="kaon-table">
         <thead>
           <tr>
             <th class="tc-check-col"><input type="checkbox" id="tcSelectAll" title="Select all on this page" aria-label="Select all on this page"></th>
@@ -557,7 +557,7 @@
     </div>
 
     <!-- Testsuites -->
-    <div id="pkgTestsuites" class="panel captures-panel pkg-pane ts-list-panel hidden" role="tabpanel" aria-labelledby="pkgTabTestsuites">
+    <div id="pkgTestsuites" class="panel captures-panel kt-card pkg-pane ts-list-panel hidden" role="tabpanel" aria-labelledby="pkgTabTestsuites">
       <div class="pkg-head">
         <h2>Testsuites</h2>
         <div class="pkg-head-actions">
@@ -573,7 +573,7 @@
         <input type="text" id="tsTagFilterInput" class="field pkg-tag-filter" placeholder="Tag" aria-label="Filter testsuites by tag" list="pkgTagList" autocomplete="off">
         <button type="button" class="res-link pkg-clear" id="tsClearFilters">Clear</button>
       </div>
-      <table id="tsTable">
+      <table id="tsTable" class="kaon-table">
         <thead>
           <tr><th class="ts-name-cell">Name<span class="col-resize-handle" id="tsNameColResize" title="Drag to resize"></span></th><th>Testcases</th><th>Tags</th><th>Author</th><th>Updated</th><th></th></tr>
         </thead>
@@ -860,7 +860,7 @@
 <section id="captures" class="view">
   <!-- Saved syslog / pcap recordings (captures.js): title + summary, one
        filter row (rarely used ones under "More filters"), sortable table. -->
-  <div class="panel captures-panel cap-panel">
+  <div class="panel captures-panel kt-card cap-panel">
     <div class="pkg-head">
       <h2>Captures <span class="if-summary" id="capSummary"></span></h2>
       <div class="pkg-head-actions">
@@ -912,7 +912,7 @@
 <section id="history" class="view">
   <!-- Every command sent to a Pi (history.js): title + summary, filters,
        a bulk bar for deleting, and a table whose rows open their result. -->
-  <div class="panel captures-panel hist-panel">
+  <div class="panel captures-panel kt-card hist-panel">
     <div class="pkg-head">
       <h2>Command history <span class="if-summary" id="histSummary"></span></h2>
       <div class="pkg-head-actions">
@@ -1114,11 +1114,11 @@
 <!-- Loaded in this exact order - plain global-scope scripts (no modules),
      later files call functions defined in earlier ones. -->
 <script src="js/settings.js?v=3"></script>
-<script src="js/auth.js?v=2"></script>
+<script src="js/auth.js?v=3"></script>
 <script src="js/layout.js?v=6"></script>
 <script src="js/fleet-table.js?v=8"></script>
 <script src="js/interfaces-tab.js?v=3"></script>
-<script src="js/captures.js?v=3"></script>
+<script src="js/captures.js?v=4"></script>
 <script src="js/history.js?v=4"></script>
 <script src="js/command-builder.js?v=11"></script>
 <!-- ?v= busts the browser's cache on each edit - these three change often
@@ -1126,9 +1126,9 @@
      serves them with only Last-Modified/ETag, which Chrome's heuristic
      cache treats as "reuse without revalidating" for a warm tab), so a
      plain reload can otherwise keep serving a stale copy indefinitely. -->
-<script src="js/testcases-tab.js?v=17"></script>
+<script src="js/testcases-tab.js?v=18"></script>
 <script src="js/tc-bulk-edit.js?v=1"></script>
-<script src="js/testsuites-tab.js?v=12"></script>
+<script src="js/testsuites-tab.js?v=13"></script>
 <!-- After testcases-tab.js: reuses its tcRenderRunSteps/tcStatusClass so a
      run's step detail renders identically in both places. -->
 <script src="js/results-tab.js?v=17"></script>

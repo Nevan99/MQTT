@@ -92,10 +92,10 @@ function renderTsTable() {
   body.innerHTML = tsList.map(s => `
     <tr>
       <td class="ts-name-cell">${tcEsc(s.name)}${s.description ? `<div class="hint pkg-desc">${tcEsc(s.description)}</div>` : ''}</td>
-      <td>${s.testcase_ids.length}</td>
+      <td class="res-num">${s.testcase_ids.length}</td>
       <td class="pkg-tags">${pkgTagChips(s.tags, 'ts')}</td>
-      <td>${tcEsc(s.author || '')}</td>
-      <td>${formatVnDateTime(s.updated_at)}</td>
+      <td class="kt-author">${tcEsc(s.author || '')}</td>
+      <td class="res-date">${ktDateTimeHtml(s.updated_at)}</td>
       <td class="capture-actions">
         <button class="icon-btn ts-run-btn" data-id="${s.id}" title="Run">&#9654;</button>
         <button class="icon-btn ts-edit-btn" data-id="${s.id}" title="Edit">&#9998;</button>

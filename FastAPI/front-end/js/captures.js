@@ -45,13 +45,6 @@ function escapeCaptureHtml(v) {
   return String(v).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 }
 
-// "23/10/2026, 14:05:01" as a bold date and a muted time.
-function captureDateHtml(d) {
-  if (!d) return '<span class="kt-muted">—</span>';
-  const [date, time] = formatVnDateTime(d).split(', ');
-  return `<span class="kt-date">${date}</span> <span class="kt-time">${time || ''}</span>`;
-}
-
 function refreshCapturePiOptions() {
   const current = capFilterEls.pi.value;
   const pis = [...new Set(allCaptures.map(c => c.pi_id))].sort();
@@ -151,8 +144,8 @@ function renderCaptures() {
         <td><span class="kt-pill kt-pill-${isPcap ? 'pcap' : 'logs'}">${CAP_CATEGORY_LABEL[c.category] || escapeCaptureHtml(c.category)}</span></td>
         <td class="kt-name">${escapeCaptureHtml(c.name)}</td>
         <td class="res-num">${isPcap ? '<span class="kt-muted">—</span>' : c.line_count.toLocaleString('en-US')}</td>
-        <td class="res-date">${captureDateHtml(start)}</td>
-        <td class="res-date">${captureDateHtml(stop)}</td>
+        <td class="res-date">${ktDateTimeHtml(start)}</td>
+        <td class="res-date">${ktDateTimeHtml(stop)}</td>
         <td class="res-num kt-mono">${formatDuration(start, stop)}</td>
         <td class="capture-actions">
           <a href="${withToken(`${API}/captures/${c.id}/download`)}" class="kt-act" title="Download ${isPcap ? '.pcap' : '.txt'}">

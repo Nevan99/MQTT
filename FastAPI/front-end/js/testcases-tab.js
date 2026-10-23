@@ -368,10 +368,10 @@ function renderTcTable() {
       <td class="tc-check-col"><input type="checkbox" class="tc-row-check" data-id="${t.id}" ${tcSelected.has(t.id) ? 'checked' : ''}></td>
       <td class="tc-name-cell">${t.name}</td>
       <td class="pkg-tags">${pkgTagChips(t.tags, 'tc')}</td>
-      <td>${t.status}</td>
-      <td>${t.steps.length}</td>
-      <td>${t.author || ''}</td>
-      <td>${formatVnDateTime(t.updated_at)}</td>
+      <td><span class="kt-pill kt-tc-${t.status}">${t.status}</span></td>
+      <td class="res-num">${t.steps.length}</td>
+      <td class="kt-author">${t.author || ''}</td>
+      <td class="res-date">${ktDateTimeHtml(t.updated_at)}</td>
       <td class="capture-actions">
         <button class="icon-btn tc-run-btn" data-id="${t.id}" title="Run">&#9654;</button>
         <button class="icon-btn tc-edit-btn" data-id="${t.id}" title="Edit">&#9998;</button>
