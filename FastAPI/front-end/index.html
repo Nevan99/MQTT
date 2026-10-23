@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="assets/kaon-favicon-180.png">
 <link id="faviconSvg" rel="icon" type="image/svg+xml" href="assets/kaon-favicon.svg">
 <link rel="stylesheet" href="themes.css?v=4">
-<link rel="stylesheet" href="styles.css?v=30">
+<link rel="stylesheet" href="styles.css?v=32">
 <!-- Applies the saved theme before first paint (no dark flash for a
      light-theme user) - same keys/logic as js/settings.js's applyTheme. -->
 <script>
@@ -950,6 +950,18 @@
         <tbody id="historyTableBody"></tbody>
       </table>
     </div>
+    <div class="res-pager hist-pager">
+      <span id="histRange"></span>
+      <span class="res-pager-gap"></span>
+      <label class="res-goto">Per page
+        <select id="histPageSize" aria-label="Commands per page">
+          <option value="50">50</option><option value="100" selected>100</option><option value="200">200</option><option value="500">500</option>
+        </select>
+      </label>
+      <button type="button" id="histPrev" class="kt-btn">&lsaquo; Newer</button>
+      <span id="histPageInfo" class="hist-page-info"></span>
+      <button type="button" id="histNext" class="kt-btn">Older &rsaquo;</button>
+    </div>
   </div>
 </section>
 
@@ -1106,7 +1118,7 @@
 <script src="js/fleet-table.js?v=8"></script>
 <script src="js/interfaces-tab.js?v=3"></script>
 <script src="js/captures.js?v=3"></script>
-<script src="js/history.js?v=2"></script>
+<script src="js/history.js?v=3"></script>
 <script src="js/command-builder.js?v=11"></script>
 <!-- ?v= busts the browser's cache on each edit - these three change often
      during active development and have no other cache-busting (StaticFiles

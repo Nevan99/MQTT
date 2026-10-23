@@ -1,6 +1,8 @@
 // --- Command history ---------------------------------------------------
-// Last 200 commands from /commands; the search, status, Pi and action
-// filters run client-side on that list.
+// Every stored command, a page at a time from /commands (newest first).
+// The search, status, Pi and action filters are applied by the backend,
+// so they cover the whole history, not just the page shown; /commands/stats
+// gives the totals for the summary and the filter options.
 
 const historyTableBody = document.getElementById('historyTableBody');
 const historySelectAll = document.getElementById('historySelectAll');
@@ -11,10 +13,19 @@ const histSearch = document.getElementById('histSearch');
 const histStatusSeg = document.getElementById('histStatusSeg');
 const histPiFilter = document.getElementById('histPiFilter');
 const histActionFilter = document.getElementById('histActionFilter');
+const histRange = document.getElementById('histRange');
+const histPageInfo = document.getElementById('histPageInfo');
+const histPrev = document.getElementById('histPrev');
+const histNext = document.getElementById('histNext');
+const histPageSize = document.getElementById('histPageSize');
 const checkedHistoryIds = new Set();
 const openHistoryIds = new Set();
 
+// The page shown, how many commands match the filters, and the totals.
 let allCommands = [];
+let histTotal = 0;
+let histStats = { total: 0, by_status: {}, pis: [], actions: [] };
+let histPage = 0;
 let histStatus = '';
 
 function escapeHistoryHtml(v) {
@@ -60,6 +71,8 @@ async function deleteHistoryEntries(ids) {
   await loadHistory();
 }
 
+function historyPageSize() { return Number(histPageSize.value) || 100; }
+
 function refreshHistoryOptions() {
   const fill = (el, values, allLabel, label) => {
     const current = el.value;
@@ -67,36 +80,21 @@ function refreshHistoryOptions() {
       values.map(v => `<option value="${escapeHistoryHtml(v)}">${escapeHistoryHtml(label(v))}</option>`).join('');
     if (values.includes(current)) el.value = current;
   };
-  fill(histPiFilter, [...new Set(allCommands.map(c => c.pi_id))].sort(), 'All Pis', v => v);
-  fill(histActionFilter, [...new Set(allCommands.map(c => c.action))].sort(), 'All actions', actionLabel);
-}
-
-function filteredCommands() {
-  const q = histSearch.value.trim().toLowerCase();
-  return allCommands.filter(c => {
-    if (histStatus && commandDisplayStatus(c) !== histStatus) return false;
-    if (histPiFilter.value && c.pi_id !== histPiFilter.value) return false;
-    if (histActionFilter.value && c.action !== histActionFilter.value) return false;
-    if (q) {
-      const hay = `${c.pi_id} ${actionLabel(c.action)} ${c.result ? JSON.stringify(c.result) : ''}`.toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
-    return true;
-  });
+  fill(histPiFilter, histStats.pis, 'All Pis', v => v);
+  fill(histActionFilter, histStats.actions, 'All actions', actionLabel);
 }
 
 function renderHistorySummary() {
-  const counts = {};
-  allCommands.forEach(c => { const s = commandDisplayStatus(c); counts[s] = (counts[s] || 0) + 1; });
+  const counts = histStats.by_status || {};
   const bad = (counts.failed || 0) + (counts.timeout || 0);
-  histSummary.innerHTML = allCommands.length
-    ? `<b>${allCommands.length}</b> commands · <span class="kt-chip kt-chip-ok">${counts.complete || 0} complete</span>`
+  histSummary.innerHTML = histStats.total
+    ? `<b>${histStats.total.toLocaleString('en-US')}</b> commands · <span class="kt-chip kt-chip-ok">${counts.complete || 0} complete</span>`
       + (bad ? ` <span class="kt-chip kt-chip-bad">${bad} failed</span>` : '')
       + (counts.pending ? ` <span class="kt-chip kt-chip-warn">${counts.pending} pending</span>` : '')
     : '';
   histStatusSeg.querySelectorAll('button[data-status]').forEach(b => {
     const s = b.dataset.status;
-    const n = s ? (counts[s] || 0) : allCommands.length;
+    const n = s ? (counts[s] || 0) : histStats.total;
     b.innerHTML = `${b.dataset.label || (b.dataset.label = b.textContent)} <span class="kt-seg-n">${n}</span>`;
   });
 }
@@ -116,8 +114,19 @@ function toggleHistoryRow(id, open) {
   else resultEl.innerHTML = '<div class="pi-log-empty">no result</div>';
 }
 
+function renderHistoryPager() {
+  const size = historyPageSize();
+  const pages = Math.max(1, Math.ceil(histTotal / size));
+  const first = histTotal ? histPage * size + 1 : 0;
+  const last = Math.min(histTotal, (histPage + 1) * size);
+  histRange.innerHTML = `Showing <b>${first.toLocaleString('en-US')}–${last.toLocaleString('en-US')}</b> of <b>${histTotal.toLocaleString('en-US')}</b>`;
+  histPageInfo.textContent = `Page ${histPage + 1} of ${pages}`;
+  histPrev.disabled = histPage === 0;
+  histNext.disabled = histPage >= pages - 1;
+}
+
 function historyEmptyHtml() {
-  const filtered = allCommands.length > 0;
+  const filtered = histStats.total > 0;
   return `<tr class="kt-empty-row"><td colspan="6"><div class="kt-empty">
     <span class="kaon-dots" aria-hidden="true"><i></i><i></i><i></i></span>
     <strong>${filtered ? 'No commands match these filters' : 'No commands sent yet'}</strong>
@@ -126,8 +135,9 @@ function historyEmptyHtml() {
 }
 
 function renderHistory() {
-  const commands = filteredCommands();
+  const commands = allCommands;
   renderHistorySummary();
+  renderHistoryPager();
   historyTableBody.innerHTML = commands.map(c => {
     const status = commandDisplayStatus(c);
     const exact = formatVnDateTime(c.created_at);
@@ -183,11 +193,32 @@ function renderHistory() {
   updateHistoryDeleteBtn();
 }
 
+function historyQuery() {
+  const size = historyPageSize();
+  const params = new URLSearchParams({ limit: size, offset: histPage * size });
+  const q = histSearch.value.trim();
+  if (q) params.set('q', q);
+  if (histStatus) params.set('status', histStatus);
+  if (histPiFilter.value) params.set('pi_id', histPiFilter.value);
+  if (histActionFilter.value) params.set('action', histActionFilter.value);
+  return params.toString();
+}
+
 async function loadHistory() {
   try {
-    const res = await apiFetch(`${API}/commands?limit=200`);
+    const [res, statsRes] = await Promise.all([
+      apiFetch(`${API}/commands?${historyQuery()}`),
+      apiFetch(`${API}/commands/stats`),
+    ]);
     if (!res.ok) return;
     allCommands = await res.json();
+    histTotal = Number(res.headers.get('X-Total-Count')) || allCommands.length;
+    if (statsRes.ok) histStats = await statsRes.json();
+    // Deleting the last rows of the last page leaves it empty - step back.
+    if (!allCommands.length && histPage > 0 && histTotal > 0) {
+      histPage = Math.max(0, Math.ceil(histTotal / historyPageSize()) - 1);
+      return loadHistory();
+    }
     const seenIds = new Set(allCommands.map(c => c.command_id));
     [...checkedHistoryIds].forEach(id => { if (!seenIds.has(id)) checkedHistoryIds.delete(id); });
     [...openHistoryIds].forEach(id => { if (!seenIds.has(id)) openHistoryIds.delete(id); });
@@ -205,18 +236,33 @@ function setHistoryStatus(value) {
   });
 }
 
+// Any filter change starts again from the newest page.
+function reloadHistoryFromStart() {
+  histPage = 0;
+  loadHistory();
+}
+
 histStatusSeg.addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-status]');
   if (!btn) return;
   setHistoryStatus(btn.dataset.status);
-  renderHistory();
+  reloadHistoryFromStart();
 });
-[histSearch, histPiFilter, histActionFilter].forEach(el => el.addEventListener('input', renderHistory));
+[histPiFilter, histActionFilter, histPageSize].forEach(el => el.addEventListener('change', reloadHistoryFromStart));
+
+let histSearchTimer = null;
+histSearch.addEventListener('input', () => {
+  clearTimeout(histSearchTimer);
+  histSearchTimer = setTimeout(reloadHistoryFromStart, 300);
+});
+
+histPrev.addEventListener('click', () => { if (histPage > 0) { histPage--; loadHistory(); } });
+histNext.addEventListener('click', () => { histPage++; loadHistory(); });
 
 document.getElementById('histClearFilters').addEventListener('click', () => {
   histSearch.value = ''; histPiFilter.value = ''; histActionFilter.value = '';
   setHistoryStatus('');
-  renderHistory();
+  reloadHistoryFromStart();
 });
 
 historySelectAll.addEventListener('change', () => {

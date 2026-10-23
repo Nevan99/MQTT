@@ -1362,3 +1362,14 @@ table.kaon-table tbody tr:not(.kt-empty-row):not(.history-detail-row):hover > td
 :root[data-mode="light"] table.kaon-table thead th { color: #0b4f96; }
 :root[data-mode="light"] .kt-code, :root[data-mode="light"] .cap-panel button.kt-btn, :root[data-mode="light"] .hist-panel button.kt-btn { color: #0b5cb3; }
 :root[data-mode="light"] .kt-pill-pcap, :root[data-mode="light"] .kt-chip-pcap { color: #b4510f; }
+
+/* History pager. */
+.hist-pager { gap: 0.6rem; }
+.hist-pager b { color: var(--text); font-variant-numeric: tabular-nums; }
+.hist-panel .hist-pager select { min-width: 0; padding: 0.3rem 0.5rem; }
+.hist-panel .hist-pager button.kt-btn { padding: 0.3rem 0.75rem; }
+.hist-page-info { font-weight: 600; color: var(--text-2); font-variant-numeric: tabular-nums; }
+
+/* Narrow windows: keep the table usable and let the card scroll instead. */
+.cap-panel, .hist-panel { overflow-x: hidden; overflow-y: auto; }
+.cap-panel .res-table-wrap, .hist-panel .res-table-wrap { min-height: 260px; }
