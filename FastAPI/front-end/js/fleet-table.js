@@ -78,6 +78,10 @@ function chevronIconSvg(direction) {
 const CLOSE_ICON_SVG = `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
 const PLAY_ICON_SVG = `<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><polygon points="6 4 20 12 6 20"/></svg>`;
 const STOP_ICON_SVG = `<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><rect x="6" y="6" width="12" height="12"/></svg>`;
+// Record and delete, as SVG rather than emoji (⏺ / 🗑) so they render the
+// same on every OS and follow the button's text color.
+const RECORD_ICON_SVG = `<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="7"/></svg>`;
+const TRASH_ICON_SVG = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>`;
 
 const EYE_ICON_SVG = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/>
@@ -255,7 +259,7 @@ async function awaitCommandResult(commandId, maxAttempts = 30) {
 }
 
 function setCaptureBtn(btn, recording) {
-  btn.innerHTML = recording ? '&#9209;' : '&#9210;';
+  btn.innerHTML = recording ? STOP_ICON_SVG : RECORD_ICON_SVG;
   btn.title = recording ? 'Stop Capture' : 'Start Capture';
   btn.classList.toggle('recording', recording);
 }
@@ -439,7 +443,7 @@ async function togglePcapCapture(piId, entry, btn) {
 
     entry.pcapState = { name, interface: iface };
     announceRecordingChange();
-    btn.innerHTML = '&#9209;';
+    btn.innerHTML = STOP_ICON_SVG;
     btn.title = 'Stop Capture';
     btn.classList.add('recording');
     return;
@@ -447,7 +451,7 @@ async function togglePcapCapture(piId, entry, btn) {
 
   const { interface: capturedIface } = entry.pcapState;
   entry.pcapState = null;
-  btn.innerHTML = '&#9210;';
+  btn.innerHTML = RECORD_ICON_SVG;
   btn.title = 'Start Capture';
   btn.classList.remove('recording');
   btn.disabled = true;
@@ -842,8 +846,8 @@ function buildFleetSyslogBlock(piId, entry) {
     <div class="pi-log-heading">
       <span>${spec.label}</span>
       <span class="pi-log-actions">
-        <button class="pi-log-capture icon-btn" type="button" title="Start Capture">&#9210;</button>
-        <button class="pi-log-clear icon-btn" type="button" title="Clear">&#128465;</button>
+        <button class="pi-log-capture icon-btn" type="button" title="Start Capture">${RECORD_ICON_SVG}</button>
+        <button class="pi-log-clear icon-btn" type="button" title="Clear">${TRASH_ICON_SVG}</button>
         <button class="pi-log-collapse icon-btn" type="button" title="Expand">${chevronIconSvg('down')}</button>
       </span>
     </div>
@@ -1307,8 +1311,8 @@ function buildFleetIfaceCard(piId, entry, iface) {
         <span>${spec.label}</span>
         <span class="pi-log-actions">
           ${isTcpdump ? `<button class="pi-log-stream icon-btn" type="button" title="Start streaming">${PLAY_ICON_SVG}</button>` : ''}
-          <button class="pi-log-capture icon-btn" type="button" title="Start Capture">&#9210;</button>
-          <button class="pi-log-clear icon-btn" type="button" title="Clear">&#128465;</button>
+          <button class="pi-log-capture icon-btn" type="button" title="Start Capture">${RECORD_ICON_SVG}</button>
+          <button class="pi-log-clear icon-btn" type="button" title="Clear">${TRASH_ICON_SVG}</button>
           <button class="pi-log-collapse icon-btn" type="button" title="Expand">${chevronIconSvg('down')}</button>
         </span>
       </div>

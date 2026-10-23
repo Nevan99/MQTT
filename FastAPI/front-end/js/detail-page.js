@@ -1042,7 +1042,7 @@ function buildDetailLogEntry(piId, lockedIface = null) {
     }
 
     const captureBtn = block.querySelector('.pi-log-capture');
-    captureBtn.innerHTML = '&#9210;';
+    captureBtn.innerHTML = RECORD_ICON_SVG;
     captureBtn.title = 'Start Capture';
     captureBtn.classList.remove('recording');
     captureBtn.onclick = () => toggleCapture(piId, spec, entry, captureBtn);
@@ -1388,6 +1388,38 @@ function routeApp() {
 }
 window.addEventListener('hashchange', routeApp);
 routeApp();
+
+// Icon-only buttons (no visible text) take their tooltip as their accessible
+// name, and keep it in step as the tooltip changes (Start/Stop capture...).
+// Buttons with their own aria-label are left alone.
+function syncIconButtonLabel(btn) {
+  if (!btn.title || (btn.hasAttribute('aria-label') && !btn.dataset.autoLabel)) return;
+  const text = btn.textContent.replace(/[\s\u2190-\u2bff]|\p{Extended_Pictographic}/gu, '');
+  if (text) return;
+  btn.setAttribute('aria-label', btn.title);
+  btn.dataset.autoLabel = '1';
+}
+document.querySelectorAll('button[title]').forEach(syncIconButtonLabel);
+new MutationObserver(mutations => {
+  for (const m of mutations) {
+    if (m.type === 'attributes') { if (m.target.matches('button[title]')) syncIconButtonLabel(m.target); continue; }
+    m.addedNodes.forEach(n => {
+      if (n.nodeType !== 1) return;
+      if (n.matches('button[title]')) syncIconButtonLabel(n);
+      n.querySelectorAll('button[title]').forEach(syncIconButtonLabel);
+    });
+  }
+}).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['title'] });
+
+// The active nav tab is the current page for screen readers too.
+function syncNavCurrent() {
+  document.querySelectorAll('nav button.tab').forEach(b => {
+    if (b.classList.contains('active')) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+  });
+}
+document.addEventListener('tabshown', syncNavCurrent);
+window.addEventListener('hashchange', () => setTimeout(syncNavCurrent, 0));
+setTimeout(syncNavCurrent, 0);
 
 const footerYearEl = document.getElementById('footerYear');
 if (footerYearEl) footerYearEl.textContent = new Date().getFullYear();

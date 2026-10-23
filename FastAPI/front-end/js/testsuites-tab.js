@@ -158,7 +158,7 @@ function renderTsSelectedList() {
           <span class="ts-picker-controls">
             <button type="button" class="icon-btn ts-move-up" title="Move up">&#8593;</button>
             <button type="button" class="icon-btn ts-move-down" title="Move down">&#8595;</button>
-            <button type="button" class="icon-btn ts-remove" title="Remove from suite">&#128465;</button>
+            <button type="button" class="icon-btn ts-remove" title="Remove from suite">${TRASH_ICON_SVG}</button>
           </span>
         </div>
       `).join('')

@@ -19,7 +19,7 @@ const THEMES = [
 
 // dark/light swatch shades match themes.css's --accent for each mode.
 const ACCENTS = [
-  { id: 'kaon', name: 'Kaon blue', dark: '#3d9bf2', light: '#0d71d9' },
+  { id: 'kaon', name: 'Kaon blue', dark: '#3d9bf2', light: '#0A64C0' },
   { id: 'cyan', name: 'Cyan', dark: '#66ccff', light: '#0369a1' },
   { id: 'blue', name: 'Blue', dark: '#6ab0ff', light: '#1d4ed8' },
   { id: 'green', name: 'Green', dark: '#4ade80', light: '#15803d' },

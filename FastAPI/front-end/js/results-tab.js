@@ -280,7 +280,7 @@ function renderResTable() {
       <td class="res-tags">${r.tags.map(t => `<button type="button" class="res-tag res-tag-sm${resState.tags.includes(t) ? ' active' : ''}" data-tag="${tcEsc(t)}" title="Filter by this tag">${tcEsc(t)}</button>`).join('')}</td>
       <td class="capture-actions">
         <button type="button" class="icon-btn res-rerun-btn" title="Re-run">${RERUN_ICON_SVG}</button>
-        <button type="button" class="icon-btn res-delete-btn" title="${r.locked ? 'Locked - unlock to delete' : 'Delete'}" ${r.locked ? 'disabled' : ''}>&#128465;</button>
+        <button type="button" class="icon-btn res-delete-btn" title="${r.locked ? 'Locked - unlock to delete' : 'Delete'}" ${r.locked ? 'disabled' : ''}>${TRASH_ICON_SVG}</button>
       </td>
     </tr>`;
   }).join('');

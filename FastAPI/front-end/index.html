@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pi Fleet Controller</title>
 <!-- Kaon power-mark favicon. The SVG one is redrawn in the active theme's
      colors by js/settings.js; the PNGs are fallbacks for browsers without
@@ -9,8 +10,8 @@
 <link rel="alternate icon" type="image/png" sizes="64x64" href="assets/kaon-favicon-64.png">
 <link rel="apple-touch-icon" href="assets/kaon-favicon-180.png">
 <link id="faviconSvg" rel="icon" type="image/svg+xml" href="assets/kaon-favicon.svg">
-<link rel="stylesheet" href="themes.css?v=5">
-<link rel="stylesheet" href="styles.css?v=39">
+<link rel="stylesheet" href="themes.css?v=6">
+<link rel="stylesheet" href="styles.css?v=45">
 <!-- Applies the saved theme before first paint (no dark flash for a
      light-theme user) - same keys/logic as js/settings.js's applyTheme. -->
 <script>
@@ -74,6 +75,9 @@
   <button id="logoutBtn" type="button">Log out</button>
 </header>
 
+<!-- The tab views are the page's main region (display: contents, so the
+     wrapper doesn't change the layout). -->
+<main id="mainContent">
 <section id="fleet" class="view active">
   <!-- One grid for the whole tab (columns: list | divider | command), so
        the summary tiles line up with the panels under them: three tiles
@@ -1003,8 +1007,8 @@
           <span>syslog / stream_logs</span>
           <span class="pi-log-actions">
             <button class="pi-log-stream icon-btn" type="button" title="Start streaming"><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><polygon points="6 4 20 12 6 20"/></svg></button>
-            <button class="pi-log-capture icon-btn" type="button" title="Start Capture">&#9210;</button>
-            <button class="pi-log-clear icon-btn" type="button" title="Clear">&#128465;</button>
+            <button class="pi-log-capture icon-btn" type="button" title="Start Capture" aria-label="Start Capture"><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="7"/></svg></button>
+            <button class="pi-log-clear icon-btn" type="button" title="Clear" aria-label="Clear"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button>
             <button class="pi-log-collapse icon-btn" type="button" title="Collapse"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform: rotate(-90deg);"><polyline points="9 6 15 12 9 18"/></svg></button>
           </span>
         </div>
@@ -1017,8 +1021,8 @@
             <select class="pi-stream-iface"><option value="">select interface</option></select>
             <button class="pi-log-popout icon-btn" type="button" title="Open this interface's capture in a new tab"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><line x1="20" y1="4" x2="11" y2="13"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></button>
             <button class="pi-log-stream icon-btn" type="button" title="Start streaming"><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><polygon points="6 4 20 12 6 20"/></svg></button>
-            <button class="pi-log-capture icon-btn" type="button" title="Start Capture">&#9210;</button>
-            <button class="pi-log-clear icon-btn" type="button" title="Clear">&#128465;</button>
+            <button class="pi-log-capture icon-btn" type="button" title="Start Capture" aria-label="Start Capture"><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="7"/></svg></button>
+            <button class="pi-log-clear icon-btn" type="button" title="Clear" aria-label="Clear"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button>
             <button class="pi-log-collapse icon-btn" type="button" title="Collapse"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform: rotate(-90deg);"><polyline points="9 6 15 12 9 18"/></svg></button>
           </span>
         </div>
@@ -1075,13 +1079,14 @@
   </div>
 </section>
 <!-- The Kaon slide template's content-slide footer. -->
+</main>
 <footer id="appFooter">
   <span class="footer-brand">
     <span class="kaon-dots" aria-hidden="true"><i></i><i></i><i></i></span>
     <span class="kaon-logo" role="img" aria-label="Kaon Broadband"><span class="kaon-logo-text"></span><span class="kaon-logo-mark"></span></span>
     <span class="footer-corp">KAON BROADBAND Co., Ltd.</span>
   </span>
-  <span class="footer-copy">Copyright &copy; <span id="footerYear"></span> KAON Broadband Co., Ltd. All rights reserved<span class="sep">|</span>Confidential</span>
+  <span class="footer-copy">Copyright &copy; <span id="footerYear"></span> KAON Broadband Co., Ltd. All rights reserved<span class="sep" aria-hidden="true">|</span>Confidential</span>
 </footer>
 </div>
 
@@ -1113,29 +1118,29 @@
 
 <!-- Loaded in this exact order - plain global-scope scripts (no modules),
      later files call functions defined in earlier ones. -->
-<script src="js/settings.js?v=3"></script>
+<script src="js/settings.js?v=4"></script>
 <script src="js/auth.js?v=3"></script>
 <script src="js/layout.js?v=6"></script>
-<script src="js/fleet-table.js?v=9"></script>
+<script src="js/fleet-table.js?v=10"></script>
 <script src="js/interfaces-tab.js?v=3"></script>
 <script src="js/captures.js?v=4"></script>
 <script src="js/history.js?v=5"></script>
-<script src="js/command-builder.js?v=13"></script>
+<script src="js/command-builder.js?v=14"></script>
 <!-- ?v= busts the browser's cache on each edit - these three change often
      during active development and have no other cache-busting (StaticFiles
      serves them with only Last-Modified/ETag, which Chrome's heuristic
      cache treats as "reuse without revalidating" for a warm tab), so a
      plain reload can otherwise keep serving a stale copy indefinitely. -->
-<script src="js/testcases-tab.js?v=19"></script>
+<script src="js/testcases-tab.js?v=20"></script>
 <script src="js/tc-bulk-edit.js?v=1"></script>
-<script src="js/testsuites-tab.js?v=14"></script>
+<script src="js/testsuites-tab.js?v=15"></script>
 <!-- After testcases-tab.js: reuses its tcRenderRunSteps/tcStatusClass so a
      run's step detail renders identically in both places. -->
-<script src="js/results-tab.js?v=17"></script>
+<script src="js/results-tab.js?v=18"></script>
 <script src="js/wifi-scan.js?v=2"></script>
 <script src="js/wifi-info-modal.js?v=5"></script>
 <script src="js/log-rendering.js"></script>
 <script src="js/wireshark-table.js"></script>
-<script src="js/detail-page.js?v=22"></script>
+<script src="js/detail-page.js?v=23"></script>
 </body>
 </html>

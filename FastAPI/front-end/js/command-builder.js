@@ -536,7 +536,7 @@ function addCommandEntry(commandId, piId, action) {
   entry.className = 'cmd-entry';
   entry.dataset.commandId = commandId;
   entry.innerHTML = `
-    <div class="hdr"><span><span class="toggle">&#9660;</span>${action} &rarr; ${piId}</span><span><span class="cmd-status pending">pending</span><button class="icon-btn cmd-delete" title="Delete">&#128465;</button></span></div>
+    <div class="hdr"><span><span class="toggle">&#9660;</span>${action} &rarr; ${piId}</span><span><span class="cmd-status pending">pending</span><button class="icon-btn cmd-delete" title="Delete">${TRASH_ICON_SVG}</button></span></div>
     <div class="result"></div>
   `;
   entry.querySelector('.hdr').addEventListener('click', (e) => {

@@ -195,7 +195,7 @@
      live stream crosses 500 lines - exactly when it matters most. */
   .pi-log-panel { max-height: 240px; overflow-y: auto; overflow-anchor: none; padding: 0.2rem 0.75rem 0.5rem; }
   .pi-log-panel .line { border-bottom: 1px solid var(--border-faint); }
-  .pi-log-empty { color: var(--text-disabled); font-size: 0.78rem; padding: 0.4rem 0; }
+  .pi-log-empty { color: var(--text-dim); font-size: 0.8rem; padding: 0.4rem 0; }
   .pi-log-panel.wireshark-table-wrap { display: flex; flex-direction: column; padding: 0; overflow: hidden; max-height: 320px; }
   #piDetailGrid .pd-log-block .pi-log-panel.wireshark-table-wrap { max-height: none; }
   .fleet-iface-list .pd-log-block .pi-log-panel { max-height: 240px; }
@@ -722,7 +722,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
 .res-toolbar-gap, .res-pager-gap { flex: 1 1 auto; }
 .res-table-wrap { flex: 1 1 auto; min-height: 0; overflow: auto; }
 table.res-table { font-size: 0.8rem; }
-table.res-table thead th { position: sticky; top: 0; z-index: 1; background: var(--surface-button); color: var(--text-2); text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.03em; white-space: nowrap; }
+table.res-table thead th { position: sticky; top: 0; z-index: 1; background: var(--surface-button); color: var(--text-2); text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.03em; white-space: nowrap; }
 table.res-table th[data-sort] { cursor: pointer; user-select: none; }
 table.res-table th[data-sort]:hover { color: var(--text); }
 table.res-table th[data-dir="asc"]::after { content: " \25B2"; font-size: 0.7em; }
@@ -894,8 +894,8 @@ table.res-table tr.res-archived > td { opacity: 0.7; }
 .pkg-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
 .pkg-head h2 { margin: 0; font-size: 1.05rem; font-weight: 600; color: var(--text); }
 .pkg-head-actions { display: flex; gap: 0.5rem; }
-.pkg-primary { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
-.pkg-primary:hover { background: var(--accent); filter: brightness(1.1); }
+.pkg-primary { background: var(--brand-fill); border-color: var(--brand-fill); color: #fff; font-weight: 600; }
+.pkg-primary:hover { background: var(--brand-fill); filter: brightness(1.1); }
 .pkg-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 0.6rem; }
 .pkg-search {
   display: flex; align-items: center; gap: 0.4rem; flex: 0 1 360px; min-width: 200px; margin: 0;
@@ -946,7 +946,7 @@ tr.if-group:first-child > td { border-top: none; }
 .if-group td > * { margin-right: 0.4rem; vertical-align: middle; }
 .if-group-pi { font-weight: 700; font-size: 0.85rem; }
 .if-group-sum { color: var(--text-3); font-size: 0.78rem; }
-.if-pill { display: inline-block; padding: 0 0.45rem; border-radius: 9px; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.02em; }
+.if-pill { display: inline-block; padding: 0 0.45rem; border-radius: 9px; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.02em; }
 .if-state-up { background: var(--success-bg); color: var(--success-text); }
 .if-state-down { background: var(--surface-button); color: var(--text-dim); }
 .if-conn { display: inline-flex; align-items: center; gap: 0.35rem; white-space: nowrap; }
@@ -1036,7 +1036,7 @@ header nav button.tab { flex: 0 0 auto; white-space: nowrap; }
 .pd-stat-num { font-size: 1.25rem; font-weight: 300; line-height: 1.15; color: var(--text); font-variant-numeric: tabular-nums; }
 .pd-stat-num small { font-size: 0.8rem; color: var(--text-dim); margin-left: 0.1rem; }
 .pd-stat-text { font-size: 0.95rem; font-weight: 500; font-family: ui-monospace, monospace; }
-.pd-stat-label { font-size: 0.68rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-dim); }
+.pd-stat-label { font-size: 0.75rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-dim); }
 .pd-stat-wifi .pd-stat-num { color: var(--accent); }
 
 /* Interfaces | divider | Syslog-or-Packets, side by side. */
@@ -1472,3 +1472,59 @@ table.kaon-table thead tr:not(.table-filter-row) th { font-family: inherit; text
 .kt-card .pkg-tab:not(.active) .pkg-count, .pkg-switch .pkg-tab:not(.active) .pkg-count { color: var(--text-muted); }
 .kt-seg-n { background: color-mix(in srgb, currentColor 10%, transparent); }
 .seg button[aria-checked="true"] .kt-seg-n { background: rgba(0, 0, 0, 0.22); }
+
+/* ---------------------------------------------------------------------------
+   ui-ux-pro-max review, round 2 (WCAG 2.2 AA).
+   --------------------------------------------------------------------------- */
+#mainContent { display: contents; }
+
+/* Focus: a solid 2px ring in the Kaon cards too (the soft halo they had was
+   ~1.4:1 against white; focus indicators need 3:1). */
+.kt-card button:focus-visible, .kt-card a:focus-visible, .kt-act:focus-visible,
+.kt-card select:focus-visible, .kt-card input:focus-visible, .cap-more input:focus-visible,
+.fleet-cmd-panel select:focus-visible, .fleet-cmd-panel input:focus-visible {
+  outline: 2px solid var(--brand-ink); outline-offset: 2px; box-shadow: none;
+}
+.kt-card .pkg-search:focus-within { box-shadow: 0 0 0 2px var(--brand-ink); border-color: var(--brand-ink); }
+
+/* Pointer targets at least 24x24px: text buttons, tag chips, pager and
+   page-size controls. */
+.res-link { display: inline-flex; align-items: center; min-height: 24px; padding: 0 2px; }
+button.res-tag { min-height: 24px; display: inline-flex; align-items: center; }
+.res-page-btn, .tc-pager-page, .tc-pager button { min-width: 24px; min-height: 24px; }
+#resGotoPage, #resPageSize, #resTestsPageSize, .tc-pager-size, #histPageSize { min-height: 26px; }
+.pd-wifi-info-btn, .pd-back { min-height: 24px; }
+.pkg-tab, .res-page-btn.current, .tc-pager-current { font-variant-numeric: tabular-nums; }
+.res-page-btn.current { color: var(--brand-ink); border-color: var(--brand-ink); }
+.if-state-down { color: var(--text-muted); }
+.pkg-tab:not(.active) .pkg-count { color: var(--text-muted); }
+.pd-col-head .pkg-count { color: var(--text-muted); }
+
+/* Phones: the tabs get their own scrollable row under the logo instead of
+   being squeezed to nothing beside it. */
+@media (max-width: 640px) {
+  header { flex-wrap: wrap; row-gap: 0.5rem; }
+  header h1 { margin-right: auto; font-size: 0.95rem; }
+  header nav { order: 10; flex: 1 0 100%; margin-right: 0; }
+  header nav button.tab { min-height: 32px; }
+}
+
+/* Phones: the page scrolls as a whole (cards keep their natural height)
+   instead of every card being a short box with its own scrollbar; wide
+   tables still scroll sideways inside their card. */
+@media (max-width: 640px) {
+  html, body { height: auto; min-height: 100%; }
+  #appRoot { flex: 1 0 auto; min-height: 0; }
+  .view.active { flex: 0 0 auto; min-height: 0; }
+  .view .panel, .view .kt-card { overflow: visible; max-height: none; min-height: 0; }
+  .fleet-table-wrap, .res-table-wrap, .if-table-wrap { overflow-x: auto; overflow-y: visible; max-height: none; flex: 0 0 auto; }
+  .kt-card .res-table-wrap { min-height: 0; }
+  header .header-logo { height: 26px; }
+  header h1 { font-size: 0.9rem; }
+  header #logoutBtn { padding: 0.35rem 0.6rem; }
+}
+@media (max-width: 640px) {
+  .view .panel, .view .kt-card { overflow-x: auto; overflow-y: visible; min-width: 0; max-width: 100%; }
+  .fleet-table-wrap, .res-table-wrap, .if-table-wrap { max-width: 100%; min-width: 0; }
+  .view.active, #fleet.active, #piDetailGrid { min-width: 0; max-width: 100%; }
+}

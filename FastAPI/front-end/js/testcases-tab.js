@@ -123,7 +123,7 @@ function renderTcLoops() {
           <select class="field tc-loop-to">${tcStepOptionsHtml(l.to)}</select>
           <label>&times;</label>
           <input type="number" class="field tc-loop-count" min="1" value="${l.count}">
-          <button type="button" class="icon-btn tc-loop-remove" title="Remove loop">&#128465;</button>
+          <button type="button" class="icon-btn tc-loop-remove" title="Remove loop">${TRASH_ICON_SVG}</button>
         </div>
       `).join('')
     : '<div class="pi-log-empty">no loops - each step runs once per pass</div>';
@@ -1252,7 +1252,7 @@ function tcStepCardHtml(step, i) {
         ${step.loop_group ? `<span class="tc-step-loop-badge" title="Repeats with loop ${step.loop_group}">${step.loop_group} &times;${step.loop_count}</span>` : ''}
         <span class="tc-step-summary">${tcEsc(tcStepSummaryText(step))}</span>
         <span class="tc-step-controls">
-          <button type="button" class="icon-btn tc-step-remove" title="Remove step">&#128465;</button>
+          <button type="button" class="icon-btn tc-step-remove" title="Remove step">${TRASH_ICON_SVG}</button>
         </span>
       </div>
       <div class="tc-step-body${expanded ? '' : ' hidden'}">
