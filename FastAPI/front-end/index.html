@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="assets/kaon-favicon-180.png">
 <link id="faviconSvg" rel="icon" type="image/svg+xml" href="assets/kaon-favicon.svg">
 <link rel="stylesheet" href="themes.css?v=3">
-<link rel="stylesheet" href="styles.css?v=24">
+<link rel="stylesheet" href="styles.css?v=26">
 <!-- Applies the saved theme before first paint (no dark flash for a
      light-theme user) - same keys/logic as js/settings.js's applyTheme. -->
 <script>
@@ -469,6 +469,7 @@
         <label class="res-log-follow"><input type="checkbox" id="resLogFollow" checked> Follow</label>
       </div>
     </div>
+    <div class="res-log-partial hidden" id="resLogPartial" role="status"></div>
     <div class="panel res-log-panel">
       <div class="res-log-lines" id="resLogLines" role="log" aria-live="off"></div>
     </div>
@@ -1043,7 +1044,7 @@
 <script src="js/testsuites-tab.js?v=12"></script>
 <!-- After testcases-tab.js: reuses its tcRenderRunSteps/tcStatusClass so a
      run's step detail renders identically in both places. -->
-<script src="js/results-tab.js?v=14"></script>
+<script src="js/results-tab.js?v=17"></script>
 <script src="js/wifi-scan.js?v=2"></script>
 <script src="js/wifi-info-modal.js?v=5"></script>
 <script src="js/log-rendering.js"></script>

@@ -1019,7 +1019,7 @@ let resLogCurrent = null;     // { kind, id, seq }
 let resLogData = null;
 let resLogPollTimer = null;
 let resLogSig = null;
-const resLogCollapsed = new Set();   // section line numbers folded shut
+const resLogCollapsed = new Set();   // section indexes folded shut
 
 function resStopLogPolling() {
   if (resLogPollTimer) {
@@ -1052,6 +1052,8 @@ async function resShowTestLog(kind, id, seq) {
     resLogData = null;
     resLogSig = null;
     resLogCollapsed.clear();
+    resLogLoaded.clear();
+    document.getElementById('resLogPartial').classList.add('hidden');
     document.getElementById('resLogLines').innerHTML = '<div class="pi-log-empty">Loading… please wait while the log loads.</div>';
     document.getElementById('resLogTitle').textContent = '';
     document.getElementById('resLogMeta').textContent = '';
@@ -1060,30 +1062,79 @@ async function resShowTestLog(kind, id, seq) {
   await loadResTestLog();
 }
 
+// The log arrives as an outline - every section's title, status, line count
+// and first line number - with lines only for the sections asked for (by
+// default: all of a short log, or for a long repeated one just the failed /
+// running ones plus the first and last; see GET .../tests/{seq}/log). A
+// folded section is fetched when it's opened; "Load all" fetches the rest.
+const resLogLoaded = new Set();   // section indexes whose lines are here
+
+function resLogUrl(params) {
+  const { kind, id, seq } = resLogCurrent;
+  const q = new URLSearchParams(params);
+  return `${API}/results/${kind}/${id}/tests/${seq}/log${q.toString() ? `?${q}` : ''}`;
+}
+
 async function loadResTestLog() {
   if (!resLogCurrent) return;
   const { kind, id, seq } = resLogCurrent;
   resStopLogPolling();
+  // First load: the server's default sections. After that (polling a live
+  // test): what's already open, plus wherever the test is now.
+  const params = resLogData ? { sections: [...resLogLoaded].join(',') || '-1', live: 'true' } : {};
   try {
-    const res = await apiFetch(`${API}/results/${kind}/${id}/tests/${seq}/log`);
+    const res = await apiFetch(resLogUrl(params));
     if (!resLogCurrent || resLogCurrent.kind !== kind || resLogCurrent.id !== id || resLogCurrent.seq !== seq) return;
     if (!res.ok) {
       document.getElementById('resLogLines').innerHTML = `<div class="pi-log-empty">${res.status === 404 ? 'This test or run no longer exists.' : 'Failed to load the log.'}</div>`;
       return;
     }
     const data = await res.json();
-    resLogData = data;
-    const sig = JSON.stringify([data.test.status, data.test.duration_s, data.lines.length, data.lines[data.lines.length - 1]]);
+    resLogMerge(data);
+    const sig = JSON.stringify([data.test.status, data.test.duration_s, data.line_count, [...resLogLoaded].sort((a, b) => a - b)]);
     if (sig !== resLogSig) {
+      const firstRender = !resLogSig;
       resLogSig = sig;
-      renderResLogHead(data);
-      renderResLogLines(data);
+      renderResLogHead(resLogData);
+      renderResLogLines(resLogData, firstRender);
     }
     if (data.running && !document.getElementById('resLogView').classList.contains('hidden')) {
       resLogPollTimer = setTimeout(loadResTestLog, 2000);
     }
   } catch {
     if (resLogData && resLogData.running) resLogPollTimer = setTimeout(loadResTestLog, 4000);
+  }
+}
+
+// Takes a fresh outline, keeping lines already held for sections the
+// response didn't include (a finished section's lines never change).
+function resLogMerge(data) {
+  const old = resLogData ? resLogData.sections : [];
+  data.sections.forEach((sec, i) => {
+    if (sec.lines) resLogLoaded.add(i);
+    else if (old[i] && old[i].lines && old[i].count === sec.count) sec.lines = old[i].lines;
+    else resLogLoaded.delete(i);
+  });
+  resLogData = data;
+}
+
+// Fetches the given sections (or "all") and opens them.
+async function resLogLoadSections(which) {
+  if (!resLogCurrent || !resLogData) return;
+  const box = document.getElementById('resLogLines');
+  const scroll = box.scrollTop;
+  try {
+    const res = await apiFetch(resLogUrl({ sections: which === 'all' ? 'all' : which.join(',') }));
+    if (!res.ok) return;
+    const data = await res.json();
+    resLogMerge(data);
+    (which === 'all' ? data.sections.map(s => s.index) : which).forEach(i => resLogCollapsed.delete(i));
+    resLogSig = JSON.stringify([data.test.status, data.test.duration_s, data.line_count, [...resLogLoaded].sort((a, b) => a - b)]);
+    renderResLogHead(resLogData);
+    renderResLogLines(resLogData, false);
+    box.scrollTop = scroll;
+  } catch {
+    // transient; the click can be retried
   }
 }
 
@@ -1108,15 +1159,22 @@ function renderResLogHead(data) {
   piSel.value = data.pis.includes(chosen) ? chosen : '';
 }
 
-// 2026-10-22 15:40:27.123, in the app's display time zone.
+// 2026-10-22 15:40:27.123, in the app's display time zone. One formatter,
+// reused - building an Intl.DateTimeFormat per line made a long log take
+// tens of seconds to draw.
+let resLogTimeFmt = null;
 function resLogTime(iso) {
   if (!iso) return '';
   const d = parseApiDate(iso);
   if (Number.isNaN(d.getTime())) return '';
-  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
-    timeZone: VN_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
-  }).formatToParts(d).map(p => [p.type, p.value]));
+  if (!resLogTimeFmt) {
+    resLogTimeFmt = new Intl.DateTimeFormat('en-CA', {
+      timeZone: VN_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+    });
+  }
+  const parts = {};
+  for (const p of resLogTimeFmt.formatToParts(d)) parts[p.type] = p.value;
   return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}.${String(d.getMilliseconds()).padStart(3, '0')}`;
 }
 
@@ -1128,37 +1186,73 @@ const RES_LOG_TAG = {
   info: () => 'INFO',
 };
 
-function renderResLogLines(data) {
+function resLogLineHtml(ln, n, section) {
+  const cls = ['ll', `ll-${ln.kind}`, `ll-lv-${ln.level}`];
+  return `<div class="${cls.join(' ')}" data-n="${n}" ${section !== null ? `data-section="${section}"` : ''} data-kind="${ln.kind}" data-level="${ln.level}" data-src="${tcEsc(ln.src || '')}">`
+    + `<span class="ln">${n}</span><span class="lt">${resLogTime(ln.t)}</span>`
+    + `<span class="lk">${RES_LOG_TAG[ln.kind] ? RES_LOG_TAG[ln.kind](ln) : ''}</span>`
+    + `<span class="lx">${tcEsc(ln.text)}</span></div>`;
+}
+
+function resLogSectionHtml(sec) {
+  const loaded = !!sec.lines;
+  const open = loaded && !resLogCollapsed.has(sec.index);
+  const cls = ['ll', 'll-section', 'll-lv-info', `ll-sec-${sec.status || 'unknown'}`];
+  if (!loaded) cls.push('ll-unloaded');
+  const tip = loaded ? (open ? 'Fold this section' : 'Unfold this section') : `Load ${sec.count} lines`;
+  let html = `<div class="${cls.join(' ')}" data-n="${sec.first_line}" data-sec="${sec.index}" data-kind="section" data-level="info" data-src="">`
+    + `<span class="ln">${sec.first_line}</span><span class="lt">${resLogTime(sec.t)}</span>`
+    + `<button type="button" class="ll-fold" aria-expanded="${open}" title="${tip}" aria-label="${tip}">${open ? '&#9662;' : '&#9656;'}</button>`
+    + `<span class="lk">${RES_LOG_TAG.section()}</span>`
+    + `<span class="lx">${tcEsc(sec.text)}${sec.has_fail ? ' <span class="ll-sec-fail">FAIL</span>' : ''}</span>`
+    + `<span class="lc">${loaded ? sec.count : `${sec.count} lines - load`}</span></div>`;
+  if (loaded) {
+    // One container per section: folding is a single toggle, and with
+    // content-visibility the browser skips laying out sections that are
+    // off screen (thousands of rows once a long log is fully loaded).
+    html += `<div class="ll-sec-body${open ? '' : ' ll-folded'}" data-section="${sec.index}" style="contain-intrinsic-size: auto ${Math.max(1, sec.lines.length) * 18}px">`;
+    sec.lines.forEach((ln, j) => { html += resLogLineHtml(ln, sec.first_line + 1 + j, sec.index); });
+    html += '</div>';
+  }
+  return html;
+}
+
+function renderResLogLines(data, firstRender) {
   const box = document.getElementById('resLogLines');
   const follow = document.getElementById('resLogFollow').checked;
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
   let n = 0;
   const out = data.header.map(h => `<div class="ll ll-header"><span class="ln">${++n}</span><span class="lx">${tcEsc(h)}</span></div>`);
-  let section = null;
-  data.lines.forEach(ln => {
-    n += 1;
-    if (ln.kind === 'section') section = n;
-    const cls = [`ll`, `ll-${ln.kind}`, `ll-lv-${ln.level}`];
-    const inSection = ln.kind !== 'section' && section !== null;
-    if (inSection && resLogCollapsed.has(section)) cls.push('ll-folded');
-    out.push(`<div class="${cls.join(' ')}" data-n="${n}" ${inSection ? `data-section="${section}"` : ''} data-kind="${ln.kind}" data-level="${ln.level}" data-src="${tcEsc(ln.src || '')}">`
-      + `<span class="ln">${n}</span><span class="lt">${resLogTime(ln.t)}</span>`
-      + (ln.kind === 'section'
-        ? `<button type="button" class="ll-fold" aria-expanded="${!resLogCollapsed.has(n)}" title="Fold this section">${resLogCollapsed.has(n) ? '&#9656;' : '&#9662;'}</button>`
-        : '')
-      + `<span class="lk">${RES_LOG_TAG[ln.kind] ? RES_LOG_TAG[ln.kind](ln) : ''}</span>`
-      + `<span class="lx">${tcEsc(ln.text)}</span>`
-      + (ln.kind === 'section' ? `<span class="lc">${ln.count}</span>` : '')
-      + '</div>');
-  });
-  if (!data.lines.length) out.push('<div class="pi-log-empty">No log lines.</div>');
-  else if (!data.lines.some(l => l.kind === 'syslog')) {
+  data.preamble.forEach(ln => out.push(resLogLineHtml(ln, ++n, null)));
+  data.sections.forEach(sec => out.push(resLogSectionHtml(sec)));
+  const loaded = data.sections.filter(s => s.lines);
+  if (!data.preamble.length && !data.sections.length) out.push('<div class="pi-log-empty">No log lines.</div>');
+  else if (data.sections.length && loaded.length === data.sections.length && !loaded.some(s => s.lines.some(l => l.kind === 'syslog'))) {
     out.push(`<div class="ll ll-note"><span class="ln"></span><span class="lx">No syslog was captured for this test${
       data.running ? ' yet' : ' - its Pis may have been offline, or it ran before syslog capture existed'}.</span></div>`);
   }
   box.innerHTML = out.join('');
+  renderResLogPartial(data);
   applyResLogFilters();
-  if (data.running && follow && (atBottom || !resLogSig)) box.scrollTop = box.scrollHeight;
+  if (data.running && follow && (atBottom || firstRender)) box.scrollTop = box.scrollHeight;
+}
+
+// "Showing 4 of 400 sections" with Load all, while any are still folded away.
+function renderResLogPartial(data) {
+  const el = document.getElementById('resLogPartial');
+  const total = data.sections.length;
+  const shown = data.sections.filter(s => s.lines).length;
+  if (shown >= total) {
+    el.classList.add('hidden');
+    return;
+  }
+  const missing = data.sections.filter(s => !s.lines).reduce((a, s) => a + s.count, 0);
+  const filtering = document.getElementById('resLogFilter').value.trim()
+    || document.getElementById('resLogKind').value !== 'all' || document.getElementById('resLogPi').value;
+  el.innerHTML = `Showing ${shown} of ${total} sections - failed, running, first and last.`
+    + ` Open a section to load it${filtering ? '; filters only search the sections shown' : ''}.`
+    + ` <button type="button" class="res-link" id="resLogLoadAll">Load all (${missing.toLocaleString()} more lines)</button>`;
+  el.classList.remove('hidden');
 }
 
 function applyResLogFilters() {
@@ -1175,16 +1269,26 @@ function applyResLogFilters() {
     if (show && q && k !== 'section') show = el.textContent.toLowerCase().includes(q);
     el.classList.toggle('ll-filtered', !show);
   });
+  if (resLogData) renderResLogPartial(resLogData);
 }
 
-function resLogToggleSection(n) {
-  const open = !resLogCollapsed.has(n);
-  if (open) resLogCollapsed.add(n); else resLogCollapsed.delete(n);
-  document.querySelectorAll(`#resLogLines .ll[data-section="${n}"]`).forEach(el => el.classList.toggle('ll-folded', open));
-  const btn = document.querySelector(`#resLogLines .ll[data-n="${n}"] .ll-fold`);
+// Opening a folded section that isn't loaded yet fetches it first.
+function resLogToggleSection(index) {
+  const sec = resLogData && resLogData.sections[index];
+  if (!sec) return;
+  if (!sec.lines) {
+    resLogLoadSections([index]);
+    return;
+  }
+  const fold = !resLogCollapsed.has(index);
+  if (fold) resLogCollapsed.add(index); else resLogCollapsed.delete(index);
+  const body = document.querySelector(`#resLogLines .ll-sec-body[data-section="${index}"]`);
+  if (body) body.classList.toggle('ll-folded', fold);
+  const btn = document.querySelector(`#resLogLines .ll[data-sec="${index}"] .ll-fold`);
   if (btn) {
-    btn.innerHTML = open ? '&#9656;' : '&#9662;';
-    btn.setAttribute('aria-expanded', String(!open));
+    btn.innerHTML = fold ? '&#9656;' : '&#9662;';
+    btn.setAttribute('aria-expanded', String(!fold));
+    btn.title = fold ? 'Unfold this section' : 'Fold this section';
   }
 }
 
@@ -1415,7 +1519,13 @@ resById('resLogKind').addEventListener('change', applyResLogFilters);
 resById('resLogPi').addEventListener('change', applyResLogFilters);
 resById('resLogLines').addEventListener('click', (e) => {
   const fold = e.target.closest('.ll-fold');
-  if (fold) resLogToggleSection(Number(fold.closest('.ll').dataset.n));
+  if (fold) { resLogToggleSection(Number(fold.closest('.ll').dataset.sec)); return; }
+  // Clicking anywhere on a not-yet-loaded section's line loads it too.
+  const unloaded = e.target.closest('.ll-unloaded');
+  if (unloaded) resLogToggleSection(Number(unloaded.dataset.sec));
+});
+resById('resLogPartial').addEventListener('click', (e) => {
+  if (e.target.id === 'resLogLoadAll') resLogLoadSections('all');
 });
 
 // #results is the list, #results/<kind>/<id> one run's page and

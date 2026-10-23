@@ -1,3 +1,4 @@
+import bisect
 import csv
 import io
 import json
@@ -637,6 +638,27 @@ def _step_label(e: dict, steps: list) -> tuple[str, dict]:
     return f"Step {(idx if isinstance(idx, int) else 0) + 1}: {e.get('action') or step.get('action') or '?'} -> {target}", step
 
 
+class _SyslogIndex:
+    """A run's captured syslog, sorted by arrival once, so each step finds
+    its time window by binary search instead of scanning every line - a
+    testcase repeated hundreds of times would otherwise rescan the whole
+    log once per step execution."""
+
+    def __init__(self, records: list):
+        self.records = sorted(records, key=lambda r: r["t"])
+        self.times = [r["t"] for r in self.records]
+        self.pis = {r["pi"] for r in self.records}
+
+    def window(self, start, until, next_start=None) -> list:
+        """Lines with start <= t <= until, stopping before next_start (a line
+        stamped that very instant belongs to the next step)."""
+        lo = bisect.bisect_left(self.times, start)
+        hi = bisect.bisect_right(self.times, until)
+        if next_start is not None:
+            hi = min(hi, bisect.bisect_left(self.times, next_start))
+        return self.records[lo:hi] if hi > lo else []
+
+
 def _step_pis(e: dict, step: dict, captured: set) -> set:
     pis = {str(x["pi_id"]) for x in (e.get("entries") or []) if x.get("pi_id")}
     if pis:
@@ -645,7 +667,7 @@ def _step_pis(e: dict, step: dict, captured: set) -> set:
     return captured if "all" in targets or not targets else {str(t) for t in targets}
 
 
-def _step_log_lines(e: dict, steps: list, syslog: list, now: datetime,
+def _step_log_lines(e: dict, steps: list, syslog: "_SyslogIndex", now: datetime,
                     next_start: Optional[datetime] = None) -> list:
     """One step execution: SECTION, its Pis' syslog in its window, then a
     PASS/FAIL line per Pi result and one for the step. The window runs a
@@ -655,15 +677,12 @@ def _step_log_lines(e: dict, steps: list, syslog: list, now: datetime,
     status = e.get("status", "pending")
     start = _parse_dt(e.get("started_at"))
     end = _parse_dt(e.get("completed_at"))
-    lines = [{"t": start, "kind": "section", "level": "info", "src": None,
+    lines = [{"t": start, "kind": "section", "level": "info", "src": None, "status": status,
               "text": label + ("" if start else f" ({status})")}]
     if start is not None:
         until = (end + timedelta(seconds=SYSLOG_GRACE_SECONDS)) if end else now
-        pis = _step_pis(e, step, {r["pi"] for r in syslog})
-        # The next step's start is exclusive: a line stamped that very
-        # instant belongs to the next step.
-        lines += [_syslog_line(r) for r in syslog
-                  if r["pi"] in pis and start <= r["t"] <= until and (next_start is None or r["t"] < next_start)]
+        pis = _step_pis(e, step, syslog.pis)
+        lines += [_syslog_line(r) for r in syslog.window(start, until, next_start) if r["pi"] in pis]
     for x in e.get("entries") or []:
         who = x.get("pi_id") or "?"
         if x.get("interface"):
@@ -728,10 +747,10 @@ def _step_header(steps: list, e: Optional[dict] = None) -> list:
     return out
 
 
-@router.get("/{kind}/{run_id}/tests/{seq}/log")
-def get_test_log(kind: str, run_id: int, seq: int, session: Session = Depends(get_session)):
-    """One test's log: a description header plus line records
-    {t, kind: section|syslog|pass|fail|info, level, src (Pi), text}."""
+def _build_test_log(session: Session, kind: str, run_id: int, seq: int) -> dict:
+    """Everything one test's log is made of: the description header, any
+    lines before the first step (a note for a test that never ran), and one
+    section per step execution - each its SECTION line plus body."""
     run = _get_run(session, kind, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
@@ -755,7 +774,7 @@ def get_test_log(kind: str, run_id: int, seq: int, session: Session = Depends(ge
             header.append(f"Description: {testcase.description}")
         header += ["", *_step_header(steps, e)]
         nxt = _parse_dt(entries[seq].get("started_at")) if seq < len(entries) else None
-        lines = _step_log_lines(e, steps, run_logs.read(run.id), now, nxt)
+        lines = _step_log_lines(e, steps, _SyslogIndex(run_logs.read(run.id)), now, nxt)
         log_running = run.status == "running"
     else:
         child = session.get(TestRun, test["run_id"]) if test.get("run_id") else None
@@ -770,7 +789,7 @@ def get_test_log(kind: str, run_id: int, seq: int, session: Session = Depends(ge
         if child is not None:
             results, live = _run_results(child)
             entries = _locked_copy(results, live) if live is not None else list(results)
-            syslog = run_logs.read(child.id)
+            syslog = _SyslogIndex(run_logs.read(child.id))
             for i, e in enumerate(entries):
                 if e.get("status") == "pending":
                     continue
@@ -782,22 +801,102 @@ def get_test_log(kind: str, run_id: int, seq: int, session: Session = Depends(ge
             lines.append({"t": None, "kind": "info", "level": "info", "src": None, "text": note})
             log_running = False
     header.append(rule)
+
+    preamble, sections = [], []
+    for ln in lines:
+        if ln["kind"] == "section":
+            sections.append({"head": ln, "body": []})
+        elif sections:
+            sections[-1]["body"].append(ln)
+        else:
+            preamble.append(ln)
+    return {
+        "kind": kind, "run": run, "test": test, "total": len(tests),
+        "running": log_running or test["status"] == "running",
+        "header": header, "preamble": preamble, "sections": sections,
+    }
+
+
+def _flat_lines(data: dict) -> list:
+    out = [_line_out(ln) for ln in data["preamble"]]
+    for sec in data["sections"]:
+        out.append(_line_out(sec["head"]))
+        out += [_line_out(ln) for ln in sec["body"]]
+    return out
+
+
+def _line_out(ln: dict) -> dict:
+    return {**ln, "t": ln["t"].isoformat() if ln["t"] else None}
+
+
+# A test with this many sections or fewer sends them all at once; past that
+# the page opens with the outline and loads a section when it's expanded.
+LOG_SECTIONS_ALL_UP_TO = 12
+_SECTION_OPEN_STATUSES = ("failed", "timeout", "stopped", "running")
+
+
+@router.get("/{kind}/{run_id}/tests/{seq}/log")
+def get_test_log(kind: str, run_id: int, seq: int, sections: str = "", live: bool = False,
+                 session: Session = Depends(get_session)):
+    """One test's log as an outline: the description header, then one entry
+    per step execution (title, status, line count, and its first line number
+    so numbering stays the same whichever sections are loaded). Lines are
+    included only for the sections asked for - `sections` is "all" or a
+    comma list of indexes; by default every section of a short log, or for
+    a long (repeated) one just the failed / stopped / running sections plus
+    the first and the last. live=true also includes the running section
+    and the last one (a page following a live test asks for what it has
+    open plus wherever the test is now). Line records are {t, kind:
+    section|syslog|pass|fail|info, level, src (Pi), text}."""
+    data = _build_test_log(session, kind, run_id, seq)
+    secs = data["sections"]
+    if sections == "all" or (not sections and len(secs) <= LOG_SECTIONS_ALL_UP_TO):
+        wanted = set(range(len(secs)))
+    elif sections:
+        try:
+            wanted = {int(x) for x in sections.split(",") if x.strip()}
+        except ValueError:
+            raise HTTPException(status_code=400, detail="sections must be 'all' or a comma list of numbers")
+    else:
+        wanted = {i for i, sec in enumerate(secs) if sec["head"].get("status") in _SECTION_OPEN_STATUSES}
+        if secs:
+            wanted |= {0, len(secs) - 1}
+    if live and secs:
+        wanted |= {i for i, sec in enumerate(secs) if sec["head"].get("status") == "running"}
+        wanted.add(len(secs) - 1)
+
+    line_no = len(data["header"]) + len(data["preamble"])
+    out_sections = []
+    for i, sec in enumerate(secs):
+        head = sec["head"]
+        out_sections.append({
+            "index": i, "first_line": line_no + 1, "count": len(sec["body"]),
+            "text": head["text"], "status": head.get("status"),
+            "t": head["t"].isoformat() if head["t"] else None,
+            "has_fail": any(ln["kind"] == "fail" for ln in sec["body"]),
+            "lines": [_line_out(ln) for ln in sec["body"]] if i in wanted else None,
+        })
+        line_no += 1 + len(sec["body"])
+
+    run, test = data["run"], data["test"]
     return {
         "kind": kind, "run_id": run.id, "run_name": run.testcase_name if kind == "testcase" else run.testsuite_name,
-        "run_status": run.status, "seq": seq, "total": len(tests),
-        "test": test, "running": log_running or test["status"] == "running",
-        "header": header,
-        "lines": [{**ln, "t": ln["t"].isoformat() if ln["t"] else None} for ln in lines],
-        "pis": sorted({ln["src"] for ln in lines if ln.get("src")}),
+        "run_status": run.status, "seq": seq, "total": data["total"],
+        "test": test, "running": data["running"],
+        "header": data["header"],
+        "preamble": [_line_out(ln) for ln in data["preamble"]],
+        "sections": out_sections,
+        "pis": sorted({ln["src"] for sec in secs for ln in sec["body"] if ln.get("src")}),
+        "line_count": line_no,
     }
 
 
 @router.get("/{kind}/{run_id}/tests/{seq}/log.txt")
 def download_test_log(kind: str, run_id: int, seq: int, session: Session = Depends(get_session)):
-    """The same log as plain text (the log page's Files > Download)."""
-    data = get_test_log(kind, run_id, seq, session)
+    """The whole log as plain text (the log page's Download), every section."""
+    data = _build_test_log(session, kind, run_id, seq)
     out = list(data["header"])
-    for ln in data["lines"]:
+    for ln in _flat_lines(data):
         stamp = ln["t"][:23].replace("T", " ") if ln["t"] else " " * 23
         tag = {"section": "SECTION", "syslog": f"SYSLOG({ln['src']})"}.get(ln["kind"], "")
         out.append(f"{stamp} {tag + ': ' if tag else ''}{ln['text']}")

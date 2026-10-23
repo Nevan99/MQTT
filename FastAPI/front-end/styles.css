@@ -1108,3 +1108,17 @@ header nav button.tab { flex: 0 0 auto; white-space: nowrap; }
   #piDetailGrid > .gutter { display: none; }
   .pd-hero .pi-power-actions { margin-left: 0; }
 }
+
+/* Test log: long (repeated) logs load section by section. */
+.res-log-partial { flex: 0 0 auto; padding: 0.5rem 0.9rem; border-radius: 6px; font-size: 0.8rem; color: var(--text-2);
+  background: var(--row-selected-info); border: 1px solid var(--info-border); }
+.res-log-partial.hidden { display: none; }
+.res-log-partial .res-link { font-weight: 600; }
+.ll-unloaded { cursor: pointer; }
+.ll-unloaded .lx { font-weight: 500 !important; color: var(--text-3) !important; }
+.ll-unloaded .lc { color: var(--accent); }
+.ll-sec-failed .lk, .ll-sec-timeout .lk { color: var(--danger); }
+.ll-sec-running .lk { color: var(--warning); }
+.ll-sec-fail { margin-left: 0.4rem; padding: 0 0.35rem; border-radius: 3px; font-size: 0.68rem; font-weight: 700; background: var(--danger-bg); color: var(--danger-text); }
+.ll-sec-body { content-visibility: auto; }
+.ll-sec-body.ll-folded { display: none; }
