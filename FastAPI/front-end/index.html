@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="assets/kaon-favicon-180.png">
 <link id="faviconSvg" rel="icon" type="image/svg+xml" href="assets/kaon-favicon.svg">
 <link rel="stylesheet" href="themes.css?v=4">
-<link rel="stylesheet" href="styles.css?v=28">
+<link rel="stylesheet" href="styles.css?v=30">
 <!-- Applies the saved theme before first paint (no dark flash for a
      light-theme user) - same keys/logic as js/settings.js's applyTheme. -->
 <script>
@@ -858,42 +858,98 @@
 </div>
 
 <section id="captures" class="view">
-  <div class="panel captures-panel">
-    <div class="capture-filters">
-      <label>Pi<select id="capFilterPi"><option value="">all</option></select></label>
-      <label>Category<select id="capFilterCategory"><option value="">all</option><option value="logs">logs</option><option value="pcap">pcap</option></select></label>
-      <label>Name<input id="capFilterName" type="search" placeholder="contains…"></label>
-      <label>Log text<input id="capFilterText" type="search" placeholder="search inside logs…"></label>
-      <label>Lines ≥<input id="capFilterLinesMin" type="number" min="0"></label>
-      <label>Lines ≤<input id="capFilterLinesMax" type="number" min="0"></label>
-      <label>Start from<input id="capFilterFrom" type="datetime-local"></label>
-      <label>Stop until<input id="capFilterTo" type="datetime-local"></label>
-      <button id="capFilterReset" type="button" class="icon-btn" title="Clear filters">&#10005;</button>
+  <!-- Saved syslog / pcap recordings (captures.js): title + summary, one
+       filter row (rarely used ones under "More filters"), sortable table. -->
+  <div class="panel captures-panel cap-panel">
+    <div class="pkg-head">
+      <h2>Captures <span class="if-summary" id="capSummary"></span></h2>
+      <div class="pkg-head-actions">
+        <button type="button" id="capRefreshBtn" class="kt-btn" title="Reload the list">&#8635; Refresh</button>
+      </div>
+    </div>
+    <div class="pkg-filters" role="search">
+      <label class="pkg-search">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="capFilterName" type="search" placeholder="Search capture name" aria-label="Search capture name">
+      </label>
+      <div class="seg" role="radiogroup" aria-label="Type" id="capCategorySeg">
+        <button type="button" role="radio" data-cat="" aria-checked="true">All</button>
+        <button type="button" role="radio" data-cat="logs" aria-checked="false">Syslog</button>
+        <button type="button" role="radio" data-cat="pcap" aria-checked="false">Pcap</button>
+      </div>
+      <input type="hidden" id="capFilterCategory" value="">
+      <select id="capFilterPi" class="field" aria-label="Pi"><option value="">All Pis</option></select>
+      <label class="pkg-search cap-text-search" title="Searches the contents of every saved log file">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7"/></svg>
+        <input id="capFilterText" type="search" placeholder="Search inside log files" aria-label="Search inside log files">
+      </label>
+      <button type="button" id="capMoreBtn" class="kt-btn" aria-expanded="false" aria-controls="capMore">More filters &#9662;</button>
+      <button type="button" id="capFilterReset" class="res-link pkg-clear">Clear</button>
+      <span class="pkg-gap"></span>
       <span id="capFilterCount" class="capture-filter-count"></span>
     </div>
-    <table>
-      <thead>
-        <tr><th>Pi</th><th>Category</th><th>Name</th><th>Lines</th><th>Start</th><th>Stop</th><th>Duration</th><th></th></tr>
-      </thead>
-      <tbody id="capturesTableBody"></tbody>
-    </table>
+    <div class="cap-more hidden" id="capMore">
+      <label>Lines at least<input id="capFilterLinesMin" type="number" min="0" class="field"></label>
+      <label>Lines at most<input id="capFilterLinesMax" type="number" min="0" class="field"></label>
+      <label>Started from<input id="capFilterFrom" type="datetime-local" class="field"></label>
+      <label>Stopped until<input id="capFilterTo" type="datetime-local" class="field"></label>
+    </div>
+    <div class="res-table-wrap">
+      <table class="res-table kaon-table cap-table">
+        <thead>
+          <tr id="capSortRow">
+            <th data-sort="pi">Pi</th><th data-sort="category">Type</th><th data-sort="name">Name</th>
+            <th data-sort="lines" class="res-num">Lines</th><th data-sort="start">Started</th><th data-sort="stop">Stopped</th>
+            <th data-sort="duration" class="res-num">Duration</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="capturesTableBody"></tbody>
+      </table>
+    </div>
   </div>
 </section>
 
 <section id="history" class="view">
-  <div class="panel captures-panel">
-    <div class="row" style="margin-bottom: 0.5rem; align-items: center;">
-      <button id="historyDeleteSelectedBtn" type="button" class="icon-btn" disabled style="flex: 0 0 auto;" title="Delete selected">&#128465;</button>
+  <!-- Every command sent to a Pi (history.js): title + summary, filters,
+       a bulk bar for deleting, and a table whose rows open their result. -->
+  <div class="panel captures-panel hist-panel">
+    <div class="pkg-head">
+      <h2>Command history <span class="if-summary" id="histSummary"></span></h2>
+      <div class="pkg-head-actions">
+        <button type="button" id="historyRefreshBtn" class="kt-btn" title="Reload the list">&#8635; Refresh</button>
+      </div>
     </div>
-    <table>
-      <thead>
-        <tr>
-          <th><input type="checkbox" id="historySelectAll" title="Select all"></th>
-          <th>Pi</th><th>Action</th><th>Status</th><th>Created</th><th></th>
-        </tr>
-      </thead>
-      <tbody id="historyTableBody"></tbody>
-    </table>
+    <div class="pkg-filters" role="search">
+      <label class="pkg-search">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="histSearch" type="search" placeholder="Search Pi, action or result" aria-label="Search command history">
+      </label>
+      <div class="seg" role="radiogroup" aria-label="Status" id="histStatusSeg">
+        <button type="button" role="radio" data-status="" aria-checked="true">All</button>
+        <button type="button" role="radio" data-status="complete" aria-checked="false">Complete</button>
+        <button type="button" role="radio" data-status="failed" aria-checked="false">Failed</button>
+        <button type="button" role="radio" data-status="timeout" aria-checked="false">Timeout</button>
+        <button type="button" role="radio" data-status="pending" aria-checked="false">Pending</button>
+      </div>
+      <select id="histPiFilter" class="field" aria-label="Pi"><option value="">All Pis</option></select>
+      <select id="histActionFilter" class="field" aria-label="Action"><option value="">All actions</option></select>
+      <button type="button" id="histClearFilters" class="res-link pkg-clear">Clear</button>
+    </div>
+    <div class="tc-bulk-bar hist-bulk-bar">
+      <span id="histBulkCount" class="tc-bulk-count">none selected</span>
+      <button type="button" id="historyDeleteSelectedBtn" class="kt-btn tc-bulk-danger" disabled>Delete&hellip;</button>
+    </div>
+    <div class="res-table-wrap">
+      <table class="res-table kaon-table hist-table">
+        <thead>
+          <tr>
+            <th class="tc-check-col"><input type="checkbox" id="historySelectAll" title="Select all shown" aria-label="Select all shown"></th>
+            <th>Pi</th><th>Action</th><th>Status</th><th>Sent</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="historyTableBody"></tbody>
+      </table>
+    </div>
   </div>
 </section>
 
@@ -1049,8 +1105,8 @@
 <script src="js/layout.js?v=6"></script>
 <script src="js/fleet-table.js?v=8"></script>
 <script src="js/interfaces-tab.js?v=3"></script>
-<script src="js/captures.js?v=2"></script>
-<script src="js/history.js"></script>
+<script src="js/captures.js?v=3"></script>
+<script src="js/history.js?v=2"></script>
 <script src="js/command-builder.js?v=11"></script>
 <!-- ?v= busts the browser's cache on each edit - these three change often
      during active development and have no other cache-busting (StaticFiles

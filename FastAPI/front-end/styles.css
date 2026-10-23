@@ -1202,3 +1202,163 @@ footer#appFooter .kaon-logo { height: 30px; }
   #loginOverlay .login-box { justify-self: stretch; }
   .kaon-connected, .kaon-copyright { right: 1.25rem; }
 }
+
+/* ---------------------------------------------------------------------------
+   Captures and History (js/captures.js, js/history.js), in the Kaon slide
+   template's look: a rounded card with a brand-tinted shadow and a faint
+   wave corner, a blue-to-orange rule under the title, pill segmented
+   filters, brand-tinted table headers, and type/status pills. The kt-*
+   classes are the shared text styles (dates, chips, code, pills).
+   --------------------------------------------------------------------------- */
+#history { padding: 1rem; }
+.cap-panel, .hist-panel {
+  --kt-tint: color-mix(in srgb, var(--brand) 7%, var(--surface));
+  --kt-tint-2: color-mix(in srgb, var(--brand) 13%, var(--surface));
+  --kt-ring: color-mix(in srgb, var(--brand) 28%, transparent);
+  position: relative; isolation: isolate; display: flex; flex-direction: column; overflow: hidden;
+  padding: 1.1rem 1.25rem 0.9rem; border-radius: 12px; border-color: color-mix(in srgb, var(--brand) 16%, var(--border));
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 10px 30px color-mix(in srgb, var(--brand) 7%, transparent);
+}
+.cap-panel::before, .hist-panel::before {
+  content: ''; position: absolute; z-index: -1; pointer-events: none; top: 0; right: 0; width: 420px; height: 130px;
+  background: var(--deco-wave);
+  -webkit-mask: url('assets/deco/kaon-waves-corner.png') right top / contain no-repeat;
+  mask: url('assets/deco/kaon-waves-corner.png') right top / contain no-repeat;
+}
+
+/* Title row: bigger, bolder title and the brand rule beneath it. */
+.cap-panel .pkg-head, .hist-panel .pkg-head { position: relative; padding-bottom: 0.75rem; margin-bottom: 0.9rem; }
+.cap-panel .pkg-head::after, .hist-panel .pkg-head::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; border-radius: 2px;
+  background: linear-gradient(90deg, transparent 0 18%, var(--brand-orange) 18% 22%, transparent 22%),
+              linear-gradient(90deg, var(--brand) 0, var(--brand) 18%, color-mix(in srgb, var(--brand) 25%, transparent) 60%, transparent);
+}
+.cap-panel .pkg-head h2, .hist-panel .pkg-head h2 { font-size: 1.3rem; font-weight: 800; letter-spacing: -0.01em; display: flex; align-items: center; flex-wrap: wrap; gap: 0.25rem 0; }
+.cap-panel .if-summary, .hist-panel .if-summary { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; margin-left: 1rem; font-size: 0.8rem; font-weight: 500; color: var(--text-dim); letter-spacing: 0; }
+.cap-panel .if-summary b, .hist-panel .if-summary b, .capture-filter-count b { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* Buttons: Kaon secondary (brand outline) and the danger one. */
+.cap-panel button.kt-btn, .hist-panel button.kt-btn {
+  border-radius: 8px; border: 1px solid color-mix(in srgb, var(--brand) 35%, var(--border));
+  background: var(--surface); color: color-mix(in srgb, var(--brand) 70%, var(--text)); font-weight: 600; font-size: 0.82rem;
+  padding: 0.45rem 0.9rem; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+.cap-panel button.kt-btn:hover:not(:disabled), .hist-panel button.kt-btn:hover:not(:disabled) {
+  background: var(--kt-tint); border-color: var(--brand); color: var(--brand);
+}
+.cap-panel button:focus-visible, .hist-panel button:focus-visible, .kt-act:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--kt-ring); }
+#capMoreBtn.is-active { background: var(--kt-tint); border-color: var(--brand); }
+.kt-badge { display: inline-grid; place-items: center; min-width: 1.15rem; height: 1.15rem; margin: 0 0.15rem; padding: 0 0.3rem; border-radius: 999px; background: var(--brand-orange); color: #fff; font-size: 0.68rem; font-weight: 700; }
+.hist-panel button.kt-btn.tc-bulk-danger:not([disabled]), :root[data-mode="light"] .hist-panel button.kt-btn.tc-bulk-danger:not([disabled]) { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
+.hist-panel button.kt-btn.tc-bulk-danger:not([disabled]):hover, :root[data-mode="light"] .hist-panel button.kt-btn.tc-bulk-danger:not([disabled]):hover { background: var(--danger-bg); border-color: var(--danger); color: var(--danger-text); }
+.cap-panel .pkg-clear, .hist-panel .pkg-clear { color: var(--brand); font-weight: 600; }
+
+/* Inputs: rounded, brand focus ring. */
+.cap-panel .pkg-search, .hist-panel .pkg-search, .cap-panel select, .hist-panel select, .cap-more input {
+  border-radius: 8px; border-color: var(--border); background: var(--surface-input);
+}
+.cap-panel select, .hist-panel select { width: auto; min-width: 9rem; padding: 0.45rem 0.6rem; font-size: 0.82rem; }
+.cap-panel .pkg-search:focus-within, .hist-panel .pkg-search:focus-within,
+.cap-panel select:focus, .hist-panel select:focus, .cap-more input:focus {
+  outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px var(--kt-ring);
+}
+.cap-panel .pkg-search input::placeholder, .hist-panel .pkg-search input::placeholder { color: var(--text-faint); }
+.cap-text-search { flex-basis: 260px; }
+
+/* Segmented filters as one pill; the active segment is brand blue. */
+.cap-panel .seg, .hist-panel .seg { border-radius: 999px; border-color: var(--border); background: var(--surface-input); padding: 2px; gap: 2px; }
+.cap-panel .seg button, .hist-panel .seg button { border-radius: 999px; border: none; background: transparent; padding: 0.32rem 0.8rem; font-weight: 600; color: var(--text-muted); }
+.cap-panel .seg button:hover, .hist-panel .seg button:hover { color: var(--brand); background: var(--kt-tint); }
+.cap-panel .seg button[aria-checked="true"], .hist-panel .seg button[aria-checked="true"] {
+  background: var(--brand); color: #fff; box-shadow: 0 2px 6px color-mix(in srgb, var(--brand) 35%, transparent);
+}
+.kt-seg-n { display: inline-block; margin-left: 0.3rem; padding: 0 0.35rem; border-radius: 999px; font-size: 0.68rem; font-variant-numeric: tabular-nums; background: color-mix(in srgb, currentColor 14%, transparent); }
+
+/* "More filters" box. */
+.cap-more { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 0.75rem; margin: -0.1rem 0 0.75rem; padding: 0.75rem 0.9rem;
+  border: 1px dashed color-mix(in srgb, var(--brand) 40%, var(--border)); border-radius: 10px; background: var(--kt-tint); }
+.cap-more.hidden { display: none; }
+.cap-more label { display: flex; flex-direction: column; gap: 0.3rem; margin: 0; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-label); }
+.cap-more input { width: 100%; font-size: 0.82rem; text-transform: none; letter-spacing: 0; font-weight: 400; color-scheme: var(--color-scheme); }
+.cap-panel .capture-filter-count { margin-left: 0; font-size: 0.78rem; }
+
+/* Bulk bar: brand-tinted once something is selected. */
+.hist-bulk-bar { border-radius: 10px; padding: 0.4rem 0.6rem 0.4rem 0.9rem; transition: background-color 0.15s ease, border-color 0.15s ease; }
+.hist-bulk-bar.has-selection { background: var(--kt-tint); border-color: color-mix(in srgb, var(--brand) 40%, var(--border)); }
+.hist-bulk-bar .tc-bulk-count b { color: var(--brand); }
+
+/* Table: brand-tinted sticky header, soft rows, hover in brand. */
+.cap-panel .res-table-wrap, .hist-panel .res-table-wrap { border: 1px solid var(--border-subtle); border-radius: 10px; }
+table.kaon-table { font-size: 0.84rem; }
+table.kaon-table thead th {
+  background: var(--kt-tint-2); color: color-mix(in srgb, var(--brand) 62%, var(--text)); font-size: 0.68rem; font-weight: 700; letter-spacing: 0.07em;
+  padding: 0.6rem 0.65rem; border-bottom: 1px solid color-mix(in srgb, var(--brand) 25%, var(--border));
+}
+table.kaon-table th[data-sort]:hover { color: var(--brand); }
+table.kaon-table th[data-dir]::after { color: var(--brand-orange); }
+table.kaon-table td { padding: 0.55rem 0.65rem; border-bottom-color: var(--border-faint); }
+table.cap-table tbody tr:nth-child(even) > td, table.hist-table tbody tr.history-row:nth-child(4n+3) > td { background: color-mix(in srgb, var(--surface-2) 80%, transparent); }
+table.kaon-table tbody tr:not(.kt-empty-row):not(.history-detail-row):hover > td { background: var(--kt-tint); }
+table.kaon-table tbody tr:not(.kt-empty-row):not(.history-detail-row):hover > td:first-child { box-shadow: inset 3px 0 0 var(--brand); }
+.hist-table .history-row { cursor: pointer; }
+.hist-table .history-row.is-open > td { background: var(--kt-tint); border-bottom-color: transparent; }
+.hist-table .history-row.is-open > td:first-child { box-shadow: inset 3px 0 0 var(--brand-orange); }
+.hist-table .history-detail-row > td { background: var(--surface-2); padding: 0.75rem 1rem 0.9rem; box-shadow: inset 3px 0 0 var(--brand-orange); }
+
+/* Text styles. */
+.kt-name { font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.kt-pi { font-weight: 700; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 0.8rem; }
+.kt-date { font-weight: 600; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.kt-time { margin-left: 0.25rem; font-size: 0.76rem; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.kt-muted { color: var(--text-disabled); }
+.kt-mono { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 0.78rem; color: var(--text-3); }
+.kt-code { display: inline-block; padding: 0.12rem 0.5rem; border-radius: 6px; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 0.76rem; font-weight: 600;
+  background: var(--kt-tint); color: color-mix(in srgb, var(--brand) 70%, var(--text)); border: 1px solid color-mix(in srgb, var(--brand) 18%, transparent); }
+.kt-chip { display: inline-block; padding: 0.05rem 0.5rem; border-radius: 999px; font-size: 0.72rem; font-weight: 600; border: 1px solid transparent; }
+.kt-chip-logs { color: color-mix(in srgb, var(--brand) 75%, var(--text)); background: color-mix(in srgb, var(--brand) 11%, transparent); border-color: color-mix(in srgb, var(--brand) 25%, transparent); }
+.kt-chip-pcap, .kt-chip-warn { color: color-mix(in srgb, var(--brand-orange) 70%, var(--text)); background: color-mix(in srgb, var(--brand-orange) 13%, transparent); border-color: color-mix(in srgb, var(--brand-orange) 30%, transparent); }
+.kt-chip-ok { color: var(--success); background: color-mix(in srgb, var(--success) 10%, transparent); border-color: color-mix(in srgb, var(--success) 25%, transparent); }
+.kt-chip-bad { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); border-color: color-mix(in srgb, var(--danger) 25%, transparent); }
+
+/* Type and status pills - a dot then the label. */
+.kt-pill { --kt-c: var(--text-muted);
+  display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.15rem 0.6rem 0.15rem 0.5rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.03em; text-transform: capitalize; white-space: nowrap;
+  color: color-mix(in srgb, var(--kt-c) 85%, var(--text)); background: color-mix(in srgb, var(--kt-c) 12%, transparent); border: 1px solid color-mix(in srgb, var(--kt-c) 28%, transparent); }
+.kt-pill::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--kt-c); }
+.kt-pill-logs { --kt-c: var(--brand); }
+.kt-pill-pcap { --kt-c: var(--brand-orange); }
+.kt-status-complete { --kt-c: var(--success); }
+.kt-status-failed, .kt-status-timeout { --kt-c: var(--danger); }
+.kt-status-pending { --kt-c: var(--warning); }
+.kt-status-pending::before { animation: kt-pulse 1.2s ease-in-out infinite; }
+.kt-status-stopped { --kt-c: var(--orange); }
+@keyframes kt-pulse { 50% { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) { .kt-status-pending::before { animation: none; } }
+
+/* Row actions. */
+.cap-panel .capture-actions, .hist-panel .capture-actions { justify-content: flex-end; gap: 0.35rem; }
+.kt-act { display: inline-flex; align-items: center; gap: 0.35rem; height: 1.9rem; padding: 0 0.6rem; border-radius: 7px; font-size: 0.76rem; font-weight: 600; text-decoration: none; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-muted); }
+.kt-act:hover { color: var(--brand); border-color: color-mix(in srgb, var(--brand) 55%, var(--border)); background: var(--kt-tint); }
+.kt-act.history-toggle, .kt-act-danger { width: 1.9rem; padding: 0; justify-content: center; }
+.kt-act.history-toggle svg { width: 14px; height: 14px; }
+.kt-act-danger:hover { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 50%, var(--border)); background: color-mix(in srgb, var(--danger) 8%, var(--surface)); }
+.kt-act:disabled { opacity: 0.45; cursor: default; }
+
+/* Empty state: the three dots, a title and a hint over the power watermark. */
+.kt-empty-row td { border-bottom: none; }
+.kt-empty { position: relative; isolation: isolate; display: flex; flex-direction: column; align-items: center; gap: 0.45rem; padding: 3rem 1rem; text-align: center; color: var(--text-dim); font-size: 0.85rem; }
+.kt-empty strong { font-size: 1.05rem; font-weight: 700; color: var(--text); }
+.kt-empty::after { content: ''; position: absolute; z-index: -1; left: 50%; top: 50%; width: 180px; height: 180px; transform: translate(-50%, -50%);
+  background: var(--brand); opacity: calc(var(--deco-mark-opacity) * 0.6);
+  -webkit-mask: url('assets/deco/kaon-power.png') center / contain no-repeat; mask: url('assets/deco/kaon-power.png') center / contain no-repeat; }
+
+/* Light theme: a crisp white card on the grey page, deeper brand text. */
+:root[data-mode="light"] .cap-panel, :root[data-mode="light"] .hist-panel {
+  --kt-tint: #f2f8fe; --kt-tint-2: #e8f2fd;
+  border-color: #dbe7f5;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 12px 32px rgba(14, 121, 230, 0.08);
+}
+:root[data-mode="light"] table.kaon-table thead th { color: #0b4f96; }
+:root[data-mode="light"] .kt-code, :root[data-mode="light"] .cap-panel button.kt-btn, :root[data-mode="light"] .hist-panel button.kt-btn { color: #0b5cb3; }
+:root[data-mode="light"] .kt-pill-pcap, :root[data-mode="light"] .kt-chip-pcap { color: #b4510f; }
