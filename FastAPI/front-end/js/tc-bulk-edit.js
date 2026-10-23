@@ -38,11 +38,46 @@ function tcBeParamDefs() {
 }
 
 function tcBeResultFields() {
+  return [...tcBeResultFieldDefs().keys()];
+}
+
+// Result field definitions ({name, type}) for the filtered action, or every
+// action's when "any action".
+function tcBeResultFieldDefs() {
   const action = tcBeEl('tcBeAction').value;
   const actions = action ? [action] : TC_ACTIONS;
+  const defs = new Map();
+  actions.forEach(a => (ACTION_RESULT_FIELDS[a] || []).forEach(f => { if (!defs.has(f.name)) defs.set(f.name, f); }));
+  return defs;
+}
+
+// Pi ids and interface names to offer in the Pi/interface boxes: the fleet's
+// Pis plus whatever the loaded testcases' steps already use (a step can name
+// a Pi that isn't registered right now). Offered as suggestions - a name not
+// in the list can still be typed.
+function tcBeKnownPis() {
+  const ids = new Set(pis.map(p => p.pi_id));
+  tcList.forEach(t => (t.steps || []).forEach(s => {
+    if (s.target && !['all', 'multicast'].includes(s.target)) ids.add(s.target);
+    (s.target_pi_ids || []).forEach(id => ids.add(id));
+  }));
+  return [...ids].sort();
+}
+
+function tcBeKnownInterfaces() {
   const names = new Set();
-  actions.forEach(a => (ACTION_RESULT_FIELDS[a] || []).forEach(f => names.add(f.name)));
-  return [...names];
+  pis.forEach(p => ((p.metadata && p.metadata.interfaces) || []).forEach(i => names.add(i)));
+  tcList.forEach(t => (t.steps || []).forEach(s => {
+    const v = s.params && s.params.interface;
+    (Array.isArray(v) ? v : v ? [v] : []).forEach(i => names.add(i));
+  }));
+  return [...names].sort();
+}
+
+// The shared <datalist>s behind those boxes, refilled when the modal opens.
+function tcBeRefreshSuggestions() {
+  tcBeEl('tcBePiList').innerHTML = tcBeKnownPis().map(id => `<option value="${tcBeEsc(id)}">`).join('');
+  tcBeEl('tcBeIfaceList').innerHTML = tcBeKnownInterfaces().map(n => `<option value="${tcBeEsc(n)}">`).join('');
 }
 
 function tcBeParamOptions(selected) {
@@ -52,10 +87,15 @@ function tcBeParamOptions(selected) {
 
 // Value input matching the parameter's own editor field where known: a
 // dropdown for select params, a number box for numbers, text otherwise.
-function tcBeValueInput(cls, def, current = '') {
+// anyLabel adds a leading "match anything" option (the filter's "equals").
+function tcBeValueInput(cls, def, current = '', anyLabel = '') {
   if (def && def.type === 'select') {
-    return `<select class="field ${cls}">${def.options.map(o =>
-      `<option value="${tcBeEsc(o.value)}" ${o.value === current ? 'selected' : ''}>${tcBeEsc(o.label)}</option>`).join('')}</select>`;
+    const any = anyLabel ? `<option value="" ${current === '' ? 'selected' : ''}>${tcBeEsc(anyLabel)}</option>` : '';
+    // A select option whose value is '' (e.g. "auto") can't double as "any"
+    // in the filter, so it's left out there.
+    const options = anyLabel ? def.options.filter(o => o.value !== '') : def.options;
+    return `<select class="field ${cls}">${any}${options.map(o =>
+      `<option value="${tcBeEsc(o.value)}" ${String(o.value) === String(current) ? 'selected' : ''}>${tcBeEsc(o.label)}</option>`).join('')}</select>`;
   }
   const type = def && def.type === 'number' ? 'number' : 'text';
   const ph = def && def.pingTargetPicker ? 'IP or pi:<pi>/<interface>' : '';
@@ -79,15 +119,28 @@ function renderTcBeOpRow(row, kind) {
           return `<label>Value<input class="field" data-k="value" type="number" step="any" value="${tcBeEsc(keep.value || '')}"></label>`;
         }
         if (kind === 'set_expected') {
-          return `<label>Value<input class="field" data-k="value" type="text" value="${tcBeEsc(keep.value || '')}" placeholder="e.g. true, 0, SAE"></label>`;
+          // true/false result fields get the same dropdown as the step editor.
+          const field = tcBeResultFieldDefs().get((keep.resultField || '').trim());
+          if (field && field.type === 'boolean') {
+            const cur = keep.value === 'false' ? 'false' : 'true';
+            return `<label>Value<select class="field" data-k="value">
+              <option value="true" ${cur === 'true' ? 'selected' : ''}>true</option>
+              <option value="false" ${cur === 'false' ? 'selected' : ''}>false</option></select></label>`;
+          }
+          return `<label>Value<input class="field" data-k="value" type="text" value="${tcBeEsc(keep.value || '')}" placeholder="e.g. 0, SAE"></label>`;
         }
         return `<label>New value${tcBeValueInput('', def, keep.value).replace('class="field ', 'data-k="value" class="field ')}</label>`;
       case 'from':
-        return `<label>From<input class="field" data-k="from" type="text" value="${tcBeEsc(keep.from || '')}" placeholder="${hint('from')}"></label>`;
-      case 'to':
-        return kind === 'replace_param'
-          ? `<label>To${tcBeValueInput('', def, keep.to).replace('class="field ', 'data-k="to" class="field ')}</label>`
-          : `<label>To<input class="field" data-k="to" type="text" value="${tcBeEsc(keep.to || '')}" placeholder="${hint('to')}"></label>`;
+      case 'to': {
+        const label = f === 'from' ? 'From' : 'To';
+        // Parameter values follow the parameter's own field (a dropdown for
+        // selections); Pi ids and interface names suggest the known ones.
+        if (kind === 'replace_param') {
+          return `<label>${label}${tcBeValueInput('', def, keep[f]).replace('class="field ', `data-k="${f}" class="field `)}</label>`;
+        }
+        const list = kind === 'replace_target' ? 'tcBePiList' : kind === 'rename_interface' ? 'tcBeIfaceList' : '';
+        return `<label>${label}<input class="field" data-k="${f}" type="text" ${list ? `list="${list}" autocomplete="off"` : ''} value="${tcBeEsc(keep[f] || '')}" placeholder="${hint(f)}"></label>`;
+      }
       case 'stepField':
         return `<label>Field<select class="field" data-k="stepField">
           <option value="delay_before_seconds" ${keep.stepField === 'delay_before_seconds' ? 'selected' : ''}>delay before (s)</option>
@@ -115,6 +168,9 @@ function renderTcBeOpRow(row, kind) {
   row.querySelector('.tc-be-kind').addEventListener('change', e => { renderTcBeOpRow(row, e.target.value); tcBeInvalidate(); });
   const paramSel = row.querySelector('[data-k="param"]');
   if (paramSel) paramSel.addEventListener('change', () => { renderTcBeOpRow(row, kind); tcBeInvalidate(); });
+  // Picking a result field can switch its value box to a true/false dropdown.
+  const resultField = row.querySelector('[data-k="resultField"]');
+  if (resultField && kind === 'set_expected') resultField.addEventListener('change', () => { renderTcBeOpRow(row, kind); tcBeInvalidate(); });
   row.querySelector('.tc-be-remove').addEventListener('click', () => { row.remove(); tcBeInvalidate(); });
 }
 
@@ -139,6 +195,11 @@ function tcBeLooseValue(text) {
 function tcBeTypedParam(name, raw) {
   const def = tcBeParamDefs().get(name);
   if (def && def.type === 'number' && raw !== '' && !Number.isNaN(Number(raw))) return Number(raw);
+  // A selection's value as the step editor stores it (the option's own value).
+  if (def && def.type === 'select') {
+    const opt = def.options.find(o => String(o.value) === String(raw));
+    if (opt) return opt.value;
+  }
   return raw;
 }
 
@@ -271,6 +332,7 @@ function openTcBulkEditModal() {
     TC_ACTIONS.map(a => `<option value="${a}">${a}</option>`).join('');
   tcBeEl('tcBePi').value = '';
   tcBeEl('tcBeParamValue').value = '';
+  tcBeRefreshSuggestions();
   tcBeRefreshParamFilter();
   tcBeEl('tcBeOps').innerHTML = '';
   addTcBeOpRow();
@@ -288,6 +350,24 @@ function tcBeRefreshParamFilter() {
   const sel = tcBeEl('tcBeParamName');
   const cur = sel.value;
   sel.innerHTML = '<option value="">any</option>' + tcBeParamOptions(cur);
+  tcBeRenderParamValueFilter();
+}
+
+// The filter's "equals" box follows the chosen parameter: its options as a
+// dropdown for a selection, a number or text box otherwise.
+function tcBeRenderParamValueFilter() {
+  const old = tcBeEl('tcBeParamValue');
+  const keep = old.value;
+  const def = tcBeParamDefs().get(tcBeEl('tcBeParamName').value);
+  const wrap = document.createElement('div');
+  wrap.innerHTML = tcBeValueInput('', def, keep, 'any value');
+  const el = wrap.firstElementChild;
+  el.id = 'tcBeParamValue';
+  if (el.tagName === 'INPUT') el.placeholder = 'any value';
+  el.disabled = !tcBeEl('tcBeParamName').value;
+  el.addEventListener('input', tcBeInvalidate);
+  el.addEventListener('change', tcBeInvalidate);
+  old.replaceWith(el);
 }
 
 async function refreshTcUndoEditBtn() {
@@ -333,6 +413,8 @@ tcBeEl('tcBeAction').addEventListener('change', () => {
 });
 ['tcBeScope', 'tcBePi', 'tcBeParamName', 'tcBeParamValue'].forEach(id =>
   tcBeEl(id).addEventListener('input', tcBeInvalidate));
+// The "equals" box follows the chosen parameter (dropdown for selections).
+tcBeEl('tcBeParamName').addEventListener('change', tcBeRenderParamValueFilter);
 tcBeEl('tcBeOps').addEventListener('input', tcBeInvalidate);
 tcBeEl('tcBeOps').addEventListener('change', tcBeInvalidate);
 

@@ -631,7 +631,7 @@
           <select id="tcBeAction" class="field"><option value="">any action</option></select>
         </label>
         <label>Target Pi
-          <input id="tcBePi" class="field" type="text" placeholder="any (e.g. pi03)">
+          <input id="tcBePi" class="field" type="text" list="tcBePiList" autocomplete="off" placeholder="any (e.g. pi03)">
         </label>
         <label>Parameter
           <select id="tcBeParamName" class="field"><option value="">any</option></select>
@@ -640,6 +640,11 @@
           <input id="tcBeParamValue" class="field" type="text" placeholder="any value">
         </label>
       </div>
+
+      <!-- Known Pi ids / interface names for the Pi and interface boxes
+           (filled by tcBeRefreshSuggestions in tc-bulk-edit.js). -->
+      <datalist id="tcBePiList"></datalist>
+      <datalist id="tcBeIfaceList"></datalist>
 
       <h4 class="tc-be-h">2. What to change <button type="button" id="tcBeAddOp" class="tc-be-add">+ add change</button></h4>
       <div id="tcBeOps"></div>
@@ -1132,7 +1137,7 @@
      cache treats as "reuse without revalidating" for a warm tab), so a
      plain reload can otherwise keep serving a stale copy indefinitely. -->
 <script src="js/testcases-tab.js?v=20"></script>
-<script src="js/tc-bulk-edit.js?v=1"></script>
+<script src="js/tc-bulk-edit.js?v=2"></script>
 <script src="js/testsuites-tab.js?v=15"></script>
 <!-- After testcases-tab.js: reuses its tcRenderRunSteps/tcStatusClass so a
      run's step detail renders identically in both places. -->
