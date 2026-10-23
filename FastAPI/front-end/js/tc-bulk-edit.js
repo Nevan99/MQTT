@@ -91,6 +91,45 @@ function tcBePiInterfaces(piId) {
   return [...names].sort();
 }
 
+// "Set Pi's interfaces" - a dropdown of known Pi ids, with an "other…" entry
+// that reveals a text box (for a Pi not yet known). A plain <input list> here
+// had a real bug: once its text matched an option exactly, some browsers'
+// datalist stopped offering the other options until the text was cleared
+// first - a dropdown has no such quirk. The chosen id lives in the hidden
+// data-k="pi" input, as the row's single source of truth.
+function tcBePiPickerHtml(pi) {
+  const known = tcBeKnownPis();
+  const isOther = !!pi && !known.includes(pi);
+  return `<label>Pi
+    <div class="tc-be-pi-picker">
+      <select class="field tc-be-pi-select">
+        <option value="">choose a Pi…</option>
+        ${known.map(id => `<option value="${tcBeEsc(id)}" ${id === pi ? 'selected' : ''}>${tcBeEsc(id)}</option>`).join('')}
+        <option value="__other__" ${isOther ? 'selected' : ''}>other…</option>
+      </select>
+      <input class="field tc-be-pi-other${isOther ? '' : ' hidden'}" type="text" placeholder="Pi id" value="${tcBeEsc(isOther ? pi : '')}" aria-label="Other Pi id">
+    </div>
+    <input type="hidden" data-k="pi" value="${tcBeEsc(pi || '')}">
+  </label>`;
+}
+
+function tcBeWirePiPicker(row) {
+  const select = row.querySelector('.tc-be-pi-select');
+  if (!select) return;
+  const other = row.querySelector('.tc-be-pi-other');
+  const hidden = row.querySelector('[data-k="pi"]');
+  const sync = (fire) => {
+    const usingOther = select.value === '__other__';
+    other.classList.toggle('hidden', !usingOther);
+    const val = (usingOther ? other.value : select.value).trim();
+    if (hidden.value === val) return;
+    hidden.value = val;
+    if (fire) hidden.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+  select.addEventListener('change', () => sync(true));
+  other.addEventListener('input', () => sync(true));
+}
+
 // "Set Pi's interfaces": a checkbox per interface of the chosen Pi (plus an
 // "other" box for names it hasn't reported). The picked names live in the
 // hidden data-k="ifaces" input, so the row keeps them across re-renders.
@@ -188,7 +227,7 @@ function renderTcBeOpRow(row, kind) {
       case 'pi': {
         // Defaults to the Pi the steps are filtered on, if any.
         const pi = keep.pi !== undefined ? keep.pi : tcBeEl('tcBePi').value.trim();
-        return `<label>Pi<input class="field" data-k="pi" type="text" list="tcBePiList" autocomplete="off" value="${tcBeEsc(pi)}" placeholder="e.g. pi01"></label>`;
+        return tcBePiPickerHtml(pi);
       }
       case 'ifaces': {
         const pi = keep.pi !== undefined ? keep.pi : tcBeEl('tcBePi').value.trim();
@@ -224,9 +263,16 @@ function renderTcBeOpRow(row, kind) {
   // Picking a result field can switch its value box to a true/false dropdown.
   const resultField = row.querySelector('[data-k="resultField"]');
   if (resultField && kind === 'set_expected') resultField.addEventListener('change', () => { renderTcBeOpRow(row, kind); tcBeInvalidate(); });
-  // A different Pi lists that Pi's own interfaces.
+  // A different Pi lists that Pi's own interfaces - start its pick fresh
+  // rather than carry over names that may not even exist on the new Pi.
   const piBox = row.querySelector('[data-k="pi"]');
-  if (piBox) piBox.addEventListener('change', () => { renderTcBeOpRow(row, kind); tcBeInvalidate(); });
+  if (piBox) piBox.addEventListener('change', () => {
+    const ifacesHidden = row.querySelector('[data-k="ifaces"]');
+    if (ifacesHidden) ifacesHidden.value = '';
+    renderTcBeOpRow(row, kind);
+    tcBeInvalidate();
+  });
+  tcBeWirePiPicker(row);
   tcBeWireIfacePicker(row);
   row.querySelector('.tc-be-remove').addEventListener('click', () => { row.remove(); tcBeInvalidate(); });
 }
