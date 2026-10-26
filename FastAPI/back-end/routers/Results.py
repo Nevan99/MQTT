@@ -414,7 +414,7 @@ def _test_matches(t: dict, status: str, q: str) -> bool:
         return False
     # A suite's testcase is "completed" either way - "failed" there means
     # it had failing steps.
-    if status == "failed" and st not in FAILED_STATUSES and not t.get("failed_steps"):
+    if status == "failed" and st not in FAILED_STATUSES and not t.get("failed_count"):
         return False
     if status not in ("all", "run", "failed") and st != status:
         return False
@@ -440,6 +440,17 @@ def _target_text(step: dict) -> str:
     return "all Pis" if target in (None, "all") else str(target)
 
 
+def _entry_counts(e: dict) -> tuple[int, int]:
+    """(passed, failed) device results of one step execution. A step can fan
+    out to several Pis (broadcast/multicast) and its own status only says
+    whether they all passed, so the counts say how many did."""
+    entries = e.get("entries") or []
+    passed = sum(1 for x in entries if x.get("status") == "passed")
+    failed = sum(1 for x in entries if x.get("status") in FAILED_STATUSES
+                 or (x.get("error") and x.get("status") != "passed"))
+    return passed, failed
+
+
 def _testcase_tests(run: TestRun) -> tuple[list, Optional[str]]:
     results, live = _run_results(run)
     entries = _locked_copy(results, live) if live is not None else list(results)
@@ -452,6 +463,7 @@ def _testcase_tests(run: TestRun) -> tuple[list, Optional[str]]:
         params = _params_text(e.get("params") or step.get("params") or {})
         if params:
             where.append(params)
+        devices_passed, devices_failed = _entry_counts(e)
         context = []
         if run.repeat_count > 1:
             context.append(f"pass {e.get('pass_index', 0) + 1}/{run.repeat_count}")
@@ -466,6 +478,9 @@ def _testcase_tests(run: TestRun) -> tuple[list, Optional[str]]:
             "duration_s": (e["duration_ms"] / 1000) if e.get("duration_ms") is not None else None,
             "step_index": idx, "run_id": None,
             "error": e.get("error"),
+            # Per-Pi for a step, per-step for a suite's testcase (below):
+            # either way, what the row's single status aggregates.
+            "passed_count": devices_passed, "failed_count": devices_failed,
         })
     current = None
     if live is not None and live.current is not None and 0 <= live.current < len(tests):
@@ -498,6 +513,7 @@ def _suite_tests(session: Session, run: TestSuiteRun) -> tuple[list, Optional[st
         if child is not None:
             duration = _duration_s(child[0], child[1] or (now if e.get("status") == "running" else None))
         name = e.get("testcase_name") or (tc.name if tc else f"testcase #{e.get('testcase_id')}")
+        steps_passed, steps_failed = _suite_entry_steps(e)
         if e.get("status") == "running":
             current = name
         tests.append({
@@ -506,7 +522,7 @@ def _suite_tests(session: Session, run: TestSuiteRun) -> tuple[list, Optional[st
             "status": run_status(e.get("status", "pending")), "duration_s": duration,
             "testcase_id": e.get("testcase_id"), "run_id": e.get("run_id"),
             "error": e.get("error"),
-            "passed_steps": _suite_entry_steps(e)[0], "failed_steps": _suite_entry_steps(e)[1],
+            "passed_count": steps_passed, "failed_count": steps_failed,
         })
     return tests, current
 
@@ -544,8 +560,8 @@ def _run_summary(session: Session, kind: str, run, tests: list, current: Optiona
         live = suite_live is not None
         extra = {
             "testcase_count": len(tc_ids),
-            "passed_steps": sum(t.get("passed_steps") or 0 for t in tests),
-            "failed_steps": sum(t.get("failed_steps") or 0 for t in tests),
+            "passed_steps": sum(t.get("passed_count") or 0 for t in tests),
+            "failed_steps": sum(t.get("failed_count") or 0 for t in tests),
         }
     started, completed = _as_utc(run.started_at), _as_utc(run.completed_at)
     now = datetime.now(timezone.utc)
@@ -596,7 +612,7 @@ def get_result_tests(
     return {
         "summary": summary, "total": len(matched), "offset": offset, "limit": limit,
         "items": page,
-        "failure_seqs": [t["seq"] for t in matched if t["status"] in FAILED_STATUSES or t.get("failed_steps")],
+        "failure_seqs": [t["seq"] for t in matched if t["status"] in FAILED_STATUSES or t.get("failed_count")],
         "names": sorted({t["name"] for t in tests}, key=str.lower)[:500],
     }
 
@@ -610,10 +626,11 @@ def export_result_tests(kind: str, run_id: int, session: Session = Depends(get_s
     tests, _ = _run_tests(session, kind, run)
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["seq", "status", "time_s", "test_name", "description", "error"])
+    w.writerow(["seq", "status", "time_s", "test_name", "description", "passed", "failed", "error"])
     for t in tests:
         w.writerow([t["seq"], t["status"], round(t["duration_s"], 1) if t["duration_s"] is not None else "",
-                    t["name"], t["description"], t.get("error") or ""])
+                    t["name"], t["description"], t.get("passed_count") or 0, t.get("failed_count") or 0,
+                    t.get("error") or ""])
     return Response(
         content=buf.getvalue(), media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{kind}-run-{run_id}-tests.csv"'},

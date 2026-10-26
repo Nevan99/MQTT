@@ -645,7 +645,7 @@ async function resShowRun(kind, id) {
     document.getElementById('resTestStatus').value = 'all';
     document.getElementById('resTestSearch').value = '';
     document.getElementById('resJumpTo').value = '';
-    document.getElementById('resTestsBody').innerHTML = '<tr><td colspan="7" class="pi-log-empty">loading…</td></tr>';
+    document.getElementById('resTestsBody').innerHTML = '<tr><td colspan="8" class="pi-log-empty">loading…</td></tr>';
     document.getElementById('resRunStopHost').innerHTML = '';
   }
   showResDetailView();
@@ -707,7 +707,7 @@ function resRenderRunGone() {
   document.getElementById('resRunTitle').textContent = `#${resDetailCurrent.id}`;
   document.getElementById('resRunStatusBig').textContent = 'NOT FOUND';
   document.getElementById('resRunMessage').textContent = 'This run was deleted.';
-  document.getElementById('resTestsBody').innerHTML = '<tr><td colspan="7" class="pi-log-empty">nothing to show</td></tr>';
+  document.getElementById('resTestsBody').innerHTML = '<tr><td colspan="8" class="pi-log-empty">nothing to show</td></tr>';
 }
 
 // --- sidebar ----------------------------------------------------------------
@@ -818,10 +818,38 @@ function resTestTime(t) {
   return resDurationText({ duration_s: t.duration_s, status: t.status });
 }
 
+// A run that reached the end is "completed" whether its steps passed or
+// not (database/models.run_status) - so a testcase holding a failed step
+// gets the completed dot in the failed colour, rather than looking exactly
+// like a clean one.
+function resTestIconHtml(t, kind) {
+  if (t.failed_count && t.status === 'completed') {
+    const unit = kind === 'testsuite' ? 'step' : 'Pi';
+    return `<span class="res-ti res-ti-fail" title="completed - ${t.failed_count} ${unit}${
+      t.failed_count === 1 ? '' : 's'} failed">&#9679;</span>`;
+  }
+  return RES_TEST_ICON[t.status] || tcEsc(t.status);
+}
+
+// A row's own pass/fail tally: a suite's testcase shows its steps, a
+// testcase's step shows the Pis it ran on. Without it a testcase that
+// completed with a failing step inside looks the same as a clean one.
+function resTestCountHtml(t, kind) {
+  const p = t.passed_count || 0;
+  const f = t.failed_count || 0;
+  if (!p && !f) return '<span class="hint">–</span>';
+  const unit = kind === 'testsuite' ? 'step' : 'Pi';
+  const title = `${p} ${unit}${p === 1 ? '' : 's'} passed, ${f} failed`;
+  return `<span class="res-count" title="${title}">`
+    + `<span class="res-count-pass">${p}</span>`
+    + (f ? `<span class="res-count-fail">${f}</span>` : '')
+    + '</span>';
+}
+
 function renderResTests(data) {
   const body = document.getElementById('resTestsBody');
   if (!data.items.length) {
-    body.innerHTML = `<tr><td colspan="7" class="pi-log-empty">${
+    body.innerHTML = `<tr><td colspan="8" class="pi-log-empty">${
       data.summary.total ? 'no tests match the filter' : (data.summary.status === 'running' ? 'starting…' : 'nothing ran')}</td></tr>`;
     return;
   }
@@ -831,12 +859,13 @@ function renderResTests(data) {
     const open = resRunOpenLogs.has(t.seq);
     return `
     <tr class="res-test-row${t.seq === resRunFocusSeq ? ' res-test-focus' : ''}${t.status === 'running' ? ' res-test-running' : ''}" data-seq="${t.seq}">
-      <td class="res-icon-col">${RES_TEST_ICON[t.status] || tcEsc(t.status)}</td>
+      <td class="res-icon-col">${resTestIconHtml(t, kind)}</td>
       <td class="res-num">${resTestTime(t)}</td>
       <td class="res-test-name">${kind === 'testsuite' && t.run_id
         ? `<button type="button" class="res-link" data-open-run="${t.run_id}" title="Open this testcase run">${tcEsc(t.name)}</button>`
         : tcEsc(t.name)}</td>
       <td class="res-test-desc">${tcEsc(t.description)}${t.error ? ` <span class="res-test-error">${tcEsc(t.error)}</span>` : ''}</td>
+      <td class="res-num res-test-count">${resTestCountHtml(t, kind)}</td>
       <td class="res-log-cell">${t.status === 'pending'
         ? '<span class="hint">–</span>'
         : `<button type="button" class="res-link res-log-open" title="This test's syslog">log</button>`}</td>
@@ -845,7 +874,7 @@ function renderResTests(data) {
         : '<span class="hint">–</span>'}</td>
       <td class="res-num">${t.seq}</td>
     </tr>
-    ${open ? `<tr class="res-log-row" data-log-for="${t.seq}"><td colspan="7"><div class="res-log-body"></div></td></tr>` : ''}`;
+    ${open ? `<tr class="res-log-row" data-log-for="${t.seq}"><td colspan="8"><div class="res-log-body"></div></td></tr>` : ''}`;
   }).join('');
   body.querySelectorAll('.res-log-row').forEach(row => {
     const t = data.items.find(x => x.seq === Number(row.dataset.logFor));
@@ -1500,7 +1529,7 @@ resById('resTestsBody').addEventListener('click', (e) => {
   resRunOpenLogs.add(seq);
   logBtn.textContent = 'hide';
   logBtn.setAttribute('aria-expanded', 'true');
-  row.insertAdjacentHTML('afterend', `<tr class="res-log-row" data-log-for="${seq}"><td colspan="7"><div class="res-log-body"></div></td></tr>`);
+  row.insertAdjacentHTML('afterend', `<tr class="res-log-row" data-log-for="${seq}"><td colspan="8"><div class="res-log-body"></div></td></tr>`);
   // The row's test, rebuilt from what's on screen (run_id for a suite's testcase).
   const runBtn = row.querySelector('[data-open-run]');
   resFillLog(row.nextElementSibling.querySelector('.res-log-body'),

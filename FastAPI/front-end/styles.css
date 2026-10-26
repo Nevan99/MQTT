@@ -1548,3 +1548,12 @@ button.res-tag { min-height: 24px; display: inline-flex; align-items: center; }
    glance when both are shown. */
 .ll-packet .lk { color: var(--brand-orange-ink); }
 .ll-packet .lx { color: var(--text-3); }
+
+/* Results: a test row's own pass/fail tally (results-tab.js
+   resTestCountHtml) - a testcase that completed with a failing step inside
+   reads the same as a clean one without it. */
+.res-test-count { white-space: nowrap; }
+.res-count { display: inline-flex; gap: 0.25rem; justify-content: flex-end; font-variant-numeric: tabular-nums; }
+.res-count > span { min-width: 1.6rem; padding: 0 0.35rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700; text-align: center; }
+.res-count-pass { color: var(--success); background: color-mix(in srgb, var(--success) 12%, transparent); }
+.res-count-fail { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
