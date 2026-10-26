@@ -1542,3 +1542,9 @@ button.res-tag { min-height: 24px; display: inline-flex; align-items: center; }
 .tc-be-pi-select { flex: 1 1 auto; min-width: 7rem; }
 .tc-be-pi-other { flex: 1 1 auto; min-width: 6rem; }
 .tc-be-pi-other.hidden { display: none; }
+
+/* Test log: sniffed packets, beside the syslog lines (routers/Results.py
+   _packet_line). Their own tag colour keeps the two streams apart at a
+   glance when both are shown. */
+.ll-packet .lk { color: var(--brand-orange-ink); }
+.ll-packet .lx { color: var(--text-3); }

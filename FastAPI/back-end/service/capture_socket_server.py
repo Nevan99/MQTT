@@ -125,6 +125,10 @@ class _CaptureHandler(socketserver.StreamRequestHandler):
             # the old per-line tcpdump batching over MQTT.
             decoded = decoder.feed(chunk)
             if decoded:
+                # A test run sniffing this interface files them under its own
+                # log too (service/run_logs.py) - the same stream serves the
+                # live view and the run's packet log.
+                run_logs.append_packets(pi_id, interface, decoded)
                 self._relay_packets(pi_id, interface, decoded)
 
     def _handle_stream_syslog(self, header):

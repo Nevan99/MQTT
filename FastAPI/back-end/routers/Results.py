@@ -628,6 +628,9 @@ def export_result_tests(kind: str, run_id: int, session: Session = Depends(get_s
 # testcase, so its log is that testcase run's whole log, step by step.
 
 SYSLOG_GRACE_SECONDS = 1.5   # lines that arrive just after a step's result
+# Lines captured off a Pi as the run went, as opposed to the run's own
+# SECTION / PASS / FAIL lines: these carry a time and sort by it.
+_STREAM_KINDS = ("syslog", "packet")
 _JOURNAL_RE = re.compile(r"^[A-Z][a-z]{2}\s+\d+\s+\d\d:\d\d:\d\d\s+(\S+)\s+([^:]+):\s?(.*)$")
 _ERROR_RE = re.compile(r"\b(error|exception|traceback|failed|critical)\b", re.I)
 _WARN_RE = re.compile(r"\bwarn(ing)?\b", re.I)
@@ -649,6 +652,26 @@ def _syslog_line(rec: dict) -> dict:
     return {"t": rec["t"], "kind": "syslog", "level": level, "src": rec["pi"], "text": text}
 
 
+def _packet_line(rec: dict) -> dict:
+    """One sniffed packet, in the same shape a syslog line takes so the two
+    sit in one timeline - src is the Pi, so the log page's Pi filter covers
+    packets too, and the radio it came off leads the text."""
+    p = rec.get("p") or {}
+    length = p.get("len")
+    bits = [str(rec.get("if") or "?"),
+            f"{p.get('src') or '?'} > {p.get('dst') or '?'}",
+            p.get("protocol") or "?",
+            f"{length}B" if isinstance(length, int) else "",
+            p.get("info") or ""]
+    return {"t": rec["t"], "kind": "packet", "level": "info", "src": rec["pi"],
+            "text": "  ".join(b for b in bits if b)}
+
+
+def _stream_line(rec: dict) -> dict:
+    """A captured record as a log line - a packet, or (no "k") syslog."""
+    return _packet_line(rec) if rec.get("k") == "pkt" else _syslog_line(rec)
+
+
 def _step_label(e: dict, steps: list) -> tuple[str, dict]:
     idx = e.get("step_index")
     step = steps[idx] if isinstance(idx, int) and 0 <= idx < len(steps) else {}
@@ -657,7 +680,7 @@ def _step_label(e: dict, steps: list) -> tuple[str, dict]:
 
 
 class _SyslogIndex:
-    """A run's captured syslog, sorted by arrival once, so each step finds
+    """A run's captured syslog and packets, sorted by arrival once, so each step finds
     its time window by binary search instead of scanning every line - a
     testcase repeated hundreds of times would otherwise rescan the whole
     log once per step execution."""
@@ -700,7 +723,7 @@ def _step_log_lines(e: dict, steps: list, syslog: "_SyslogIndex", now: datetime,
     if start is not None:
         until = (end + timedelta(seconds=SYSLOG_GRACE_SECONDS)) if end else now
         pis = _step_pis(e, step, syslog.pis)
-        lines += [_syslog_line(r) for r in syslog.window(start, until, next_start) if r["pi"] in pis]
+        lines += [_stream_line(r) for r in syslog.window(start, until, next_start) if r["pi"] in pis]
     for x in e.get("entries") or []:
         who = x.get("pi_id") or "?"
         if x.get("interface"):
@@ -731,11 +754,11 @@ def _step_log_lines(e: dict, steps: list, syslog: "_SyslogIndex", now: datetime,
                       "text": f"{'PASS' if status == 'passed' else 'FAIL'}: {label} {status}{took}"})
     elif status == "running":
         lines.append({"t": None, "kind": "info", "level": "info", "src": None, "text": "... still running"})
-    # Syslog sorted by arrival; the section opens first and results close it.
+    # Captured lines sorted by arrival; the section opens first and results close it.
     head, body = lines[0], lines[1:]
     epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
-    body.sort(key=lambda ln: (ln["kind"] not in ("syslog",) and ln["t"] is None, ln["t"] or epoch,
-                              0 if ln["kind"] == "syslog" else 1))
+    body.sort(key=lambda ln: (ln["kind"] not in _STREAM_KINDS and ln["t"] is None, ln["t"] or epoch,
+                              0 if ln["kind"] in _STREAM_KINDS else 1))
     head["count"] = len(body)
     return [head] + body
 
@@ -916,7 +939,8 @@ def download_test_log(kind: str, run_id: int, seq: int, session: Session = Depen
     out = list(data["header"])
     for ln in _flat_lines(data):
         stamp = ln["t"][:23].replace("T", " ") if ln["t"] else " " * 23
-        tag = {"section": "SECTION", "syslog": f"SYSLOG({ln['src']})"}.get(ln["kind"], "")
+        tag = {"section": "SECTION", "syslog": f"SYSLOG({ln['src']})",
+               "packet": f"PKT({ln['src']})"}.get(ln["kind"], "")
         out.append(f"{stamp} {tag + ': ' if tag else ''}{ln['text']}")
     return Response(
         content="\n".join(out) + "\n", media_type="text/plain",

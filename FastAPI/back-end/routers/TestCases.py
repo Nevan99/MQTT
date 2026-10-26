@@ -1145,14 +1145,16 @@ def _block_key(pass_no, loop_group, loop_pass):
     return (pass_no, loop_group, loop_pass)
 
 
-# --- per-run Pi syslog ------------------------------------------------------
+# --- per-run Pi syslog and packets ------------------------------------------
 # Each test in the Results tab has a CDRouter-style log page made of the
-# syslog its Pis produced while it ran (service/run_logs.py). For that the
-# run asks each Pi it targets to stream its syslog (stream_logs) for the
-# whole run, and stops the streams it started once it's done - unless
-# another run or a log recording still needs that Pi's stream.
+# syslog its Pis produced while it ran, and of the packets seen on the radios
+# its steps used (service/run_logs.py). For that the run asks each Pi it
+# targets to stream its syslog (stream_logs), and each radio under test to
+# stream its packets (tcpdump), for the whole run - then stops the streams it
+# started once it's done, unless another run or recording still needs them.
 
 SYSLOG_START_TIMEOUT_SECONDS = 5
+TCPDUMP_START_TIMEOUT_SECONDS = 5
 
 
 def _run_syslog_pis(steps: list) -> list:
@@ -1172,17 +1174,45 @@ def _run_syslog_pis(steps: list) -> list:
     return sorted(pis)
 
 
-def _start_run_syslog(run_id: int, pis: list) -> set:
-    """Starts capturing the Pis' syslog for this run and asks each online
-    one to stream it. Returns the Pis whose stream this run started."""
-    if not pis:
-        return set()
-    run_logs.start(run_id, pis)
+def _run_tcpdump_pairs(steps: list, pis: list) -> list:
+    """The (Pi, interface) pairs to sniff: the radios this run's steps name,
+    on the Pis they name them for.
+
+    Only wireless interfaces, and only ones a step actually asks for - never
+    a Pi's whole interface list. Sniffing a Pi's wired link would capture the
+    agent's own link to the backend, including the very packets being
+    streamed over it, which feeds back on itself."""
+    pairs = set()
+    for step in steps:
+        params = step.get("params") or {}
+        value = params.get("interfaces", params.get("interface"))
+        if value is None:
+            continue
+        targets = [str(t) for t in _resolve_targets(step) if t]
+        for pi in (pis if "all" in targets else targets):
+            for iface in _resolve_iface_value(value, pi):
+                if str(iface).startswith("wl"):
+                    pairs.add((pi, str(iface)))
+    return sorted(pairs)
+
+
+def _start_run_capture(run_id: int, steps: list) -> dict:
+    """Starts capturing syslog and packets for this run and asks the Pis to
+    stream them. Returns the streams this run started, to stop at the end."""
+    pis = _run_syslog_pis(steps)
+    pairs = _run_tcpdump_pairs(steps, pis)
+    if not pis and not pairs:
+        return {"syslog": set(), "tcpdump": set()}
+    run_logs.start(run_id, pis, pairs)
+    started = {"syslog": set(), "tcpdump": set()}
     try:
-        return _request_syslog_streams(pis)
+        started["syslog"] = _request_syslog_streams(pis)
+        started["tcpdump"] = _request_tcpdump_streams(pairs)
     except Exception:
-        # The log page just shows no syslog; never fail the run over it.
-        return set()
+        # The log page just shows what did get captured; never fail the run
+        # over its own logging.
+        pass
+    return started
 
 
 def _request_syslog_streams(pis: list) -> set:
@@ -1198,18 +1228,41 @@ def _request_syslog_streams(pis: list) -> set:
     return started
 
 
-def _stop_run_syslog(run_id: int, started: set):
-    released = run_logs.stop(run_id)
+def _request_tcpdump_streams(pairs: list) -> set:
+    """Asks each online Pi to stream packets off the given radio. Returns
+    the pairs whose stream this run started (not the ones already running -
+    someone else is watching those and will stop them)."""
+    if not pairs:
+        return set()
+    with get_session_direct() as session:
+        online = {p.pi_id for p in session.exec(
+            select(Pi).where(Pi.pi_id.in_([pi for pi, _ in pairs]))).all() if p.status == "online"}
+        sent = {(pi, iface): _dispatch(pi, CommandRequest(action="tcpdump", params={"interface": iface}),
+                                       session).command_id
+                for pi, iface in pairs if pi in online}
+    started = set()
+    for pair, command_id in sent.items():
+        status, result = _await_command(command_id, TCPDUMP_START_TIMEOUT_SECONDS)
+        if status == "complete" and isinstance(result, dict) and not result.get("already_running"):
+            started.add(pair)
+    return started
+
+
+def _stop_run_capture(run_id: int, started: dict):
+    released_pis, released_pairs = run_logs.stop(run_id)
     recording = {r["pi_id"] for r in recordings.list_active() if r["category"] == "logs"}
-    to_stop = (started & released) - recording
-    if not to_stop:
+    to_stop = (started["syslog"] & released_pis) - recording
+    pairs_to_stop = started["tcpdump"] & released_pairs
+    if not to_stop and not pairs_to_stop:
         return
     try:
         with get_session_direct() as session:
             for pi in to_stop:
                 _dispatch(pi, CommandRequest(action="stop_logs", params={}), session)
+            for pi, iface in pairs_to_stop:
+                _dispatch(pi, CommandRequest(action="stop_tcpdump", params={"interface": iface}), session)
     except Exception:
-        pass   # best effort - a stream left running only costs the Pi a journalctl
+        pass   # best effort - a stream left running only costs the Pi a journalctl/tcpdump
 
 
 def _run_testcase(run_id: int):
@@ -1232,7 +1285,7 @@ def _run_testcase(run_id: int):
     results = _plan_skeletons(plan, repeat_count)
     # Before the run registers, so a "stop now" can't cut the 5s waits short
     # and leave the streams half-started.
-    syslog_started = _start_run_syslog(run_id, _run_syslog_pis(steps))
+    run_streams = _start_run_capture(run_id, steps)
     live = run_control.register_run(run_id, results)
     run_control.set_current_run(run_id)
     # A suite "stop now" that arrived after the suite launched this run but
@@ -1374,7 +1427,7 @@ def _run_testcase(run_id: int):
     finally:
         run_control.set_current_run(None)
         run_control.unregister_run(run_id)
-        _stop_run_syslog(run_id, syslog_started)
+        _stop_run_capture(run_id, run_streams)
 
 
 @router.post("/{testcase_id}/run", response_model=TestRunOut)

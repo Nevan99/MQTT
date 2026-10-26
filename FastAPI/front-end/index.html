@@ -11,7 +11,7 @@
 <link rel="apple-touch-icon" href="assets/kaon-favicon-180.png">
 <link id="faviconSvg" rel="icon" type="image/svg+xml" href="assets/kaon-favicon.svg">
 <link rel="stylesheet" href="themes.css?v=6">
-<link rel="stylesheet" href="styles.css?v=47">
+<link rel="stylesheet" href="styles.css?v=48">
 <!-- Applies the saved theme before first paint (no dark flash for a
      light-theme user) - same keys/logic as js/settings.js's applyTheme. -->
 <script>
@@ -479,6 +479,7 @@
         <select id="resLogKind" class="field" aria-label="Which lines">
           <option value="all">All Lines</option>
           <option value="syslog">Syslog Only</option>
+          <option value="packets">Packets Only</option>
           <option value="passfail">Pass/Fail Only</option>
           <option value="problems">Errors &amp; Warnings</option>
         </select>
@@ -1141,7 +1142,7 @@
 <script src="js/testsuites-tab.js?v=15"></script>
 <!-- After testcases-tab.js: reuses its tcRenderRunSteps/tcStatusClass so a
      run's step detail renders identically in both places. -->
-<script src="js/results-tab.js?v=19"></script>
+<script src="js/results-tab.js?v=20"></script>
 <script src="js/wifi-scan.js?v=2"></script>
 <script src="js/wifi-info-modal.js?v=5"></script>
 <script src="js/log-rendering.js"></script>

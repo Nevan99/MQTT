@@ -1189,6 +1189,7 @@ function resLogTime(iso) {
 const RES_LOG_TAG = {
   section: () => '&#8597;SECTION',
   syslog: (ln) => `SYSLOG(${tcEsc(ln.src || '?')})`,
+  packet: (ln) => `PKT(${tcEsc(ln.src || '?')})`,
   pass: () => '',
   fail: () => '',
   info: () => 'INFO',
@@ -1235,9 +1236,10 @@ function renderResLogLines(data, firstRender) {
   data.sections.forEach(sec => out.push(resLogSectionHtml(sec)));
   const loaded = data.sections.filter(s => s.lines);
   if (!data.preamble.length && !data.sections.length) out.push('<div class="pi-log-empty">No log lines.</div>');
-  else if (data.sections.length && loaded.length === data.sections.length && !loaded.some(s => s.lines.some(l => l.kind === 'syslog'))) {
-    out.push(`<div class="ll ll-note"><span class="ln"></span><span class="lx">No syslog was captured for this test${
-      data.running ? ' yet' : ' - its Pis may have been offline, or it ran before syslog capture existed'}.</span></div>`);
+  else if (data.sections.length && loaded.length === data.sections.length
+           && !loaded.some(s => s.lines.some(l => l.kind === 'syslog' || l.kind === 'packet'))) {
+    out.push(`<div class="ll ll-note"><span class="ln"></span><span class="lx">No syslog or packets were captured for this test${
+      data.running ? ' yet' : ' - its Pis may have been offline, or it ran before capture existed'}.</span></div>`);
   }
   box.innerHTML = out.join('');
   renderResLogPartial(data);
@@ -1271,6 +1273,7 @@ function applyResLogFilters() {
     const k = el.dataset.kind;
     let show = true;
     if (kind === 'syslog') show = k === 'syslog' || k === 'section';
+    else if (kind === 'packets') show = k === 'packet' || k === 'section';
     else if (kind === 'passfail') show = k === 'pass' || k === 'fail' || k === 'section';
     else if (kind === 'problems') show = el.dataset.level === 'error' || el.dataset.level === 'warning' || k === 'section';
     if (show && pi && k !== 'section') show = el.dataset.src === pi;
