@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlmodel import Session, select
 
 from database.database import get_session
-from database.models import TestCase, TestRun, TestSuite, TestSuiteRun
+from database.models import TestCase, TestRun, TestSuite, TestSuiteRun, run_status
 from schemas.schemas import ResultBulkRequest, ResultFlagsRequest
 from service import run_control, run_logs
 from service.auth import get_current_user
@@ -94,7 +94,7 @@ def _all_rows(session: Session) -> list[dict]:
         meta = tc_meta.get(tc_id, {})
         rows.append({
             "kind": "testcase", "id": rid, "source_id": tc_id, "name": name,
-            "status": status, "started_at": _as_utc(started), "completed_at": _as_utc(completed),
+            "status": run_status(status), "started_at": _as_utc(started), "completed_at": _as_utc(completed),
             # The run's own snapshot of its steps, not the testcase as it is now.
             "devices": sorted(_targets_of(json.loads(steps_json or "[]"))),
             "owner": meta.get("author", ""), "tags": meta.get("tags", []),
@@ -122,16 +122,27 @@ def _all_rows(session: Session) -> list[dict]:
         names += [e.get("testcase_name") for e in results if e.get("testcase_name")]
         rows.append({
             "kind": "testsuite", "id": rid, "source_id": ts_id, "name": name,
-            "status": status, "started_at": _as_utc(started), "completed_at": _as_utc(completed),
+            "status": run_status(status), "started_at": _as_utc(started), "completed_at": _as_utc(completed),
             "devices": sorted(devices),
             "owner": (suite.author or "") if suite else "", "tags": suite.tags if suite else [],
             "testcase_names": names, "testcase_count": len(tc_ids),
-            # A suite's pass/fail is per testcase, straight from its results.
-            "passed": sum(1 for e in results if e.get("status") == "passed"),
-            "failed": sum(1 for e in results if e.get("status") in ("failed", "timeout")),
+            # Step-level, summed over its testcases - same unit as a
+            # testcase run's own pass/fail counts.
+            "passed": sum(_suite_entry_steps(e)[0] for e in results),
+            "failed": sum(_suite_entry_steps(e)[1] for e in results),
             "starred": bool(starred), "archived": bool(archived), "locked": bool(locked),
         })
     return rows
+
+
+def _suite_entry_steps(e: dict) -> tuple[int, int]:
+    """(passed, failed) steps of one testcase in a suite run. Entries saved
+    before step counts were recorded only have a passed/failed status - each
+    counts as one."""
+    if "passed_steps" in e or "failed_steps" in e:
+        return e.get("passed_steps") or 0, e.get("failed_steps") or 0
+    st = e.get("status")
+    return (1 if st == "passed" else 0), (1 if st in ("failed", "timeout") else 0)
 
 
 def _in_view(row: dict, view: str) -> bool:
@@ -393,7 +404,7 @@ def bulk_results(req: ResultBulkRequest, session: Session = Depends(get_session)
 # step x repeat x loop pass, in execution order). Used for live runs too, so
 # the Results tab is also where a running testcase/testsuite is watched.
 
-TEST_FILTERS = ("all", "run", "passed", "failed", "skipped", "pending", "running", "stopped")
+TEST_FILTERS = ("all", "run", "completed", "passed", "failed", "skipped", "pending", "running", "stopped")
 FAILED_STATUSES = ("failed", "timeout")
 
 
@@ -401,7 +412,9 @@ def _test_matches(t: dict, status: str, q: str) -> bool:
     st = t["status"]
     if status == "run" and st in ("pending", "skipped"):
         return False
-    if status == "failed" and st not in FAILED_STATUSES:
+    # A suite's testcase is "completed" either way - "failed" there means
+    # it had failing steps.
+    if status == "failed" and st not in FAILED_STATUSES and not t.get("failed_steps"):
         return False
     if status not in ("all", "run", "failed") and st != status:
         return False
@@ -490,9 +503,10 @@ def _suite_tests(session: Session, run: TestSuiteRun) -> tuple[list, Optional[st
         tests.append({
             "seq": i + 1, "name": name,
             "description": (tc.description if tc and tc.description else ""),
-            "status": e.get("status", "pending"), "duration_s": duration,
+            "status": run_status(e.get("status", "pending")), "duration_s": duration,
             "testcase_id": e.get("testcase_id"), "run_id": e.get("run_id"),
             "error": e.get("error"),
+            "passed_steps": _suite_entry_steps(e)[0], "failed_steps": _suite_entry_steps(e)[1],
         })
     return tests, current
 
@@ -528,13 +542,17 @@ def _run_summary(session: Session, kind: str, run, tests: list, current: Optiona
         suite_live = run_control.get_suite(run.id)
         stop_mode = suite_live.stop_mode if suite_live is not None else None
         live = suite_live is not None
-        extra = {"testcase_count": len(tc_ids)}
+        extra = {
+            "testcase_count": len(tc_ids),
+            "passed_steps": sum(t.get("passed_steps") or 0 for t in tests),
+            "failed_steps": sum(t.get("failed_steps") or 0 for t in tests),
+        }
     started, completed = _as_utc(run.started_at), _as_utc(run.completed_at)
     now = datetime.now(timezone.utc)
     return {
         "kind": kind, "id": run.id, "source_id": source_id, "name": name,
         "description": (source.description if source else "") or "",
-        "status": run.status, "started_at": started, "completed_at": completed,
+        "status": run_status(run.status), "started_at": started, "completed_at": completed,
         "duration_s": _duration_s(started, completed or (now if run.status == "running" else None)),
         "total": total, "done": done,
         "progress": round(100 * done / total) if total else (0 if run.status == "running" else 100),
@@ -578,7 +596,7 @@ def get_result_tests(
     return {
         "summary": summary, "total": len(matched), "offset": offset, "limit": limit,
         "items": page,
-        "failure_seqs": [t["seq"] for t in matched if t["status"] in FAILED_STATUSES],
+        "failure_seqs": [t["seq"] for t in matched if t["status"] in FAILED_STATUSES or t.get("failed_steps")],
         "names": sorted({t["name"] for t in tests}, key=str.lower)[:500],
     }
 
@@ -881,7 +899,7 @@ def get_test_log(kind: str, run_id: int, seq: int, sections: str = "", live: boo
     run, test = data["run"], data["test"]
     return {
         "kind": kind, "run_id": run.id, "run_name": run.testcase_name if kind == "testcase" else run.testsuite_name,
-        "run_status": run.status, "seq": seq, "total": data["total"],
+        "run_status": run_status(run.status), "seq": seq, "total": data["total"],
         "test": test, "running": data["running"],
         "header": data["header"],
         "preamble": [_line_out(ln) for ln in data["preamble"]],

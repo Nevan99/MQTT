@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
 from database.database import get_session, get_session_direct
-from database.models import TestSuite, TestSuiteRun, TestCase, TestRun
+from database.models import TestSuite, TestSuiteRun, TestCase, TestRun, run_status
 from schemas.schemas import TestSuiteRequest, TestSuiteOut, TestSuiteRunOut
 from service.auth import get_current_user
 from routers.TestCases import _run_testcase
@@ -27,7 +27,7 @@ def _suite_run_to_out(r: TestSuiteRun) -> TestSuiteRunOut:
     return TestSuiteRunOut(
         id=r.id, testsuite_id=r.testsuite_id, testsuite_name=r.testsuite_name,
         stop_on_failure=r.stop_on_failure, testcase_ids=json.loads(r.testcase_ids_json),
-        status=r.status, results=json.loads(r.results_json),
+        status=run_status(r.status), results=[_suite_entry_out(e) for e in json.loads(r.results_json)],
         started_at=r.started_at, completed_at=r.completed_at,
     )
 
@@ -214,8 +214,23 @@ def _run_testsuite(suite_run_id: int):
         run_control.unregister_suite(suite_run_id)
 
 
+def _step_counts(run: TestRun) -> tuple[int, int]:
+    """(passed, failed) step results of one testcase run - a suite's
+    pass/fail lives at step level, the testcase run itself only says
+    completed/stopped."""
+    steps = json.loads(run.results_json or "[]")
+    return (
+        sum(1 for s in steps if s.get("status") == "passed"),
+        sum(1 for s in steps if s.get("status") in ("failed", "timeout")),
+    )
+
+
+def _suite_entry_out(e: dict) -> dict:
+    """Older suite runs stored each testcase as passed/failed."""
+    return {**e, "status": run_status(e.get("status", "pending"))}
+
+
 def _run_testsuite_body(suite_run_id, testcase_ids, stop_on_failure, results, save_results, live):
-    overall_passed = True
     stopped_at = None
     user_stopped = False
 
@@ -231,14 +246,10 @@ def _run_testsuite_body(suite_run_id, testcase_ids, stop_on_failure, results, sa
             testcase = session.get(TestCase, tc_id)
             if testcase is None:
                 # Referenced testcase was deleted after this suite was
-                # saved/launched - record it as a failed entry (no run to
-                # point at) rather than crashing the whole suite run.
-                results[i].update({"status": "failed", "error": "testcase no longer exists"})
-                overall_passed = False
+                # saved/launched - skipped (no run to point at) rather than
+                # crashing the whole suite run.
+                results[i].update({"status": "skipped", "error": "testcase no longer exists"})
                 save_results()
-                if stop_on_failure:
-                    stopped_at = i
-                    break
                 continue
 
             run = TestRun(
@@ -267,18 +278,24 @@ def _run_testsuite_body(suite_run_id, testcase_ids, stop_on_failure, results, sa
             # That testcase run was deleted mid-suite (see DELETE
             # /testcases/runs/{run_id}) - record it the same way a since-
             # deleted testcase is above, rather than crash on a None status.
-            status = finished.status if finished is not None else "failed"
+            if finished is None:
+                status, passed_steps, failed_steps = "skipped", 0, 0
+            else:
+                status = run_status(finished.status)
+                passed_steps, failed_steps = _step_counts(finished)
 
-        results[i]["status"] = status
-        if status != "passed":
-            overall_passed = False
+        results[i].update({"status": status, "passed_steps": passed_steps, "failed_steps": failed_steps})
+        if finished is None:
+            results[i]["error"] = "testcase run was deleted"
         save_results()
 
         if status == "stopped" or live.stop_mode is not None:
             user_stopped = True
             stopped_at = i
             break
-        if status != "passed" and stop_on_failure:
+        # A testcase with failing steps still "completed"; stop_on_failure
+        # is about those failures, so it looks at the steps.
+        if failed_steps and stop_on_failure:
             stopped_at = i
             break
 
@@ -293,7 +310,7 @@ def _run_testsuite_body(suite_run_id, testcase_ids, stop_on_failure, results, sa
         r = session.get(TestSuiteRun, suite_run_id)
         if r is None:
             return
-        r.status = "stopped" if user_stopped else ("passed" if overall_passed else "failed")
+        r.status = "stopped" if user_stopped else "completed"
         r.completed_at = datetime.now(timezone.utc)
         session.add(r)
         session.commit()

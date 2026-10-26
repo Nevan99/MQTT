@@ -1530,7 +1530,7 @@ async function refreshTcRun() {
 }
 
 function tcStatusClass(status) {
-  if (status === 'passed') return 'complete';
+  if (status === 'passed' || status === 'completed') return 'complete';
   if (status === 'failed' || status === 'timeout') return 'failed';
   if (status === 'stopped' || status === 'skipped') return status;
   return 'pending';
@@ -1804,7 +1804,7 @@ function tcBlockLabel(b, summary) {
 }
 
 function tcCountsText(counts) {
-  const order = [['passed', '✓'], ['failed', '✗'], ['timeout', '⏱'], ['stopped', '■'], ['running', '▶'], ['skipped', '–'], ['pending', '…']];
+  const order = [['completed', '●'], ['passed', '✓'], ['failed', '✗'], ['timeout', '⏱'], ['stopped', '■'], ['running', '▶'], ['skipped', '–'], ['pending', '…']];
   return order.filter(([k]) => counts[k]).map(([k, sym]) =>
     `<span class="tc-count tc-count-${k}" title="${k}">${sym}${counts[k]}</span>`).join(' ');
 }

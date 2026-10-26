@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlmodel import Session, select
 
 from database.database import get_session, get_session_direct
-from database.models import TestCase, TestRun, Command, Pi, InterfaceStatus, StepBulkEdit
+from database.models import TestCase, TestRun, Command, Pi, InterfaceStatus, StepBulkEdit, run_status
 from schemas.schemas import (
     TestCaseBulkEditStepsRequest,
     TestCaseRequest, TestCaseOut, TestRunOut, CommandRequest,
@@ -47,7 +47,7 @@ def _run_to_out(r: TestRun) -> TestRunOut:
     return TestRunOut(
         id=r.id, testcase_id=r.testcase_id, testcase_name=r.testcase_name,
         stop_on_failure=r.stop_on_failure, repeat_count=r.repeat_count,
-        steps=json.loads(r.steps_json), status=r.status, results=json.loads(r.results_json),
+        steps=json.loads(r.steps_json), status=run_status(r.status), results=json.loads(r.results_json),
         suite_run_id=r.suite_run_id, started_at=r.started_at, completed_at=r.completed_at,
     )
 
@@ -126,7 +126,7 @@ def list_runs(limit: int = 50, include_suite_children: bool = False, light: bool
     if light:
         return [TestRunOut(
             id=r.id, testcase_id=r.testcase_id, testcase_name=r.testcase_name,
-            stop_on_failure=r.stop_on_failure, repeat_count=r.repeat_count, status=r.status,
+            stop_on_failure=r.stop_on_failure, repeat_count=r.repeat_count, status=run_status(r.status),
             suite_run_id=r.suite_run_id, started_at=r.started_at, completed_at=r.completed_at,
         ) for r in runs]
     return [_run_to_out(r) for r in runs]
@@ -1222,7 +1222,6 @@ def _run_testcase(run_id: int):
         repeat_count = max(1, run.repeat_count)
         suite_run_id = run.suite_run_id
 
-    overall_passed = True
     stopped = False          # stop_on_failure tripped
     user_stopped = False     # POST /runs/{id}/stop
 
@@ -1337,10 +1336,8 @@ def _run_testcase(run_id: int):
 
                     if step_result["status"] == "stopped":
                         user_stopped = True
-                    elif step_result["status"] == "failed":
-                        overall_passed = False
-                        if stop_on_failure:
-                            stopped = True
+                    elif step_result["status"] == "failed" and stop_on_failure:
+                        stopped = True
 
                     if not save_results():
                         # Deleted (see DELETE /testcases/runs/{run_id}) while
@@ -1368,9 +1365,9 @@ def _run_testcase(run_id: int):
             run = session.get(TestRun, run_id)
             if run is None:
                 return
-            # A user stop is reported as such even if some step failed before
-            # it - "stopped" says the run is incomplete, which matters more.
-            run.status = "stopped" if user_stopped else ("passed" if overall_passed else "failed")
+            # Only whether it finished - per-step pass/fail stays on each
+            # step result (see run_status in models.py).
+            run.status = "stopped" if user_stopped else "completed"
             run.completed_at = datetime.now(timezone.utc)
             session.add(run)
             session.commit()

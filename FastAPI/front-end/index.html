@@ -87,7 +87,7 @@
   <div class="fleet-stats" id="fleetStats" aria-label="Fleet summary">
     <div class="fleet-stat fleet-stat-on"><span class="fleet-stat-num" id="fleetStatOnline">–</span><span class="fleet-stat-label">Pis online</span></div>
     <div class="fleet-stat fleet-stat-off"><span class="fleet-stat-num" id="fleetStatOffline">–</span><span class="fleet-stat-label">offline</span></div>
-    <div class="fleet-stat fleet-stat-wifi"><span class="fleet-stat-num" id="fleetStatWifi">–</span><span class="fleet-stat-label">Wi-Fi radios connected</span></div>
+    <div class="fleet-stat fleet-stat-wifi"><span class="fleet-stat-num" id="fleetStatWifi">–</span><span class="fleet-stat-label">Wi-Fi interfaces connected</span></div>
   </div>
   <div class="fleet-stat fleet-stat-side"><span class="fleet-stat-num" id="fleetStatRoles">–</span><span class="fleet-stat-label">roles</span></div>
 
@@ -263,8 +263,7 @@
         <select id="resStatus" class="field" aria-label="Status">
           <option value="">Any status</option>
           <option value="running">Running</option>
-          <option value="passed">Passed</option>
-          <option value="failed">Failed</option>
+          <option value="completed">Completed</option>
           <option value="stopped">Stopped</option>
         </select>
         <input type="text" id="resPackage" class="field" placeholder="Filter by package name…" aria-label="Filter by package name">
@@ -366,6 +365,7 @@
         <select id="resTestStatus" class="field">
           <option value="all">All Tests</option>
           <option value="run">Run</option>
+          <option value="completed">Completed</option>
           <option value="passed">Passes</option>
           <option value="failed">Failures</option>
           <option value="running">Running</option>
@@ -1136,12 +1136,12 @@
      serves them with only Last-Modified/ETag, which Chrome's heuristic
      cache treats as "reuse without revalidating" for a warm tab), so a
      plain reload can otherwise keep serving a stale copy indefinitely. -->
-<script src="js/testcases-tab.js?v=20"></script>
+<script src="js/testcases-tab.js?v=21"></script>
 <script src="js/tc-bulk-edit.js?v=4"></script>
 <script src="js/testsuites-tab.js?v=15"></script>
 <!-- After testcases-tab.js: reuses its tcRenderRunSteps/tcStatusClass so a
      run's step detail renders identically in both places. -->
-<script src="js/results-tab.js?v=18"></script>
+<script src="js/results-tab.js?v=19"></script>
 <script src="js/wifi-scan.js?v=2"></script>
 <script src="js/wifi-info-modal.js?v=5"></script>
 <script src="js/log-rendering.js"></script>

@@ -741,8 +741,13 @@ function renderResRunSidebar(data) {
 // --- summary + info cards ---------------------------------------------------
 
 const RES_STATUS_WORD = {
-  running: 'RUNNING', passed: 'COMPLETED', failed: 'COMPLETED', stopped: 'STOPPED',
+  running: 'RUNNING', completed: 'COMPLETED', passed: 'COMPLETED', failed: 'COMPLETED', stopped: 'STOPPED',
 };
+
+// Step-level counts: a testsuite's tests are testcases (all "completed"),
+// so its pass/fail comes from the steps inside them.
+function resPassedSteps(s) { return s.kind === 'testsuite' ? (s.passed_steps || 0) : (s.counts.passed || 0); }
+function resFailedSteps(s) { return s.kind === 'testsuite' ? (s.failed_steps || 0) : (s.counts.failed || 0); }
 
 function resRunMessage(s) {
   const what = s.kind === 'testsuite' ? 'testsuite' : 'testcase';
@@ -752,10 +757,12 @@ function resRunMessage(s) {
     return s.current ? `Now running ${s.current}` : `The ${what} is starting…`;
   }
   if (s.status === 'stopped') return `The ${what} was stopped before it finished.`;
-  const failed = s.counts.failed || 0;
+  // Completed is just "finished" - failing steps don't fail the run, they're
+  // only reported.
+  const failed = resFailedSteps(s);
   return failed
-    ? `The ${what} completed with ${failed} failure${failed === 1 ? '' : 's'}.`
-    : `The ${what} completed successfully.`;
+    ? `The ${what} completed - ${failed} step${failed === 1 ? '' : 's'} failed.`
+    : `The ${what} completed.`;
 }
 
 function renderResRunSummary(s) {
@@ -768,8 +775,8 @@ function renderResRunSummary(s) {
   bar.querySelector('span').style.width = `${s.progress}%`;
   bar.classList.toggle('done', s.status !== 'running');
   document.getElementById('resRunMessage').textContent = resRunMessage(s);
-  document.getElementById('resRunPass').textContent = s.counts.passed || 0;
-  document.getElementById('resRunFail').textContent = s.counts.failed || 0;
+  document.getElementById('resRunPass').textContent = resPassedSteps(s);
+  document.getElementById('resRunFail').textContent = resFailedSteps(s);
   document.getElementById('resRunTime').textContent = resDurationText(s) || '–';
   const rerun = document.getElementById('resRunRerunBtn');
   rerun.disabled = !s.source_exists;
@@ -796,6 +803,7 @@ function renderResRunSummary(s) {
 // --- tests table ------------------------------------------------------------
 
 const RES_TEST_ICON = {
+  completed: '<span class="res-ti res-ti-pass" title="completed">&#9679;</span>',
   passed: '<span class="res-ti res-ti-pass" title="passed">&#10003;</span>',
   failed: '<span class="res-ti res-ti-fail" title="failed">&#10007;</span>',
   timeout: '<span class="res-ti res-ti-fail" title="timeout">&#9201;</span>',

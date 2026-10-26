@@ -207,7 +207,7 @@ class TestRun(SQLModel, table=True):
     stop_on_failure: bool = True
     repeat_count: int = 1
     steps_json: str = "[]"
-    status: str = "running"              # running | passed | failed
+    status: str = "running"              # running | completed | stopped (see run_status)
     results_json: str = "[]"
     # Set when this run was launched as one step of a testsuite run (see
     # routers/TestSuites._run_testsuite), None for a standalone run. Lets
@@ -264,7 +264,7 @@ class TestSuiteRun(SQLModel, table=True):
     testsuite_name: str
     stop_on_failure: bool = True
     testcase_ids_json: str = "[]"
-    status: str = "running"              # running | passed | failed
+    status: str = "running"              # running | completed | stopped (see run_status)
     results_json: str = "[]"
     started_at: datetime = Field(default_factory=utcnow)
     completed_at: Optional[datetime] = None
@@ -273,3 +273,10 @@ class TestSuiteRun(SQLModel, table=True):
     starred: bool = False
     archived: bool = False
     locked: bool = False
+
+def run_status(status: str) -> str:
+    """A testcase/testsuite run only reports whether it's still going -
+    running, completed or stopped. Pass/fail belongs to the individual steps
+    (one failing step doesn't fail the whole suite). Runs saved before this
+    rule stored "passed"/"failed"; both read back as "completed"."""
+    return "completed" if status in ("passed", "failed") else status
