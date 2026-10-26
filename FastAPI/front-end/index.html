@@ -11,7 +11,7 @@
 <link rel="apple-touch-icon" href="assets/kaon-favicon-180.png">
 <link id="faviconSvg" rel="icon" type="image/svg+xml" href="assets/kaon-favicon.svg">
 <link rel="stylesheet" href="themes.css?v=6">
-<link rel="stylesheet" href="styles.css?v=49">
+<link rel="stylesheet" href="styles.css?v=50">
 <!-- Applies the saved theme before first paint (no dark flash for a
      light-theme user) - same keys/logic as js/settings.js's applyTheme. -->
 <script>
@@ -434,7 +434,8 @@
                 <th class="res-num">Time</th>
                 <th>Test Name</th>
                 <th>Description</th>
-                <th class="res-num" title="Passed / failed - steps of a testcase, Pis of a step">Result</th>
+                <th class="res-num" title="Passed - steps of a testcase, Pis of a step">Pass</th>
+                <th class="res-num" title="Failed - steps of a testcase, Pis of a step">Fail</th>
                 <th>Log</th>
                 <th>Details</th>
                 <th class="res-num">Seq</th>
@@ -1143,7 +1144,7 @@
 <script src="js/testsuites-tab.js?v=15"></script>
 <!-- After testcases-tab.js: reuses its tcRenderRunSteps/tcStatusClass so a
      run's step detail renders identically in both places. -->
-<script src="js/results-tab.js?v=22"></script>
+<script src="js/results-tab.js?v=23"></script>
 <script src="js/wifi-scan.js?v=2"></script>
 <script src="js/wifi-info-modal.js?v=5"></script>
 <script src="js/log-rendering.js"></script>
