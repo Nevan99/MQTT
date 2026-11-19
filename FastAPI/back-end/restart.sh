@@ -5,9 +5,20 @@
 # Output goes to LOG_FILE; set FOREGROUND=1 to run attached instead.
 set -euo pipefail
 
-HOST="${HOST:-192.168.150.20}"
-PORT="${PORT:-8000}"
 BACKEND_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Host/port: HOST=/PORT= env vars win, then SERVER_HOST/SERVER_PORT in .env
+# (written by ../../setup.sh), then the defaults.
+env_val() { grep -m1 "^$1=" "$BACKEND_DIR/.env" 2>/dev/null | cut -d= -f2- | tr -d "'\"" || true; }
+HOST="${HOST:-$(env_val SERVER_HOST)}"; HOST="${HOST:-0.0.0.0}"
+PORT="${PORT:-$(env_val SERVER_PORT)}"; PORT="${PORT:-8000}"
+
+if [ "$HOST" != "0.0.0.0" ] && ! ip -4 -o addr show | grep -qw "inet $HOST"; then
+  echo "Error: this machine has no IP $HOST (Errno 99 if uvicorn tried to bind it)." >&2
+  echo "Its IPs: $(ip -4 -o addr show scope global | awk '{split($4,a,"/"); printf "%s ", a[1]}')" >&2
+  echo "Fix: ../../setup.sh --env-only  (set the web page IP), or HOST=<ip> $0" >&2
+  exit 1
+fi
 VENV_ACTIVATE="$BACKEND_DIR/../../.venv/bin/activate"
 LOG_FILE="${LOG_FILE:-$BACKEND_DIR/fleet.log}"
 

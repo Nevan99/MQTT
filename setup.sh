@@ -8,7 +8,8 @@
 #   3. Creates or edits FastAPI/back-end/.env interactively (broker IP/port,
 #      capture port, login, session length); Enter keeps each current value,
 #      and the old file is saved as .env.bak
-#   4. Configures Mosquitto (listener on the MQTT port from .env), enables it on boot
+#   4. Configures Mosquitto (listener on the MQTT port from .env), enables it on boot,
+#      and opens the MQTT, capture and web ports if ufw/firewalld is active
 #   5. Creates the SQLite database tables
 #   6. Starts the back-end with FastAPI/back-end/restart.sh
 #
@@ -22,6 +23,7 @@
 #   SKIP_APT=1 ./setup.sh               # skip system packages
 #   NO_START=1 ./setup.sh               # set up but don't start
 #   ./setup.sh --env-only               # only edit .env, nothing else
+#   FW_SOURCE=192.168.150.0/24 ./setup.sh   # firewall: allow only this subnet (FW_SOURCE=any: anywhere)
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,8 +33,10 @@ ENV_FILE="$BACKEND_DIR/.env"
 MOSQUITTO_SRC="$ROOT_DIR/mosquitto.conf"
 MOSQUITTO_DST="/etc/mosquitto/conf.d/pi-fleet.conf"
 
-DEFAULT_HOST="192.168.150.20"
-DEFAULT_PORT="8000"
+# Defaults: what a previous run saved in .env, else these.
+_saved() { grep -m1 "^$1=" "$ENV_FILE" 2>/dev/null | cut -d= -f2- | tr -d "'\"" || true; }
+DEFAULT_HOST="$(_saved SERVER_HOST)"; DEFAULT_HOST="${DEFAULT_HOST:-192.168.150.20}"
+DEFAULT_PORT="$(_saved SERVER_PORT)"; DEFAULT_PORT="${DEFAULT_PORT:-8000}"
 HOST="${HOST:-}"
 PORT="${PORT:-}"
 MQTT_PORT="${MQTT_PORT:-1883}"
@@ -253,6 +257,11 @@ if [[ $edit_env == 1 ]]; then
     cp -p "$ENV_FILE" "$ENV_FILE.bak"
     echo "  (press Enter to keep the value in brackets)"
 
+    if [[ $ENV_ONLY == 1 ]]; then
+        ask HOST    "Web page IP (0.0.0.0 = all)"    "$DEFAULT_HOST"  valid_ip
+        ask PORT    "Web page port"                  "$DEFAULT_PORT"  valid_port
+    fi
+
     # Broker runs on this machine; 0.0.0.0 isn't connectable, so use loopback.
     def_broker=$(env_get MQTT_BROKER_HOST)
     [[ -n $def_broker ]] || def_broker=$([[ $HOST == 0.0.0.0 ]] && echo 127.0.0.1 || echo "$HOST")
@@ -269,6 +278,9 @@ if [[ $edit_env == 1 ]]; then
     ask expire      "Login session length (minutes)" "$def_expire"    valid_num
     ask db_url      "Database URL"                   "$def_db"
 
+    if [[ $broker_host != 127.0.0.1 ]] && ! ip -4 -o addr show | grep -qw "inet $broker_host"; then
+        echo "  Warning: $broker_host is not an IP of this machine; the back-end won't reach the broker." >&2
+    fi
     for p in "$MQTT_PORT" "$CAPTURE_SOCKET_PORT"; do
         [[ $p != "$PORT" ]] || die "port $p clashes with the web page port"
     done
@@ -280,6 +292,8 @@ if [[ $edit_env == 1 ]]; then
     env_set CAPTURE_SOCKET_PORT "$CAPTURE_SOCKET_PORT"
     env_set AUTH_USERNAME       "$auth_user"
     env_set JWT_EXPIRE_MINUTES  "$expire"
+    env_set SERVER_HOST         "$HOST"
+    env_set SERVER_PORT         "$PORT"
 
     # Single quotes stop python-dotenv expanding the "$2b$..." in the hash.
     if [[ -z $(env_get AUTH_PASSWORD_HASH) ]] || yes_no "Change the web login password?"; then
@@ -300,6 +314,12 @@ if [[ $edit_env == 1 ]]; then
 else
     # Keep Mosquitto's listener in step with what the back-end connects to.
     MQTT_PORT=$(env_get MQTT_BROKER_PORT); MQTT_PORT=${MQTT_PORT:-1883}
+    # Save the IP/port chosen above so a later restart.sh uses them too.
+    if [[ $(env_get SERVER_HOST) != "$HOST" || $(env_get SERVER_PORT) != "$PORT" ]]; then
+        env_set SERVER_HOST "$HOST"
+        env_set SERVER_PORT "$PORT"
+        echo "Saved web page address $HOST:$PORT to .env"
+    fi
 fi
 
 if [[ $ENV_ONLY == 1 ]]; then
@@ -329,6 +349,50 @@ sudo systemctl enable mosquitto >/dev/null
 sudo systemctl restart mosquitto
 systemctl is-active --quiet mosquitto || die "mosquitto failed to start: sudo journalctl -u mosquitto -n 30"
 echo "Mosquitto running on port $MQTT_PORT"
+
+# --- 4b. Firewall ------------------------------------------------------------
+# The Pis connect in on MQTT and the capture socket; the web page port is for
+# browsers on other machines. Opened only when a firewall is actually on.
+FW_PORTS=("$MQTT_PORT" "$CAPTURE_SOCKET_PORT" "$PORT")
+step "Firewall: allowing TCP ports ${FW_PORTS[*]}"
+
+# Optionally restrict to one subnet (the Pi network) instead of anywhere.
+fw_from=""
+if [[ "${FW_SOURCE:-}" == any ]]; then
+    fw_from=""
+elif [[ -n "${FW_SOURCE:-}" ]]; then
+    fw_from=$FW_SOURCE
+elif [[ -t 0 && $HOST != 0.0.0.0 ]]; then
+    subnet=$(ip -4 -o addr show | awk -v ip="$HOST" '{split($4,a,"/")} a[1]==ip {print $4; exit}')
+    if [[ -n $subnet ]]; then
+        net=$("$VENV_DIR/bin/python" -c "import ipaddress,sys; print(ipaddress.ip_interface(sys.argv[1]).network)" "$subnet")
+        yes_no "Allow only from $net (the Pi network)? No = from anywhere" && fw_from=$net
+    fi
+fi
+
+if command -v ufw >/dev/null && sudo ufw status 2>/dev/null | grep -q '^Status: active'; then
+    for p in "${FW_PORTS[@]}"; do
+        if [[ -n $fw_from ]]; then
+            sudo ufw allow from "$fw_from" to any port "$p" proto tcp comment pi-fleet >/dev/null
+        else
+            sudo ufw allow "$p/tcp" comment pi-fleet >/dev/null
+        fi
+    done
+    echo "ufw: allowed ${FW_PORTS[*]}/tcp from ${fw_from:-anywhere}"
+elif command -v firewall-cmd >/dev/null && sudo firewall-cmd --state >/dev/null 2>&1; then
+    for p in "${FW_PORTS[@]}"; do
+        if [[ -n $fw_from ]]; then
+            sudo firewall-cmd --permanent --add-rich-rule="rule family=ipv4 source address=$fw_from port port=$p protocol=tcp accept" >/dev/null
+        else
+            sudo firewall-cmd --permanent --add-port="$p/tcp" >/dev/null
+        fi
+    done
+    sudo firewall-cmd --reload >/dev/null
+    echo "firewalld: allowed ${FW_PORTS[*]}/tcp from ${fw_from:-anywhere}"
+else
+    echo "No active ufw/firewalld found; nothing to open."
+    echo "(If you use plain iptables: sudo iptables -I INPUT -p tcp -m multiport --dports $(IFS=,; echo "${FW_PORTS[*]}") -j ACCEPT)"
+fi
 
 # --- 5. Database -------------------------------------------------------------
 step "Creating database tables"
