@@ -13,10 +13,13 @@
 #
 # The Pis themselves are set up separately with pi_agent/install.sh.
 #
-# Usage:  ./setup.sh
-#   HOST=192.168.150.20 PORT=8000 ./setup.sh     # override bind address/port
-#   SKIP_APT=1 ./setup.sh                         # skip system packages
-#   NO_START=1 ./setup.sh                         # set up but don't start
+# Usage:  ./setup.sh [-H|--host IP] [-p|--port PORT]
+#   ./setup.sh                          # asks for host IP and port (lists this machine's IPs)
+#   ./setup.sh -H 192.168.150.20 -p 8000
+#   ./setup.sh --host 0.0.0.0           # listen on all interfaces
+#   HOST=... PORT=... ./setup.sh        # env vars work too (flags win)
+#   SKIP_APT=1 ./setup.sh               # skip system packages
+#   NO_START=1 ./setup.sh               # set up but don't start
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,13 +29,127 @@ ENV_FILE="$BACKEND_DIR/.env"
 MOSQUITTO_SRC="$ROOT_DIR/mosquitto.conf"
 MOSQUITTO_DST="/etc/mosquitto/conf.d/pi-fleet.conf"
 
-HOST="${HOST:-192.168.150.20}"
-PORT="${PORT:-8000}"
+DEFAULT_HOST="192.168.150.20"
+DEFAULT_PORT="8000"
+HOST="${HOST:-}"
+PORT="${PORT:-}"
 MQTT_PORT="${MQTT_PORT:-1883}"
 CAPTURE_SOCKET_PORT="${CAPTURE_SOCKET_PORT:-9200}"
 
 step() { echo; echo "==> $*"; }
 die()  { echo "Error: $*" >&2; exit 1; }
+
+usage() {
+    sed -n '/^# Usage:/,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'
+}
+
+valid_ip() {
+    local ip=$1 o
+    [[ $ip =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]] || return 1
+    for o in "${BASH_REMATCH[@]:1}"; do (( 10#$o <= 255 )) || return 1; done
+}
+
+valid_port() {
+    [[ $1 =~ ^[0-9]+$ ]] && (( 10#$1 >= 1 && 10#$1 <= 65535 ))
+}
+
+# --- Command-line options ----------------------------------------------------
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -H|--host) [[ $# -ge 2 ]] || die "$1 needs a value"; HOST=$2; shift 2 ;;
+        --host=*)  HOST=${1#*=}; shift ;;
+        -p|--port) [[ $# -ge 2 ]] || die "$1 needs a value"; PORT=$2; shift 2 ;;
+        --port=*)  PORT=${1#*=}; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) usage >&2; die "unknown option: $1" ;;
+    esac
+done
+
+# --- Ask for host/port if not given (only when run from a terminal) ----------
+if [[ -z $HOST ]]; then
+    if [[ -t 0 ]]; then
+        mapfile -t ips < <(ip -4 -o addr show scope global | awk '{split($4,a,"/"); print a[1]}')
+        labels=()
+        for ip in "${ips[@]}"; do
+            iface=$(ip -4 -o addr show | awk -v ip="$ip" '{split($4,a,"/")} a[1]==ip {print $2; exit}')
+            labels+=("$ip  ($iface)")
+        done
+        ips+=("0.0.0.0" "");  labels+=("0.0.0.0  (all interfaces)" "Type another IP...")
+
+        # Start the cursor on the default IP if this machine has it.
+        sel=0
+        for i in "${!ips[@]}"; do [[ ${ips[$i]} == "$DEFAULT_HOST" ]] && sel=$i; done
+
+        echo "Which IP should the Pi Fleet page listen on?  (Up/Down, Enter)"
+        n=${#labels[@]}
+        tput civis 2>/dev/null || true            # hide cursor while in the menu
+        trap 'tput cnorm 2>/dev/null || true' EXIT
+        while true; do
+            for i in "${!labels[@]}"; do
+                if (( i == sel )); then
+                    printf '\e[2K  \e[7m> %s\e[0m\n' "${labels[$i]}"
+                else
+                    printf '\e[2K    %s\n' "${labels[$i]}"
+                fi
+            done
+            IFS= read -rsn1 key
+            if [[ $key == $'\e' ]]; then
+                read -rsn2 -t 0.1 key || true
+                case $key in
+                    '[A') (( sel = (sel - 1 + n) % n )) ;;   # Up
+                    '[B') (( sel = (sel + 1) % n )) ;;       # Down
+                esac
+            elif [[ -z $key ]]; then                         # Enter
+                break
+            fi
+            printf '\e[%dA' "$n"                              # redraw in place
+        done
+        tput cnorm 2>/dev/null || true
+
+        HOST=${ips[$sel]}
+        while ! valid_ip "$HOST"; do
+            [[ -n $HOST ]] && echo "'$HOST' is not a valid IPv4 address." >&2
+            read -rp "Enter IP: " HOST
+        done
+    else
+        HOST=$DEFAULT_HOST
+    fi
+fi
+
+if [[ -z $PORT ]]; then
+    if [[ -t 0 ]]; then
+        while true; do
+            read -rp "Port for the web page [$DEFAULT_PORT]: " PORT
+            PORT=${PORT:-$DEFAULT_PORT}
+            valid_port "$PORT" && break
+            echo "'$PORT' is not a valid port (1-65535)." >&2
+        done
+    else
+        PORT=$DEFAULT_PORT
+    fi
+fi
+
+valid_ip "$HOST"   || die "invalid host IP: $HOST"
+valid_port "$PORT" || die "invalid port: $PORT"
+for p in "$MQTT_PORT" "$CAPTURE_SOCKET_PORT"; do
+    [[ $PORT != "$p" ]] || die "port $PORT is already used by MQTT/capture socket"
+done
+echo "Using http://$HOST:$PORT"
+
+# restart.sh kills whatever listens on PORT, so warn if it's something else.
+if [[ "${NO_START:-0}" != "1" ]] && in_use=$(lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null) && [[ -n $in_use ]]; then
+    procs=$(ps -o comm= -p "${in_use//$'\n'/,}" | sort -u | tr '\n' ' ')
+    if [[ $procs != *uvicorn* && $procs != *python* ]]; then
+        echo "Warning: port $PORT is in use by: $procs" >&2
+        echo "         Starting Pi Fleet will KILL that process." >&2
+        if [[ -t 0 ]]; then
+            read -rp "Continue anyway? [y/N] " ok
+            [[ $ok == [yY]* ]] || die "aborted; pick another port with -p"
+        else
+            die "port $PORT is busy; pick another with -p"
+        fi
+    fi
+fi
 
 [[ $EUID -ne 0 ]] || die "run as your normal user, not root (sudo is used where needed)"
 [[ -f "$BACKEND_DIR/requirements.txt" ]] || die "$BACKEND_DIR/requirements.txt not found"
