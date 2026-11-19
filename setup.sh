@@ -8,7 +8,8 @@
 #   3. Creates or edits FastAPI/back-end/.env interactively (broker IP/port,
 #      capture port, login, session length); Enter keeps each current value,
 #      and the old file is saved as .env.bak
-#   4. Configures Mosquitto (listener on the MQTT port from .env), enables it on boot
+#   4. Configures Mosquitto (listener on the MQTT port from .env), enables it on boot,
+#      and opens the MQTT, capture and web ports if ufw/firewalld is active
 #   5. Creates the SQLite database tables
 #   6. Starts the back-end with FastAPI/back-end/restart.sh
 #
@@ -22,6 +23,7 @@
 #   SKIP_APT=1 ./setup.sh               # skip system packages
 #   NO_START=1 ./setup.sh               # set up but don't start
 #   ./setup.sh --env-only               # only edit .env, nothing else
+#   FW_SOURCE=192.168.150.0/24 ./setup.sh   # firewall: allow only this subnet (FW_SOURCE=any: anywhere)
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -347,6 +349,50 @@ sudo systemctl enable mosquitto >/dev/null
 sudo systemctl restart mosquitto
 systemctl is-active --quiet mosquitto || die "mosquitto failed to start: sudo journalctl -u mosquitto -n 30"
 echo "Mosquitto running on port $MQTT_PORT"
+
+# --- 4b. Firewall ------------------------------------------------------------
+# The Pis connect in on MQTT and the capture socket; the web page port is for
+# browsers on other machines. Opened only when a firewall is actually on.
+FW_PORTS=("$MQTT_PORT" "$CAPTURE_SOCKET_PORT" "$PORT")
+step "Firewall: allowing TCP ports ${FW_PORTS[*]}"
+
+# Optionally restrict to one subnet (the Pi network) instead of anywhere.
+fw_from=""
+if [[ "${FW_SOURCE:-}" == any ]]; then
+    fw_from=""
+elif [[ -n "${FW_SOURCE:-}" ]]; then
+    fw_from=$FW_SOURCE
+elif [[ -t 0 && $HOST != 0.0.0.0 ]]; then
+    subnet=$(ip -4 -o addr show | awk -v ip="$HOST" '{split($4,a,"/")} a[1]==ip {print $4; exit}')
+    if [[ -n $subnet ]]; then
+        net=$("$VENV_DIR/bin/python" -c "import ipaddress,sys; print(ipaddress.ip_interface(sys.argv[1]).network)" "$subnet")
+        yes_no "Allow only from $net (the Pi network)? No = from anywhere" && fw_from=$net
+    fi
+fi
+
+if command -v ufw >/dev/null && sudo ufw status 2>/dev/null | grep -q '^Status: active'; then
+    for p in "${FW_PORTS[@]}"; do
+        if [[ -n $fw_from ]]; then
+            sudo ufw allow from "$fw_from" to any port "$p" proto tcp comment pi-fleet >/dev/null
+        else
+            sudo ufw allow "$p/tcp" comment pi-fleet >/dev/null
+        fi
+    done
+    echo "ufw: allowed ${FW_PORTS[*]}/tcp from ${fw_from:-anywhere}"
+elif command -v firewall-cmd >/dev/null && sudo firewall-cmd --state >/dev/null 2>&1; then
+    for p in "${FW_PORTS[@]}"; do
+        if [[ -n $fw_from ]]; then
+            sudo firewall-cmd --permanent --add-rich-rule="rule family=ipv4 source address=$fw_from port port=$p protocol=tcp accept" >/dev/null
+        else
+            sudo firewall-cmd --permanent --add-port="$p/tcp" >/dev/null
+        fi
+    done
+    sudo firewall-cmd --reload >/dev/null
+    echo "firewalld: allowed ${FW_PORTS[*]}/tcp from ${fw_from:-anywhere}"
+else
+    echo "No active ufw/firewalld found; nothing to open."
+    echo "(If you use plain iptables: sudo iptables -I INPUT -p tcp -m multiport --dports $(IFS=,; echo "${FW_PORTS[*]}") -j ACCEPT)"
+fi
 
 # --- 5. Database -------------------------------------------------------------
 step "Creating database tables"
