@@ -1,8 +1,8 @@
 import json
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session, select
+from fastapi import APIRouter, Depends, HTTPException, Response
+from sqlmodel import Session, func, or_, select
 
 from database.database import get_session
 from database.models import Command, Pi
@@ -86,12 +86,36 @@ def broadcast_command(req: CommandRequest, session: Session = Depends(get_sessio
     return _dispatch("all", req, session)
 
 
+def _filtered_commands(query, pi_id: str | None, action: str | None,
+                       status: str | None, q: str | None):
+    if pi_id:
+        query = query.where(Command.pi_id == pi_id)
+    if action:
+        query = query.where(Command.action == action)
+    if status:
+        query = query.where(Command.status == status)
+    if q:
+        like = f"%{q}%"
+        query = query.where(or_(Command.pi_id.ilike(like), Command.action.ilike(like),
+                                Command.result_json.ilike(like)))
+    return query
+
+
 @router.get("/commands", response_model=list[CommandOut])
-def list_commands(limit: int = 50, session: Session = Depends(get_session)):
-    """Most recent commands across the fleet, newest first, so a page reload
-    can repopulate the command-result feed instead of starting empty."""
+def list_commands(response: Response, limit: int = 50, offset: int = 0,
+                  pi_id: str | None = None, action: str | None = None,
+                  status: str | None = None, q: str | None = None,
+                  session: Session = Depends(get_session)):
+    """Commands across the fleet, newest first, one page at a time
+    (limit/offset), optionally filtered; X-Total-Count is the number that
+    match the filters, so the History tab can page through all of them.
+    q searches the Pi id, action and result text."""
+    total = session.exec(_filtered_commands(
+        select(func.count()).select_from(Command), pi_id, action, status, q)).one()
+    response.headers["X-Total-Count"] = str(total)
     commands = session.exec(
-        select(Command).order_by(Command.created_at.desc()).limit(limit)
+        _filtered_commands(select(Command), pi_id, action, status, q)
+        .order_by(Command.created_at.desc()).offset(max(offset, 0)).limit(limit)
     ).all()
     return [
         CommandOut(
@@ -102,6 +126,38 @@ def list_commands(limit: int = 50, session: Session = Depends(get_session)):
         )
         for c in commands
     ]
+
+
+@router.delete("/commands")
+def delete_commands(pi_id: str | None = None, action: str | None = None,
+                    status: str | None = None, q: str | None = None,
+                    session: Session = Depends(get_session)):
+    """Delete every stored command matching the same filters as the list
+    (none = the whole history). Pending commands are kept: a running
+    testcase is still waiting on their result row."""
+    match = _filtered_commands(select(Command), pi_id, action, status, q)
+    commands = session.exec(match.where(Command.status != "pending")).all()
+    skipped = session.exec(_filtered_commands(
+        select(func.count()).select_from(Command), pi_id, action, status, q)
+        .where(Command.status == "pending")).one()
+    for command in commands:
+        session.delete(command)
+    session.commit()
+    return {"deleted": len(commands), "skipped_pending": skipped}
+
+
+@router.get("/commands/stats")
+def command_stats(session: Session = Depends(get_session)):
+    """Totals for the History tab's summary and filter options, over every
+    stored command (not just the page shown)."""
+    by_status = dict(session.exec(
+        select(Command.status, func.count()).group_by(Command.status)).all())
+    return {
+        "total": sum(by_status.values()),
+        "by_status": by_status,
+        "pis": sorted(session.exec(select(Command.pi_id).distinct()).all()),
+        "actions": sorted(session.exec(select(Command.action).distinct()).all()),
+    }
 
 
 @router.get("/commands/{command_id}", response_model=CommandOut)

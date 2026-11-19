@@ -78,6 +78,10 @@ function chevronIconSvg(direction) {
 const CLOSE_ICON_SVG = `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
 const PLAY_ICON_SVG = `<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><polygon points="6 4 20 12 6 20"/></svg>`;
 const STOP_ICON_SVG = `<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><rect x="6" y="6" width="12" height="12"/></svg>`;
+// Record and delete, as SVG rather than emoji (⏺ / 🗑) so they render the
+// same on every OS and follow the button's text color.
+const RECORD_ICON_SVG = `<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="7"/></svg>`;
+const TRASH_ICON_SVG = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>`;
 
 const EYE_ICON_SVG = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/>
@@ -255,7 +259,7 @@ async function awaitCommandResult(commandId, maxAttempts = 30) {
 }
 
 function setCaptureBtn(btn, recording) {
-  btn.innerHTML = recording ? '&#9209;' : '&#9210;';
+  btn.innerHTML = recording ? STOP_ICON_SVG : RECORD_ICON_SVG;
   btn.title = recording ? 'Stop Capture' : 'Start Capture';
   btn.classList.toggle('recording', recording);
 }
@@ -439,7 +443,7 @@ async function togglePcapCapture(piId, entry, btn) {
 
     entry.pcapState = { name, interface: iface };
     announceRecordingChange();
-    btn.innerHTML = '&#9209;';
+    btn.innerHTML = STOP_ICON_SVG;
     btn.title = 'Stop Capture';
     btn.classList.add('recording');
     return;
@@ -447,7 +451,7 @@ async function togglePcapCapture(piId, entry, btn) {
 
   const { interface: capturedIface } = entry.pcapState;
   entry.pcapState = null;
-  btn.innerHTML = '&#9210;';
+  btn.innerHTML = RECORD_ICON_SVG;
   btn.title = 'Start Capture';
   btn.classList.remove('recording');
   btn.disabled = true;
@@ -573,7 +577,7 @@ function renderInterfaceDefaultControl(container, piId, iface, current, onSaved,
     <button type="button" class="iface-default-save">Save</button>
     <button type="button" class="iface-default-clear">Clear</button>
     <div class="iface-default-error login-error" style="width:100%;"></div>
-    <div class="iface-default-success" style="width:100%; color:#6f6; font-size:0.8rem; min-height:1.2em; margin-top:0.5rem;"></div>
+    <div class="iface-default-success" style="width:100%; color:var(--success); font-size:0.8rem; min-height:1.2em; margin-top:0.5rem;"></div>
   `;
   const bandEl = wrap.querySelector('.iface-default-band');
   const channelEl = wrap.querySelector('.iface-default-channel');
@@ -842,8 +846,8 @@ function buildFleetSyslogBlock(piId, entry) {
     <div class="pi-log-heading">
       <span>${spec.label}</span>
       <span class="pi-log-actions">
-        <button class="pi-log-capture icon-btn" type="button" title="Start Capture">&#9210;</button>
-        <button class="pi-log-clear icon-btn" type="button" title="Clear">&#128465;</button>
+        <button class="pi-log-capture icon-btn" type="button" title="Start Capture">${RECORD_ICON_SVG}</button>
+        <button class="pi-log-clear icon-btn" type="button" title="Clear">${TRASH_ICON_SVG}</button>
         <button class="pi-log-collapse icon-btn" type="button" title="Expand">${chevronIconSvg('down')}</button>
       </span>
     </div>
@@ -1197,6 +1201,9 @@ function applyWifiIconStatus(cardState, status) {
 
 async function refreshFleetInterfaceStatusBuffer(piId, entry) {
   const statusList = await fetchInterfaceStatusBuffer(piId);
+  entry.ifaceStatus = statusList;
+  fleetRenderWifiCell(entry);
+  fleetRenderStats();
   if (!statusList.length) return;
   entry.ifaceDetailsCache = statusList.map(s => ({
     name: s.interface, mac_address: s.mac_address, state: s.state, type: s.type,
@@ -1304,8 +1311,8 @@ function buildFleetIfaceCard(piId, entry, iface) {
         <span>${spec.label}</span>
         <span class="pi-log-actions">
           ${isTcpdump ? `<button class="pi-log-stream icon-btn" type="button" title="Start streaming">${PLAY_ICON_SVG}</button>` : ''}
-          <button class="pi-log-capture icon-btn" type="button" title="Start Capture">&#9210;</button>
-          <button class="pi-log-clear icon-btn" type="button" title="Clear">&#128465;</button>
+          <button class="pi-log-capture icon-btn" type="button" title="Start Capture">${RECORD_ICON_SVG}</button>
+          <button class="pi-log-clear icon-btn" type="button" title="Clear">${TRASH_ICON_SVG}</button>
           <button class="pi-log-collapse icon-btn" type="button" title="Expand">${chevronIconSvg('down')}</button>
         </span>
       </div>
@@ -1423,11 +1430,12 @@ function createPiRow(piId) {
   summaryRow.className = 'pi-row';
   summaryRow.dataset.piId = piId;
   summaryRow.innerHTML = `
-    <td><input type="checkbox" class="pi-select-checkbox" title="Select for multicast"></td>
+    <td><input type="checkbox" class="pi-select-checkbox" title="Select for multicast" aria-label="Select ${piId} for multicast"></td>
     <td><a href="#" class="c-id-link pi-id-link"></a></td>
     <td class="c-ip"></td>
     <td class="c-role"></td>
     <td class="c-status"></td>
+    <td class="c-wifi"><span class="hint">–</span></td>
     <td class="c-seen"></td>
     <td><span class="pd-iface-toggle main-toggle">${chevronIconSvg('right')}</span></td>
   `;
@@ -1460,12 +1468,13 @@ function createPiRow(piId) {
     if (selectCheckbox.checked) checkedPiIds.add(piId);
     else checkedPiIds.delete(piId);
     renderTargetSelect();
+    fleetRenderSelectInfo();
   });
 
   const ifacesRow = document.createElement('tr');
   ifacesRow.className = 'pi-ifaces-row hidden';
   const ifacesCell = document.createElement('td');
-  ifacesCell.colSpan = 7;
+  ifacesCell.colSpan = 8;
   const ifacesListEl = document.createElement('div');
   ifacesListEl.className = 'fleet-iface-list';
   const powerBar = document.createElement('div');
@@ -1521,7 +1530,9 @@ function renderOnePiRow(p, seen) {
   entry.summaryRow.querySelector('.c-ip').textContent = p.ip_address || '';
   entry.summaryRow.querySelector('.c-role').textContent = p.role || '';
   entry.summaryRow.querySelector('.c-status').innerHTML = statusBadge(p.status);
-  entry.summaryRow.querySelector('.c-seen').textContent = p.last_seen ? formatVnDateTime(p.last_seen) : '';
+  const seenEl = entry.summaryRow.querySelector('.c-seen');
+  seenEl.textContent = p.last_seen ? fleetAgo(p.last_seen) : '';
+  seenEl.title = p.last_seen ? formatVnDateTime(p.last_seen) : '';
   entry.summaryRow.querySelector('.pi-select-checkbox').checked = checkedPiIds.has(p.pi_id);
 
   const interfaces = (p.metadata && Array.isArray(p.metadata.interfaces)) ? p.metadata.interfaces : [];
@@ -1560,6 +1571,10 @@ function finishRenderPis(seen) {
 
   [...checkedPiIds].forEach(id => { if (!seen.has(id)) checkedPiIds.delete(id); });
   renderTargetSelect();
+  fleetRenderRoles();
+  fleetApplyFilters();
+  fleetRenderStats();
+  fleetRenderSelectInfo();
 
   if (typeof refreshInterfaceOptions === 'function') refreshInterfaceOptions();
   if (typeof refreshDetailView === 'function') refreshDetailView();
@@ -1582,6 +1597,160 @@ async function refreshPis() {
   }
   syncRecordingButtons();
 }
+
+// --- Fleet: summary, filters, selection ------------------------------------
+// The stats tiles above the list, the list's search / status / role filters
+// (rows are hidden, not removed - their open streams and expanded cards are
+// kept), "select every Pi shown" for multicast, and the Wi-Fi column built
+// from each Pi's buffered interface status (refreshFleetInterfaceStatusBuffer).
+
+const fleetFilter = { q: '', status: '', role: '' };
+
+// "5s ago" / "3m ago" / "2h ago" / "4d ago" - the exact time is the title.
+function fleetAgo(value) {
+  const d = parseApiDate(value);
+  const s = Math.max(0, Math.round((Date.now() - d.getTime()) / 1000));
+  if (Number.isNaN(s)) return '';
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+function fleetWifiRadios(entry) {
+  return (entry.ifaceStatus || []).filter(st => st.connected != null);
+}
+
+function fleetRenderWifiCell(entry) {
+  const cell = entry.summaryRow.querySelector('.c-wifi');
+  const radios = fleetWifiRadios(entry).sort((a, b) => a.interface.localeCompare(b.interface));
+  if (!radios.length) {
+    cell.innerHTML = '<span class="hint">–</span>';
+    return;
+  }
+  const conn = radios.filter(r => r.connected).length;
+  const tip = radios.map(r => `${r.interface}: ${r.connected ? `connected${r.ssid ? ` to ${r.ssid}` : ''}` : 'not connected'}`).join('\n');
+  cell.innerHTML = `<span class="fleet-wifi" title="${tip.replace(/"/g, '&quot;')}">`
+    + radios.map(r => `<span class="fleet-wifi-dot${r.connected ? ' on' : ''}" aria-hidden="true"></span>`).join('')
+    + `<span class="fleet-wifi-count">${conn}/${radios.length}</span></span>`;
+}
+
+function fleetRenderStats() {
+  const online = pis.filter(p => p.status === 'online').length;
+  document.getElementById('fleetStatOnline').innerHTML = `${online}<small>/${pis.length}</small>`;
+  document.getElementById('fleetStatOffline').textContent = pis.length - online;
+  let radios = 0;
+  let conn = 0;
+  piRows.forEach(entry => {
+    const r = fleetWifiRadios(entry);
+    radios += r.length;
+    conn += r.filter(x => x.connected).length;
+  });
+  document.getElementById('fleetStatWifi').innerHTML = radios ? `${conn}<small>/${radios}</small>` : '–';
+  document.getElementById('fleetStatRoles').textContent = new Set(pis.map(p => p.role).filter(Boolean)).size || '–';
+  document.querySelector('#fleetStats .fleet-stat-off').classList.toggle('has-off', pis.length - online > 0);
+}
+
+function fleetRenderRoles() {
+  const el = document.getElementById('fleetRoleFilter');
+  const roles = [...new Set(pis.map(p => p.role).filter(Boolean))].sort();
+  const key = roles.join('|');
+  if (el.dataset.key === key) return;
+  el.dataset.key = key;
+  el.innerHTML = '<option value="">All roles</option>' + roles.map(r => `<option value="${r}">${r}</option>`).join('');
+  el.value = roles.includes(fleetFilter.role) ? fleetFilter.role : '';
+  fleetFilter.role = el.value;
+}
+
+function fleetPiMatches(p) {
+  if (fleetFilter.status && p.status !== fleetFilter.status) return false;
+  if (fleetFilter.role && p.role !== fleetFilter.role) return false;
+  const q = fleetFilter.q.trim().toLowerCase();
+  if (q && ![p.pi_id, p.ip_address, p.role].some(v => String(v || '').toLowerCase().includes(q))) return false;
+  return true;
+}
+
+function fleetApplyFilters() {
+  let shown = 0;
+  pis.forEach(p => {
+    const entry = piRows.get(p.pi_id);
+    if (!entry) return;
+    const match = fleetPiMatches(p);
+    entry.summaryRow.classList.toggle('fleet-filtered', !match);
+    entry.ifacesRow.classList.toggle('fleet-filtered', !match);
+    if (match) shown += 1;
+  });
+  const empty = document.getElementById('fleetEmptyRow');
+  empty.classList.toggle('hidden', shown > 0);
+  document.getElementById('fleetEmptyText').textContent = pis.length ? 'No Pis match the filters.' : 'No Pis registered yet.';
+  fleetSyncSelectAll();
+}
+
+function fleetShownPiIds() {
+  return pis.filter(fleetPiMatches).map(p => p.pi_id);
+}
+
+function fleetSyncSelectAll() {
+  const all = document.getElementById('fleetSelectAll');
+  const shown = fleetShownPiIds();
+  const n = shown.filter(id => checkedPiIds.has(id)).length;
+  all.checked = shown.length > 0 && n === shown.length;
+  all.indeterminate = n > 0 && n < shown.length;
+}
+
+function fleetRenderSelectInfo() {
+  const n = checkedPiIds.size;
+  document.getElementById('fleetSelectInfo').classList.toggle('hidden', n === 0);
+  document.getElementById('fleetSelectCount').textContent =
+    `${n} selected${n > 1 ? ' for multicast' : ''}`;
+  fleetSyncSelectAll();
+}
+
+function fleetSetChecked(ids, on) {
+  ids.forEach(id => {
+    if (on) checkedPiIds.add(id); else checkedPiIds.delete(id);
+    const entry = piRows.get(id);
+    if (entry) entry.summaryRow.querySelector('.pi-select-checkbox').checked = on;
+  });
+  renderTargetSelect();
+  fleetRenderSelectInfo();
+}
+
+document.getElementById('fleetSearch').addEventListener('input', (e) => {
+  fleetFilter.q = e.target.value;
+  fleetApplyFilters();
+});
+document.getElementById('fleetStatusFilter').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-status]');
+  if (!btn) return;
+  fleetFilter.status = btn.dataset.status;
+  document.querySelectorAll('#fleetStatusFilter [data-status]').forEach(b =>
+    b.setAttribute('aria-checked', String(b === btn)));
+  fleetApplyFilters();
+});
+document.getElementById('fleetStatusFilter').addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+  const btns = [...document.querySelectorAll('#fleetStatusFilter [data-status]')];
+  const i = btns.indexOf(document.activeElement);
+  if (i < 0) return;
+  e.preventDefault();
+  const next = btns[(i + (e.key === 'ArrowRight' ? 1 : btns.length - 1)) % btns.length];
+  next.focus();
+  next.click();
+});
+document.getElementById('fleetRoleFilter').addEventListener('change', (e) => {
+  fleetFilter.role = e.target.value;
+  fleetApplyFilters();
+});
+document.getElementById('fleetSelectAll').addEventListener('change', (e) => {
+  fleetSetChecked(fleetShownPiIds(), e.target.checked);
+});
+document.getElementById('fleetSelectClear').addEventListener('click', () => {
+  fleetSetChecked([...checkedPiIds], false);
+});
+document.getElementById('cmdResultsClear').addEventListener('click', () => {
+  document.getElementById('cmdResults').innerHTML = '<div class="hint fleet-results-empty">Command results appear here.</div>';
+});
 
 refreshPis();
 setInterval(refreshPis, 5000);

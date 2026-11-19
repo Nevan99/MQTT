@@ -123,7 +123,7 @@ function renderTcLoops() {
           <select class="field tc-loop-to">${tcStepOptionsHtml(l.to)}</select>
           <label>&times;</label>
           <input type="number" class="field tc-loop-count" min="1" value="${l.count}">
-          <button type="button" class="icon-btn tc-loop-remove" title="Remove loop">&#128465;</button>
+          <button type="button" class="icon-btn tc-loop-remove" title="Remove loop">${TRASH_ICON_SVG}</button>
         </div>
       `).join('')
     : '<div class="pi-log-empty">no loops - each step runs once per pass</div>';
@@ -183,6 +183,7 @@ function showTcListView() {
   stopTcRunPolling();
   tcHideAllViews();
   document.getElementById('tcListView').classList.remove('hidden');
+  pkgShow(pkgFromHash());
   // Entering the tab starts clean: a selection carried over from a previous
   // visit would arm the bulk toolbar against rows the operator can no longer
   // see, and page 3 of a stale result set is rarely where they meant to be.
@@ -293,9 +294,66 @@ async function loadTestcases() {
     renderTcTable();
     renderTcPager();
     tcRenderBulkBar();
+    document.getElementById('pkgCountTestcases').textContent = tcTotal;
+    pkgAddKnownTags(tcList.flatMap(t => t.tags || []));
   } catch {
     // backend unreachable; keep last known list
   }
+}
+
+// --- Packages sub-tabs: Testcases | Testsuites --------------------------------
+// Two full-width panes instead of the old side-by-side split, switched by the
+// hash (#packages/testcases, #packages/testsuites) so each has its own link
+// and Back works; plain #packages (the nav button) reopens the last one used.
+
+const PKG_KEY = 'pi_fleet_packages_tab';
+const PKG_TABS = ['testcases', 'testsuites'];
+
+function pkgFromHash() {
+  const m = location.hash.match(/^#packages\/(testcases|testsuites)$/);
+  if (m) return m[1];
+  let saved = null;
+  try { saved = localStorage.getItem(PKG_KEY); } catch { /* storage blocked */ }
+  return PKG_TABS.includes(saved) ? saved : 'testcases';
+}
+
+function pkgShow(which) {
+  try { localStorage.setItem(PKG_KEY, which); } catch { /* storage blocked */ }
+  PKG_TABS.forEach(name => {
+    const on = name === which;
+    const tab = document.querySelector(`.pkg-tab[data-pkg="${name}"]`);
+    tab.classList.toggle('active', on);
+    tab.setAttribute('aria-selected', String(on));
+    tab.tabIndex = on ? 0 : -1;
+    document.getElementById(name === 'testcases' ? 'pkgTestcases' : 'pkgTestsuites').classList.toggle('hidden', !on);
+  });
+}
+
+// Tags seen on either list, offered as suggestions in both tag filters.
+const pkgKnownTags = new Set();
+function pkgAddKnownTags(tags) {
+  const before = pkgKnownTags.size;
+  tags.forEach(t => { if (t) pkgKnownTags.add(t); });
+  if (pkgKnownTags.size === before) return;
+  document.getElementById('pkgTagList').innerHTML = [...pkgKnownTags].sort((a, b) => a.localeCompare(b))
+    .map(t => `<option value="${tcEsc(t)}"></option>`).join('');
+}
+
+// Tags as chips; clicking one filters that list by it.
+function pkgTagChips(tags, list) {
+  if (!tags || !tags.length) return '<span class="hint">–</span>';
+  return tags.map(t => `<button type="button" class="res-tag res-tag-sm pkg-tag" data-tag="${tcEsc(t)}" data-list="${list}" title="Show only ${tcEsc(t)}">${tcEsc(t)}</button>`).join('');
+}
+
+function pkgSetTagFilter(list, tag) {
+  const input = document.getElementById(list === 'tc' ? 'tcTagFilterInput' : 'tsTagFilterInput');
+  input.value = tag;
+  input.dispatchEvent(new Event('input'));
+}
+
+function pkgCloseMoreMenu() {
+  document.getElementById('tcBulkMoreMenu').classList.add('hidden');
+  document.getElementById('tcBulkMoreBtn').setAttribute('aria-expanded', 'false');
 }
 
 function renderTcTable() {
@@ -307,18 +365,18 @@ function renderTcTable() {
   }
   body.innerHTML = tcList.map(t => `
     <tr class="${tcSelected.has(t.id) ? 'tc-row-selected' : ''}" data-id="${t.id}">
-      <td class="tc-check-col"><input type="checkbox" class="tc-row-check" data-id="${t.id}" ${tcSelected.has(t.id) ? 'checked' : ''}></td>
-      <td class="tc-name-cell">${t.name}</td>
-      <td>${(t.tags || []).join(', ')}</td>
-      <td>${t.status}</td>
-      <td>${t.steps.length}</td>
-      <td>${t.author || ''}</td>
-      <td>${formatVnDateTime(t.updated_at)}</td>
+      <td class="tc-check-col"><input type="checkbox" class="tc-row-check" data-id="${t.id}" aria-label="Select ${tcEsc(t.name)}" ${tcSelected.has(t.id) ? 'checked' : ''}></td>
+      <td class="tc-name-cell">${tcEsc(t.name)}</td>
+      <td class="pkg-tags">${pkgTagChips(t.tags, 'tc')}</td>
+      <td><span class="kt-pill kt-tc-${t.status}">${t.status}</span></td>
+      <td class="res-num">${t.steps.length}</td>
+      <td class="kt-author">${t.author || ''}</td>
+      <td class="res-date">${ktDateTimeHtml(t.updated_at)}</td>
       <td class="capture-actions">
-        <button class="icon-btn tc-run-btn" data-id="${t.id}" title="Run">&#9654;</button>
-        <button class="icon-btn tc-edit-btn" data-id="${t.id}" title="Edit">&#9998;</button>
-        <button class="icon-btn tc-dup-btn" data-id="${t.id}" title="Duplicate">${DUPLICATE_ICON_SVG}</button>
-        <button class="icon-btn tc-delete-btn" data-id="${t.id}" title="Delete">&#128465;</button>
+        <button class="icon-btn tc-run-btn" data-id="${t.id}" title="Run" aria-label="Run ${tcEsc(t.name)}">${ROW_RUN_SVG}</button>
+        <button class="icon-btn tc-edit-btn" data-id="${t.id}" title="Edit" aria-label="Edit ${tcEsc(t.name)}">${ROW_EDIT_SVG}</button>
+        <button class="icon-btn tc-dup-btn" data-id="${t.id}" title="Duplicate" aria-label="Duplicate ${tcEsc(t.name)}">${DUPLICATE_ICON_SVG}</button>
+        <button class="icon-btn tc-delete-btn" data-id="${t.id}" title="Delete" aria-label="Delete ${tcEsc(t.name)}">${ROW_DELETE_SVG}</button>
       </td>
     </tr>
   `).join('');
@@ -336,6 +394,12 @@ function renderTcTable() {
   }));
   tcSyncSelectAllCheckbox();
 }
+
+// Row action icons (SVG, not emoji, so they render the same everywhere and
+// follow the text color); shared with testsuites-tab.js.
+const ROW_RUN_SVG = '<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>';
+const ROW_EDIT_SVG = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
+const ROW_DELETE_SVG = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>';
 
 // --- selection + bulk toolbar --------------------------------------------
 
@@ -1188,7 +1252,7 @@ function tcStepCardHtml(step, i) {
         ${step.loop_group ? `<span class="tc-step-loop-badge" title="Repeats with loop ${step.loop_group}">${step.loop_group} &times;${step.loop_count}</span>` : ''}
         <span class="tc-step-summary">${tcEsc(tcStepSummaryText(step))}</span>
         <span class="tc-step-controls">
-          <button type="button" class="icon-btn tc-step-remove" title="Remove step">&#128465;</button>
+          <button type="button" class="icon-btn tc-step-remove" title="Remove step">${TRASH_ICON_SVG}</button>
         </span>
       </div>
       <div class="tc-step-body${expanded ? '' : ' hidden'}">
@@ -1430,8 +1494,9 @@ async function runTestcaseById(id) {
   }
 }
 
-// Runs are watched in the Running tab now (testsuites-tab.js); this is
-// kept as the entry point every Run/View button already calls.
+// Runs are watched on their own result page in the Results tab
+// (results-tab.js); this is kept as the entry point every Run/View button
+// already calls.
 async function openRunView(runId) {
   openLiveTestcaseRun(runId);
 }
@@ -1465,7 +1530,7 @@ async function refreshTcRun() {
 }
 
 function tcStatusClass(status) {
-  if (status === 'passed') return 'complete';
+  if (status === 'passed' || status === 'completed') return 'complete';
   if (status === 'failed' || status === 'timeout') return 'failed';
   if (status === 'stopped' || status === 'skipped') return status;
   return 'pending';
@@ -1575,7 +1640,7 @@ function tcRunStepHtml(r, i) {
 // require rewriting every entry in the set. Keyed by run id so switching to
 // a different run's view starts fresh instead of carrying over an unrelated
 // run's toggles. A running testcase's view re-renders on every poll tick
-// (see refreshTcRun/refreshResDetail), so this has to live outside
+// (see refreshTcRun, and results-tab.js's loadResRun), so this has to live outside
 // tcRenderRunSteps to survive that - otherwise every 1.5s would silently
 // undo anything the user just clicked.
 let tcRunCollapseRunId = null;
@@ -1594,8 +1659,8 @@ function tcRunDefaultExpanded(run) {
 
 // container: where to render. run: a TestRunOut. forceCollapsed: when true,
 // every step/Pi entry defaults collapsed regardless of tcRunDefaultExpanded
-// (the Results tab's own default - see resSuiteTestcaseStepsHtml/
-// renderResTestcaseDetail - rather than auto-opening while still running).
+// (the Results tab's own default for a finished suite's testcase Log -
+// see results-tab.js's resFillLog - rather than auto-opening).
 // baseIndex: position of run.results[0] in the whole run, when rendering one
 // page of a bigger run (see tcRenderRunInto) - keeps data-step ids, and so
 // the per-step toggle state, unique across pages.
@@ -1739,7 +1804,7 @@ function tcBlockLabel(b, summary) {
 }
 
 function tcCountsText(counts) {
-  const order = [['passed', '✓'], ['failed', '✗'], ['timeout', '⏱'], ['stopped', '■'], ['running', '▶'], ['skipped', '–'], ['pending', '…']];
+  const order = [['completed', '●'], ['passed', '✓'], ['failed', '✗'], ['timeout', '⏱'], ['stopped', '■'], ['running', '▶'], ['skipped', '–'], ['pending', '…']];
   return order.filter(([k]) => counts[k]).map(([k, sym]) =>
     `<span class="tc-count tc-count-${k}" title="${k}">${sym}${counts[k]}</span>`).join(' ');
 }
@@ -2048,6 +2113,51 @@ document.getElementById('tcAddToSuiteModeNew').addEventListener('change', tcSync
 // it rather than leave it floating over unrelated content. Navigating to
 // the Pi detail page (which bypasses showTabView/this event entirely) is
 // handled separately, in showPiDetail (detail-page.js).
+// Packages sub-tabs, filters and the bulk bar's More menu.
+// Only the Packages switch's own tabs - the Pi page reuses .pkg-tab for its
+// look, and a click there must not navigate to #packages.
+document.querySelectorAll('.pkg-tab[data-pkg]').forEach(tab => {
+  tab.addEventListener('click', () => { location.hash = `#packages/${tab.dataset.pkg}`; });
+  tab.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+    e.preventDefault();
+    const other = PKG_TABS.find(name => name !== tab.dataset.pkg);
+    location.hash = `#packages/${other}`;
+    document.querySelector(`.pkg-tab[data-pkg="${other}"]`).focus();
+  });
+});
+document.getElementById('tcClearFilters').addEventListener('click', () => {
+  document.getElementById('tcSearchInput').value = '';
+  pkgSetTagFilter('tc', '');
+});
+document.getElementById('tsClearFilters').addEventListener('click', () => {
+  document.getElementById('tsSearchInput').value = '';
+  pkgSetTagFilter('ts', '');
+});
+document.getElementById('tcListView').addEventListener('click', (e) => {
+  const chip = e.target.closest('.pkg-tag');
+  if (chip) pkgSetTagFilter(chip.dataset.list, chip.dataset.tag);
+});
+document.getElementById('tcBulkMoreBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const menu = document.getElementById('tcBulkMoreMenu');
+  const opening = menu.classList.contains('hidden');
+  menu.classList.toggle('hidden', !opening);
+  e.currentTarget.setAttribute('aria-expanded', String(opening));
+  if (opening) menu.querySelector('button:not([disabled]):not(.hidden)')?.focus();
+});
+// Picking an item (its own handler runs first), clicking elsewhere or Escape closes it.
+document.getElementById('tcBulkMoreMenu').addEventListener('click', () => pkgCloseMoreMenu());
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.pkg-more')) pkgCloseMoreMenu();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !document.getElementById('tcBulkMoreMenu').classList.contains('hidden')) {
+    pkgCloseMoreMenu();
+    document.getElementById('tcBulkMoreBtn').focus();
+  }
+});
+
 document.addEventListener('tabshown', (e) => {
   if (e.detail.viewId === 'packages') showTcListView();
   else {

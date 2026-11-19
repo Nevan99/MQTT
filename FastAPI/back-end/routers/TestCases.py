@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlmodel import Session, select
 
 from database.database import get_session, get_session_direct
-from database.models import TestCase, TestRun, Command, Pi, InterfaceStatus, StepBulkEdit
+from database.models import TestCase, TestRun, Command, Pi, InterfaceStatus, StepBulkEdit, run_status
 from schemas.schemas import (
     TestCaseBulkEditStepsRequest,
     TestCaseRequest, TestCaseOut, TestRunOut, CommandRequest,
@@ -16,6 +16,7 @@ from schemas.schemas import (
 from service import step_bulk_edit
 from service.mqtt_service import mqtt_service
 from service import run_control
+from service import recordings, run_logs
 from service.auth import get_current_user
 from routers.Commands import _dispatch
 
@@ -46,7 +47,7 @@ def _run_to_out(r: TestRun) -> TestRunOut:
     return TestRunOut(
         id=r.id, testcase_id=r.testcase_id, testcase_name=r.testcase_name,
         stop_on_failure=r.stop_on_failure, repeat_count=r.repeat_count,
-        steps=json.loads(r.steps_json), status=r.status, results=json.loads(r.results_json),
+        steps=json.loads(r.steps_json), status=run_status(r.status), results=json.loads(r.results_json),
         suite_run_id=r.suite_run_id, started_at=r.started_at, completed_at=r.completed_at,
     )
 
@@ -125,7 +126,7 @@ def list_runs(limit: int = 50, include_suite_children: bool = False, light: bool
     if light:
         return [TestRunOut(
             id=r.id, testcase_id=r.testcase_id, testcase_name=r.testcase_name,
-            stop_on_failure=r.stop_on_failure, repeat_count=r.repeat_count, status=r.status,
+            stop_on_failure=r.stop_on_failure, repeat_count=r.repeat_count, status=run_status(r.status),
             suite_run_id=r.suite_run_id, started_at=r.started_at, completed_at=r.completed_at,
         ) for r in runs]
     return [_run_to_out(r) for r in runs]
@@ -299,11 +300,14 @@ def delete_run(run_id: int, session: Session = Depends(get_session)):
     run = session.get(TestRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
+    if run.locked:
+        raise HTTPException(status_code=409, detail="Run is locked - unlock it in Results first")
     # Also stops it dispatching further commands, rather than letting it run
     # on unseen until its next flush notices the row is gone.
     run_control.request_run_stop(run_id, run_control.STOP_NOW)
     session.delete(run)
     session.commit()
+    run_logs.delete(run_id)
     return {"deleted": run_id}
 
 
@@ -1141,6 +1145,126 @@ def _block_key(pass_no, loop_group, loop_pass):
     return (pass_no, loop_group, loop_pass)
 
 
+# --- per-run Pi syslog and packets ------------------------------------------
+# Each test in the Results tab has a CDRouter-style log page made of the
+# syslog its Pis produced while it ran, and of the packets seen on the radios
+# its steps used (service/run_logs.py). For that the run asks each Pi it
+# targets to stream its syslog (stream_logs), and each radio under test to
+# stream its packets (tcpdump), for the whole run - then stops the streams it
+# started once it's done, unless another run or recording still needs them.
+
+SYSLOG_START_TIMEOUT_SECONDS = 5
+TCPDUMP_START_TIMEOUT_SECONDS = 5
+
+
+def _run_syslog_pis(steps: list) -> list:
+    """Every Pi this run's steps can target. "all" means every Pi that's
+    online now (the same set a broadcast step would reach)."""
+    pis = set()
+    broadcast = False
+    for step in steps:
+        for t in _resolve_targets(step):
+            if t == "all":
+                broadcast = True
+            elif t:
+                pis.add(str(t))
+    if broadcast:
+        with get_session_direct() as session:
+            pis |= {p.pi_id for p in session.exec(select(Pi).where(Pi.status == "online")).all()}
+    return sorted(pis)
+
+
+def _run_tcpdump_pairs(steps: list, pis: list) -> list:
+    """The (Pi, interface) pairs to sniff: the radios this run's steps name,
+    on the Pis they name them for.
+
+    Only wireless interfaces, and only ones a step actually asks for - never
+    a Pi's whole interface list. Sniffing a Pi's wired link would capture the
+    agent's own link to the backend, including the very packets being
+    streamed over it, which feeds back on itself."""
+    pairs = set()
+    for step in steps:
+        params = step.get("params") or {}
+        value = params.get("interfaces", params.get("interface"))
+        if value is None:
+            continue
+        targets = [str(t) for t in _resolve_targets(step) if t]
+        for pi in (pis if "all" in targets else targets):
+            for iface in _resolve_iface_value(value, pi):
+                if str(iface).startswith("wl"):
+                    pairs.add((pi, str(iface)))
+    return sorted(pairs)
+
+
+def _start_run_capture(run_id: int, steps: list) -> dict:
+    """Starts capturing syslog and packets for this run and asks the Pis to
+    stream them. Returns the streams this run started, to stop at the end."""
+    pis = _run_syslog_pis(steps)
+    pairs = _run_tcpdump_pairs(steps, pis)
+    if not pis and not pairs:
+        return {"syslog": set(), "tcpdump": set()}
+    run_logs.start(run_id, pis, pairs)
+    started = {"syslog": set(), "tcpdump": set()}
+    try:
+        started["syslog"] = _request_syslog_streams(pis)
+        started["tcpdump"] = _request_tcpdump_streams(pairs)
+    except Exception:
+        # The log page just shows what did get captured; never fail the run
+        # over its own logging.
+        pass
+    return started
+
+
+def _request_syslog_streams(pis: list) -> set:
+    with get_session_direct() as session:
+        online = {p.pi_id for p in session.exec(select(Pi).where(Pi.pi_id.in_(pis))).all() if p.status == "online"}
+        sent = {pi: _dispatch(pi, CommandRequest(action="stream_logs", params={}), session).command_id
+                for pi in pis if pi in online}
+    started = set()
+    for pi, command_id in sent.items():
+        status, result = _await_command(command_id, SYSLOG_START_TIMEOUT_SECONDS)
+        if status == "complete" and isinstance(result, dict) and not result.get("already_running"):
+            started.add(pi)
+    return started
+
+
+def _request_tcpdump_streams(pairs: list) -> set:
+    """Asks each online Pi to stream packets off the given radio. Returns
+    the pairs whose stream this run started (not the ones already running -
+    someone else is watching those and will stop them)."""
+    if not pairs:
+        return set()
+    with get_session_direct() as session:
+        online = {p.pi_id for p in session.exec(
+            select(Pi).where(Pi.pi_id.in_([pi for pi, _ in pairs]))).all() if p.status == "online"}
+        sent = {(pi, iface): _dispatch(pi, CommandRequest(action="tcpdump", params={"interface": iface}),
+                                       session).command_id
+                for pi, iface in pairs if pi in online}
+    started = set()
+    for pair, command_id in sent.items():
+        status, result = _await_command(command_id, TCPDUMP_START_TIMEOUT_SECONDS)
+        if status == "complete" and isinstance(result, dict) and not result.get("already_running"):
+            started.add(pair)
+    return started
+
+
+def _stop_run_capture(run_id: int, started: dict):
+    released_pis, released_pairs = run_logs.stop(run_id)
+    recording = {r["pi_id"] for r in recordings.list_active() if r["category"] == "logs"}
+    to_stop = (started["syslog"] & released_pis) - recording
+    pairs_to_stop = started["tcpdump"] & released_pairs
+    if not to_stop and not pairs_to_stop:
+        return
+    try:
+        with get_session_direct() as session:
+            for pi in to_stop:
+                _dispatch(pi, CommandRequest(action="stop_logs", params={}), session)
+            for pi, iface in pairs_to_stop:
+                _dispatch(pi, CommandRequest(action="stop_tcpdump", params={"interface": iface}), session)
+    except Exception:
+        pass   # best effort - a stream left running only costs the Pi a journalctl/tcpdump
+
+
 def _run_testcase(run_id: int):
     with get_session_direct() as session:
         run = session.get(TestRun, run_id)
@@ -1151,7 +1275,6 @@ def _run_testcase(run_id: int):
         repeat_count = max(1, run.repeat_count)
         suite_run_id = run.suite_run_id
 
-    overall_passed = True
     stopped = False          # stop_on_failure tripped
     user_stopped = False     # POST /runs/{id}/stop
 
@@ -1160,6 +1283,9 @@ def _run_testcase(run_id: int):
     # which loop pass produced it.
     plan = _expand_step_plan(steps)
     results = _plan_skeletons(plan, repeat_count)
+    # Before the run registers, so a "stop now" can't cut the 5s waits short
+    # and leave the streams half-started.
+    run_streams = _start_run_capture(run_id, steps)
     live = run_control.register_run(run_id, results)
     run_control.set_current_run(run_id)
     # A suite "stop now" that arrived after the suite launched this run but
@@ -1218,7 +1344,9 @@ def _run_testcase(run_id: int):
                     # now rather than only "pending" right up until it
                     # completes. In memory only - see RESULTS_FLUSH_SECONDS.
                     with live.lock:
-                        results[pos].update({"status": "running"})
+                        # started_at now too, so the Results tab's test log
+                        # can show the Pis' syslog while the step is running.
+                        results[pos].update({"status": "running", "started_at": datetime.now(timezone.utc).isoformat()})
                         live.current = pos
                         live.bump()
 
@@ -1261,10 +1389,8 @@ def _run_testcase(run_id: int):
 
                     if step_result["status"] == "stopped":
                         user_stopped = True
-                    elif step_result["status"] == "failed":
-                        overall_passed = False
-                        if stop_on_failure:
-                            stopped = True
+                    elif step_result["status"] == "failed" and stop_on_failure:
+                        stopped = True
 
                     if not save_results():
                         # Deleted (see DELETE /testcases/runs/{run_id}) while
@@ -1292,15 +1418,16 @@ def _run_testcase(run_id: int):
             run = session.get(TestRun, run_id)
             if run is None:
                 return
-            # A user stop is reported as such even if some step failed before
-            # it - "stopped" says the run is incomplete, which matters more.
-            run.status = "stopped" if user_stopped else ("passed" if overall_passed else "failed")
+            # Only whether it finished - per-step pass/fail stays on each
+            # step result (see run_status in models.py).
+            run.status = "stopped" if user_stopped else "completed"
             run.completed_at = datetime.now(timezone.utc)
             session.add(run)
             session.commit()
     finally:
         run_control.set_current_run(None)
         run_control.unregister_run(run_id)
+        _stop_run_capture(run_id, run_streams)
 
 
 @router.post("/{testcase_id}/run", response_model=TestRunOut)

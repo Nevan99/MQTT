@@ -7,7 +7,7 @@
   const MAX_RIGHT = 800;
 
   function applyRightWidth(px) {
-    fleet.style.gridTemplateColumns = `1fr 6px ${px}px`;
+    fleet.style.gridTemplateColumns = `minmax(0, 1fr) 6px ${px}px`;
   }
 
   const saved = parseInt(localStorage.getItem('fleetRightWidth'), 10);
@@ -32,49 +32,6 @@
       document.removeEventListener('mouseup', onUp);
       const currentRight = fleet.style.gridTemplateColumns.split(' ')[2];
       if (currentRight) localStorage.setItem('fleetRightWidth', parseInt(currentRight, 10));
-    }
-
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-  });
-})();
-
-// --- Testcases tab: resizable split between the Testsuites and Testcases
-// panels (#tcListView - see .ts-list-panel/.tc-list-panel in styles.css) ---
-
-(function setupTcListGutter() {
-  const container = document.getElementById('tcListView');
-  const gutter = document.getElementById('tcListGutter');
-  if (!container || !gutter) return;
-  const MIN_LEFT = 220;
-  const MAX_LEFT = 640;
-
-  function applyLeftWidth(px) {
-    container.style.gridTemplateColumns = `${px}px 6px 1fr`;
-  }
-
-  const saved = parseInt(localStorage.getItem('tcListLeftWidth'), 10);
-  if (saved && saved >= MIN_LEFT && saved <= MAX_LEFT) applyLeftWidth(saved);
-
-  gutter.addEventListener('mousedown', (e) => {
-    e.preventDefault();
-    container.classList.add('dragging');
-    gutter.classList.add('active');
-
-    function onMove(moveEvent) {
-      const rect = container.getBoundingClientRect();
-      let leftWidth = moveEvent.clientX - rect.left;
-      leftWidth = Math.max(MIN_LEFT, Math.min(MAX_LEFT, leftWidth));
-      applyLeftWidth(leftWidth);
-    }
-
-    function onUp() {
-      container.classList.remove('dragging');
-      gutter.classList.remove('active');
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-      const currentLeft = container.style.gridTemplateColumns.split(' ')[0];
-      if (currentLeft) localStorage.setItem('tcListLeftWidth', parseInt(currentLeft, 10));
     }
 
     document.addEventListener('mousemove', onMove);
@@ -132,85 +89,90 @@ function setupNameColResize(tableId, handleId, storageKey) {
 setupNameColResize('tsTable', 'tsNameColResize', 'tsNameColWidth');
 setupNameColResize('tcTable', 'tcNameColResize', 'tcNameColWidth');
 
-// --- Pi detail page: resizable 3-column split (info / logs / actions) -----
+// --- Pi detail page: resizable / hideable command column ------------------
 
 (function setupPiDetailGutters() {
   const grid = document.getElementById('piDetailGrid');
-  const gutterLeft = document.getElementById('pdGutterLeft');
   const gutterRight = document.getElementById('pdGutterRight');
-  const infoPanel = document.getElementById('pdInfoPanel');
   const actionPanel = document.getElementById('pdActionPanel');
-  const infoCollapseBtn = document.getElementById('pdInfoCollapseBtn');
   const actionCollapseBtn = document.getElementById('pdActionCollapseBtn');
-  const MIN_LEFT = 200, MAX_LEFT = 480;
   const MIN_RIGHT = 260, MAX_RIGHT = 600;
   const COLLAPSED_WIDTH = 32;
 
-  let leftWidth = parseInt(localStorage.getItem('pdLeftWidth'), 10);
-  if (!(leftWidth >= MIN_LEFT && leftWidth <= MAX_LEFT)) leftWidth = 280;
   let rightWidth = parseInt(localStorage.getItem('pdRightWidth'), 10);
   if (!(rightWidth >= MIN_RIGHT && rightWidth <= MAX_RIGHT)) rightWidth = 380;
-  let leftCollapsed = false;
   let rightCollapsed = false;
 
   function apply() {
-    const left = leftCollapsed ? COLLAPSED_WIDTH : leftWidth;
     const right = rightCollapsed ? COLLAPSED_WIDTH : rightWidth;
-    grid.style.gridTemplateColumns = `${left}px 6px 1fr 6px ${right}px`;
+    grid.style.gridTemplateColumns = `1fr 6px ${right}px`;
   }
   apply();
 
-  // Collapsing either side panel to a thin strip (rather than a fixed
-  // fraction) hands essentially all the freed width to the Logs panel in
-  // the middle, since it's the only flexible ("1fr") column.
-  infoCollapseBtn.addEventListener('click', () => {
-    leftCollapsed = !leftCollapsed;
-    infoPanel.classList.toggle('pd-panel-collapsed', leftCollapsed);
-    infoCollapseBtn.innerHTML = chevronIconSvg(leftCollapsed ? 'right' : 'left');
-    infoCollapseBtn.title = leftCollapsed ? 'Expand' : 'Collapse';
-    apply();
-  });
+  // Hiding the command column hands its width to the main panel.
   actionCollapseBtn.addEventListener('click', () => {
     rightCollapsed = !rightCollapsed;
     actionPanel.classList.toggle('pd-panel-collapsed', rightCollapsed);
     actionCollapseBtn.innerHTML = chevronIconSvg(rightCollapsed ? 'left' : 'right');
-    actionCollapseBtn.title = rightCollapsed ? 'Expand' : 'Collapse';
+    actionCollapseBtn.title = rightCollapsed ? 'Show the command panel' : 'Hide';
+    actionCollapseBtn.setAttribute('aria-label', rightCollapsed ? 'Show the command panel' : 'Hide the command panel');
     apply();
   });
 
-  function startDrag(which) {
-    return (e) => {
-      if ((which === 'left' && leftCollapsed) || (which === 'right' && rightCollapsed)) return;
-      e.preventDefault();
-      grid.classList.add('dragging');
-      const gutterEl = which === 'left' ? gutterLeft : gutterRight;
-      gutterEl.classList.add('active');
+  gutterRight.addEventListener('mousedown', (e) => {
+    if (rightCollapsed) return;
+    e.preventDefault();
+    grid.classList.add('dragging');
+    gutterRight.classList.add('active');
 
-      function onMove(moveEvent) {
-        const rect = grid.getBoundingClientRect();
-        if (which === 'left') {
-          leftWidth = Math.max(MIN_LEFT, Math.min(MAX_LEFT, moveEvent.clientX - rect.left));
-        } else {
-          rightWidth = Math.max(MIN_RIGHT, Math.min(MAX_RIGHT, rect.right - moveEvent.clientX));
-        }
-        apply();
-      }
+    function onMove(moveEvent) {
+      const rect = grid.getBoundingClientRect();
+      rightWidth = Math.max(MIN_RIGHT, Math.min(MAX_RIGHT, rect.right - moveEvent.clientX));
+      apply();
+    }
 
-      function onUp() {
-        grid.classList.remove('dragging');
-        gutterEl.classList.remove('active');
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-        localStorage.setItem('pdLeftWidth', leftWidth);
-        localStorage.setItem('pdRightWidth', rightWidth);
-      }
+    function onUp() {
+      grid.classList.remove('dragging');
+      gutterRight.classList.remove('active');
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      localStorage.setItem('pdRightWidth', rightWidth);
+    }
 
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
-    };
-  }
-
-  gutterLeft.addEventListener('mousedown', startDrag('left'));
-  gutterRight.addEventListener('mousedown', startDrag('right'));
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
 })();
 
+// --- Pi detail page: resizable Interfaces column ---------------------------
+
+(function setupPiDetailIfaceGutter() {
+  const main = document.getElementById('pdMainPanel');
+  const gutter = document.getElementById('pdGutterIface');
+  if (!main || !gutter) return;
+  const MIN = 260, MAX = 720;
+  let width = parseInt(localStorage.getItem('pdIfaceWidth'), 10);
+  if (!(width >= MIN && width <= MAX)) width = 400;
+  const apply = () => main.style.setProperty('--pd-iface-w', `${width}px`);
+  apply();
+
+  gutter.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    main.classList.add('dragging');
+    gutter.classList.add('active');
+    function onMove(moveEvent) {
+      const rect = main.getBoundingClientRect();
+      width = Math.max(MIN, Math.min(MAX, moveEvent.clientX - rect.left));
+      apply();
+    }
+    function onUp() {
+      main.classList.remove('dragging');
+      gutter.classList.remove('active');
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      localStorage.setItem('pdIfaceWidth', width);
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+})();

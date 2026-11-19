@@ -2,16 +2,46 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pi Fleet Controller</title>
-<link rel="icon" type="image/png" href="assets/favicon-512-clean.png">
-<link rel="stylesheet" href="styles.css?v=7">
+<!-- Kaon power-mark favicon. The SVG one is redrawn in the active theme's
+     colors by js/settings.js; the PNGs are fallbacks for browsers without
+     SVG favicons. -->
+<link rel="alternate icon" type="image/png" sizes="64x64" href="assets/kaon-favicon-64.png">
+<link rel="apple-touch-icon" href="assets/kaon-favicon-180.png">
+<link id="faviconSvg" rel="icon" type="image/svg+xml" href="assets/kaon-favicon.svg">
+<link rel="stylesheet" href="themes.css?v=6">
+<link rel="stylesheet" href="styles.css?v=50">
+<!-- Applies the saved theme before first paint (no dark flash for a
+     light-theme user) - same keys/logic as js/settings.js's applyTheme. -->
+<script>
+(function () {
+  var d = document.documentElement, theme = 'dark', accent = 'kaon';
+  try { theme = localStorage.getItem('pi_fleet_theme') || theme; accent = localStorage.getItem('pi_fleet_accent') || accent; } catch (e) {}
+  var light = theme === 'light' || (theme === 'system' && window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches);
+  d.setAttribute('data-theme', theme);
+  d.setAttribute('data-mode', light ? 'light' : 'dark');
+  d.setAttribute('data-accent', accent);
+})();
+</script>
 </head>
 <body>
+<!-- Login, styled as the Kaon slide template's cover: wave line-art, power
+     watermark, corner arcs with brand dots, "CONNECTED +" and the copyright
+     line (see "Kaon Broadband decoration" in styles.css). -->
 <div id="loginOverlay">
+  <div class="kaon-cover" aria-hidden="true">
+    <span class="kc-waves"></span><span class="kc-power"></span>
+    <span class="kc-arc kc-arc-tr"></span><span class="kc-arc kc-arc-bl"></span>
+    <span class="kc-dot kc-dot-a"></span><span class="kc-dot kc-dot-b"></span>
+  </div>
+  <div class="login-brand-side">
+    <span class="kaon-logo login-logo" role="img" aria-label="Kaon Broadband"><span class="kaon-logo-text"></span><span class="kaon-logo-mark"></span></span>
+    <h1 class="login-title">Pi Fleet Controller</h1>
+    <p class="login-sub">Wi-Fi test automation for the Kaon Broadband lab</p>
+  </div>
   <div class="login-box">
-    <span class="login-brand-wordmark"><span class="brand-kaon">KAON</span> <span class="brand-broadband">BROADBAND</span></span>
-    <span class="login-brand-slogan">connected+</span>
-    <h2>Pi Fleet Controller</h2>
+    <h2>Sign in</h2>
     <form id="loginForm">
       <label>Username</label>
       <input id="loginUsername" class="field" type="text" autocomplete="username" required>
@@ -26,116 +56,165 @@
       </div>
     </form>
   </div>
+  <div class="kaon-connected" aria-hidden="true">CONNECTED <b>+</b></div>
+  <div class="kaon-copyright">Copyright &copy; <span class="login-year"></span> KAON Broadband Co., Ltd. All rights reserved | Confidential</div>
 </div>
 <div id="appRoot" class="auth-hidden">
 <header>
-  <img src="assets/kaon-icon-logo.png" alt="Kaon Broadband" class="header-logo-img">
+  <span class="kaon-logo header-logo" role="img" aria-label="Kaon Broadband"><span class="kaon-logo-text"></span><span class="kaon-logo-mark"></span></span>
   <h1>Pi Fleet Controller</h1>
   <nav>
     <button class="tab active" data-view="fleet">Fleet</button>
     <button class="tab" data-view="interfaces">Interfaces</button>
     <button class="tab" data-view="packages">Packages</button>
-    <button class="tab" data-view="running">Running</button>
     <button class="tab" data-view="results">Results</button>
     <button class="tab" data-view="captures">Captures</button>
     <button class="tab" data-view="history">History</button>
   </nav>
+  <button id="settingsBtn" type="button" class="icon-btn" title="Settings" aria-label="Settings" aria-haspopup="dialog"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg></button>
   <button id="logoutBtn" type="button">Log out</button>
 </header>
 
+<!-- The tab views are the page's main region (display: contents, so the
+     wrapper doesn't change the layout). -->
+<main id="mainContent">
 <section id="fleet" class="view active">
-  <div class="panel">
-    <table>
-      <thead>
-        <tr><th></th><th>Pi ID</th><th>IP</th><th>Role</th><th>Status</th><th>Last seen</th><th></th></tr>
-      </thead>
-      <tbody id="piTableBody"></tbody>
-    </table>
+  <!-- One grid for the whole tab (columns: list | divider | command), so
+       the summary tiles line up with the panels under them: three tiles
+       over the Pis list, Roles over Send command. The divider resizes both
+       rows together (layout.js setupFleetGutter). Tiles are filled by
+       fleet-table.js fleetRenderStats. -->
+  <div class="fleet-stats" id="fleetStats" aria-label="Fleet summary">
+    <div class="fleet-stat fleet-stat-on"><span class="fleet-stat-num" id="fleetStatOnline">–</span><span class="fleet-stat-label">Pis online</span></div>
+    <div class="fleet-stat fleet-stat-off"><span class="fleet-stat-num" id="fleetStatOffline">–</span><span class="fleet-stat-label">offline</span></div>
+    <div class="fleet-stat fleet-stat-wifi"><span class="fleet-stat-num" id="fleetStatWifi">–</span><span class="fleet-stat-label">Wi-Fi interfaces connected</span></div>
   </div>
+  <div class="fleet-stat fleet-stat-side"><span class="fleet-stat-num" id="fleetStatRoles">–</span><span class="fleet-stat-label">roles</span></div>
 
-  <div class="gutter" id="fleetGutter"></div>
-
-  <div class="panel">
-    <label>Target</label>
-    <select id="targetSelect" class="field">
-      <option value="all">all (broadcast)</option>
-    </select>
-    <div id="targetHint" class="hint" style="display: none;"></div>
-
-    <label>Action</label>
-    <select id="actionSelect" class="field">
-      <option value="ping">ping</option>
-      <option value="signal_stats">signal stats</option>
-      <option value="band_channel_info">band channel info</option>
-      <option value="link_info">link info</option>
-      <option value="throughput_test">throughput test</option>
-      <option value="set_channel">set channel</option>
-      <option value="syslog">syslog</option>
-      <option value="stream_logs">stream logs</option>
-      <option value="stop_logs">stop logs</option>
-      <option value="tcpdump">tcpdump</option>
-      <option value="stop_tcpdump">stop tcpdump</option>
-      <option value="start_pcap_capture">start pcap capture</option>
-      <option value="stop_pcap_capture">stop pcap capture</option>
-      <option value="connect_wifi">connect wifi</option>
-      <option value="disconnect_wifi">disconnect wifi</option>
-      <option value="list_interfaces">list interfaces</option>
-      <option value="nearby_hotspots">nearby hotspots</option>
-      <option value="connect_hotspot">connect hotspot (several interfaces)</option>
-      <option value="set_monitor_channel">set monitor channel</option>
-      <option value="set_interface_defaults">set band/channel defaults (all wifi/monitor interfaces)</option>
-    </select>
-
-    <div id="paramFields"></div>
-
-    <div class="row" style="margin-top: 0.75rem;">
-      <button id="sendCmdBtn">Send command</button>
+    <div class="panel kt-card fleet-list-panel">
+      <div class="pkg-head">
+        <h2>Pis</h2>
+        <div class="fleet-select-info hidden" id="fleetSelectInfo">
+          <span id="fleetSelectCount"></span>
+          <button type="button" class="res-link" id="fleetSelectClear">Clear</button>
+        </div>
+      </div>
+      <div class="pkg-filters" role="search">
+        <label class="pkg-search">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input type="text" id="fleetSearch" placeholder="Search Pi ID, IP or role" aria-label="Search Pis">
+        </label>
+        <div class="seg" role="radiogroup" aria-label="Status" id="fleetStatusFilter">
+          <button type="button" role="radio" data-status="" aria-checked="true">All</button>
+          <button type="button" role="radio" data-status="online" aria-checked="false">Online</button>
+          <button type="button" role="radio" data-status="offline" aria-checked="false">Offline</button>
+        </div>
+        <select id="fleetRoleFilter" class="field" aria-label="Role"><option value="">All roles</option></select>
+      </div>
+      <div class="fleet-table-wrap">
+        <table class="fleet-table kaon-table">
+          <thead>
+            <tr>
+              <th class="tc-check-col"><input type="checkbox" id="fleetSelectAll" title="Select every Pi shown, for multicast" aria-label="Select every Pi shown"></th>
+              <th>Pi ID</th><th>IP</th><th>Role</th><th>Status</th><th>Wi-Fi</th><th>Last seen</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="piTableBody"></tbody>
+          <tbody><tr id="fleetEmptyRow" class="hidden"><td colspan="8" class="pi-log-empty" id="fleetEmptyText"></td></tr></tbody>
+        </table>
+      </div>
     </div>
 
-    <div id="cmdResults"></div>
-  </div>
+    <div class="gutter" id="fleetGutter"></div>
+
+    <div class="panel kt-card fleet-cmd-panel">
+      <div class="pkg-head"><h2>Send command</h2></div>
+      <label for="targetSelect">Target</label>
+      <select id="targetSelect" class="field">
+        <option value="all">all (broadcast)</option>
+      </select>
+      <div id="targetHint" class="hint" style="display: none;"></div>
+
+      <label for="actionSelect">Action</label>
+      <select id="actionSelect" class="field">
+        <optgroup label="Diagnostics">
+          <option value="ping">ping</option>
+          <option value="signal_stats">signal stats</option>
+          <option value="band_channel_info">band channel info</option>
+          <option value="link_info">link info</option>
+          <option value="throughput_test">throughput test</option>
+          <option value="list_interfaces">list interfaces</option>
+        </optgroup>
+        <optgroup label="Wi-Fi">
+          <option value="connect_wifi">connect wifi</option>
+          <option value="disconnect_wifi">disconnect wifi</option>
+          <option value="nearby_hotspots">nearby hotspots</option>
+          <option value="connect_hotspot">connect hotspot (several interfaces)</option>
+          <option value="set_channel">set channel</option>
+        </optgroup>
+        <optgroup label="Logs &amp; capture">
+          <option value="syslog">syslog</option>
+          <option value="stream_logs">stream logs</option>
+          <option value="stop_logs">stop logs</option>
+          <option value="tcpdump">tcpdump</option>
+          <option value="stop_tcpdump">stop tcpdump</option>
+          <option value="start_pcap_capture">start pcap capture</option>
+          <option value="stop_pcap_capture">stop pcap capture</option>
+        </optgroup>
+        <optgroup label="Interface setup">
+          <option value="set_monitor_channel">set monitor channel</option>
+          <option value="set_interface_defaults">set band/channel defaults (all wifi/monitor interfaces)</option>
+        </optgroup>
+      </select>
+
+      <div id="paramFields"></div>
+
+      <div class="row" style="margin-top: 0.75rem;">
+        <button id="sendCmdBtn" class="pkg-primary">Send command</button>
+      </div>
+
+      <div class="fleet-results-head">
+        <h3>Results</h3>
+        <button type="button" class="res-link" id="cmdResultsClear">Clear</button>
+      </div>
+      <div id="cmdResults"><div class="hint fleet-results-empty">Command results appear here.</div></div>
+    </div>
 </section>
 
 <section id="interfaces" class="view">
-  <div class="panel captures-panel">
-    <table class="wifi-info-table">
-      <thead>
-        <tr id="interfacesSortRow" class="table-sort-row">
-          <th data-key="pi_id">Pi ID</th><th data-key="interface">Interface</th><th data-key="state">State</th>
-          <th data-key="type">Type</th><th data-key="mac_address">MAC address</th><th data-key="ip_address">IP address</th>
-          <th data-key="connected">Wi-Fi connected</th><th data-key="ssid">SSID</th><th data-key="bssid">BSSID</th>
-          <th data-key="frequency_mhz">Frequency</th><th data-key="band">Band</th><th data-key="signal_dbm">Signal</th>
-          <th data-key="rx_bitrate_mbps">RX bitrate</th><th data-key="tx_bitrate_mbps">TX bitrate</th><th data-key="gateway">Gateway</th>
-          <th data-key="key_mgmt">Key mgmt</th><th data-key="radio_type">Radio type</th>
-          <th data-key="mlo">MLO</th><th data-key="mld_address">MLD address</th>
-          <th data-key="ap_mld_address">AP MLD address</th><th data-key="mlo_links">Links (STA ↔ AP)</th>
-        </tr>
-        <tr id="interfacesFilterRow" class="table-filter-row">
-          <th><input type="text" class="table-filter-input" data-key="pi_id" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="interface" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="state" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="type" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="mac_address" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="ip_address" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="connected" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="ssid" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="bssid" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="frequency_mhz" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="band" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="signal_dbm" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="rx_bitrate_mbps" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="tx_bitrate_mbps" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="gateway" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="key_mgmt" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="radio_type" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="mlo" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="mld_address" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="ap_mld_address" placeholder="Filter…"></th>
-          <th><input type="text" class="table-filter-input" data-key="mlo_links" placeholder="Filter…"></th>
-        </tr>
-      </thead>
-      <tbody id="interfacesTableBody"></tbody>
-    </table>
+  <div class="panel captures-panel kt-card if-panel">
+    <div class="pkg-head">
+      <h2>Interfaces <span class="if-summary" id="ifSummary"></span></h2>
+    </div>
+    <!-- One toolbar for the whole table (see interfaces-tab.js): search across
+         every column, quick filters, the column chooser and the optional
+         per-column filter row. -->
+    <div class="pkg-filters if-toolbar" role="search">
+      <label class="pkg-search">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input type="text" id="ifSearch" placeholder="Search any column" aria-label="Search interfaces">
+      </label>
+      <select id="ifPiFilter" class="field" aria-label="Pi"></select>
+      <select id="ifTypeFilter" class="field" aria-label="Interface type"></select>
+      <select id="ifBandFilter" class="field" aria-label="Band"></select>
+      <label class="if-check"><input type="checkbox" id="ifConnectedOnly"> Connected only</label>
+      <button type="button" class="res-link pkg-clear" id="ifClearFilters">Clear</button>
+      <span class="pkg-gap"></span>
+      <button type="button" id="ifColumnFiltersBtn" aria-pressed="false" title="Show a filter box under each column">Column filters</button>
+      <div class="if-columns pkg-more">
+        <button type="button" id="ifColumnsBtn" aria-haspopup="true" aria-expanded="false" aria-controls="ifColumnsMenu">Columns &#9662;</button>
+        <div class="pkg-more-menu if-columns-menu hidden" id="ifColumnsMenu"></div>
+      </div>
+    </div>
+    <div class="if-table-wrap">
+      <table class="wifi-info-table if-table kaon-table">
+        <thead>
+          <tr id="interfacesSortRow" class="table-sort-row"></tr>
+          <tr id="interfacesFilterRow" class="table-filter-row hidden"></tr>
+        </thead>
+        <tbody id="interfacesTableBody"></tbody>
+      </table>
+    </div>
   </div>
 </section>
 
@@ -143,102 +222,339 @@
      Packages tab still has its own live run view for a run you just
      launched; this is where every past run is browsed from. -->
 <section id="results" class="view">
-  <div id="resListView" class="panel captures-panel">
-    <div class="row" style="margin-bottom: 0.5rem; align-items: center; gap: 0.5rem;">
-      <select id="resTypeFilter" class="field" style="flex: 0 0 170px;">
-        <option value="all">Testcases &amp; Testsuites</option>
-        <option value="testcase">Testcase runs only</option>
-        <option value="testsuite">Testsuite runs only</option>
-      </select>
-      <select id="resStatusFilter" class="field" style="flex: 0 0 140px;">
-        <option value="all">Any status</option>
-        <option value="running">Running</option>
-        <option value="passed">Passed</option>
-        <option value="failed">Failed</option>
-        <option value="stopped">Stopped</option>
-      </select>
-      <input type="text" id="resSearchInput" class="field" placeholder="Search name…" style="flex: 1 1 auto;">
-      <button type="button" id="resRefreshBtn" style="flex: 0 0 auto;">Refresh</button>
+  <!-- List view, laid out like CDRouter's Results page: a Show/Filters
+       sidebar on the left, the bulk toolbar + sortable table + pager on the
+       right. Everything is filtered/sorted/paged server-side (GET /results,
+       routers/Results.py) - see results-tab.js. -->
+  <div id="resListView" class="res-layout">
+    <aside class="panel res-sidebar" aria-label="Show and filter results">
+      <h2 class="res-side-title">Results</h2>
+
+      <section class="res-side-section">
+        <h3>Show</h3>
+        <!-- What the old Running tab listed: one click to the live runs. -->
+        <button type="button" class="res-link res-running-now hidden" id="resRunningNow"></button>
+        <select id="resOwner" class="field" aria-label="Owner">
+          <option value="">All</option>
+        </select>
+        <select id="resView" class="field" aria-label="Which results">
+          <option value="current">Current Results</option>
+          <option value="starred">Starred</option>
+          <option value="date">By Date</option>
+          <option value="archived">Archived</option>
+          <option value="locked">Locked Only</option>
+        </select>
+        <div id="resDateRange" class="res-date-range hidden">
+          <label>From <input type="date" id="resDateFrom" class="field"></label>
+          <label>To <input type="date" id="resDateTo" class="field"></label>
+        </div>
+      </section>
+
+      <section class="res-side-section">
+        <h3>Filters <button type="button" class="res-link" id="resClearFilters">Clear all</button></h3>
+        <select id="resDevice" class="field" aria-label="Device">
+          <option value="">All Devices</option>
+        </select>
+        <select id="resKind" class="field" aria-label="Type">
+          <option value="">Testcases &amp; Testsuites</option>
+          <option value="testcase">Testcase runs only</option>
+          <option value="testsuite">Testsuite runs only</option>
+        </select>
+        <select id="resStatus" class="field" aria-label="Status">
+          <option value="">Any status</option>
+          <option value="running">Running</option>
+          <option value="completed">Completed</option>
+          <option value="stopped">Stopped</option>
+        </select>
+        <input type="text" id="resPackage" class="field" placeholder="Filter by package name…" aria-label="Filter by package name">
+        <input type="text" id="resTestcase" class="field" placeholder="Filter by testcase…" aria-label="Filter by testcase">
+      </section>
+
+      <section class="res-side-section">
+        <h3>Popular Tags</h3>
+        <div class="res-side-links">
+          <button type="button" class="res-link" id="resShowAllTags">Show all tags</button> |
+          <button type="button" class="res-link" id="resClearTags">Clear selection</button>
+        </div>
+        <input type="text" id="resTagSearch" class="field" placeholder="Filter by tag name…" aria-label="Filter by tag name">
+        <div id="resTagChips" class="res-tag-chips"></div>
+      </section>
+
+      <section class="res-side-section">
+        <h3>Frequent Packages</h3>
+        <div id="resFrequentPackages" class="res-frequent"></div>
+      </section>
+    </aside>
+
+    <div class="panel res-main">
+      <!-- Bulk toolbar: acts on the checked rows. Always present so the table
+           doesn't shift when a row is ticked; buttons carry [disabled]. -->
+      <div class="tc-bulk-bar res-toolbar">
+        <span id="resBulkCount" class="tc-bulk-count">none selected</span>
+        <button type="button" id="resBulkRerunBtn" disabled>Re-run</button>
+        <button type="button" id="resBulkStarBtn" disabled>Star</button>
+        <button type="button" id="resBulkArchiveBtn" disabled>Archive</button>
+        <button type="button" id="resBulkLockBtn" disabled>Lock</button>
+        <button type="button" id="resBulkUnlockBtn" disabled>Unlock</button>
+        <button type="button" id="resBulkDeleteBtn" class="tc-bulk-danger" disabled>Delete&hellip;</button>
+        <span class="res-toolbar-gap"></span>
+        <button type="button" id="resExportBtn" title="Download every matching result as CSV">Export&hellip;</button>
+        <button type="button" id="resRefreshBtn">Refresh</button>
+      </div>
+      <div class="res-table-wrap">
+        <table class="res-table">
+          <thead>
+            <tr>
+              <th class="tc-check-col"><input type="checkbox" id="resSelectAll" title="Select all on this page" aria-label="Select all on this page"></th>
+              <th class="res-icon-col" title="Locked"><span class="res-th-icon" aria-label="Locked">&#128274;</span></th>
+              <th class="res-icon-col" title="Starred"><span class="res-th-icon" aria-label="Starred">&#9733;</span></th>
+              <th data-sort="date">Date</th>
+              <th data-sort="id">Name</th>
+              <th data-sort="package">Package</th>
+              <th data-sort="kind">Type</th>
+              <th>Device</th>
+              <th data-sort="status">Status</th>
+              <th class="res-num">Pass</th>
+              <th class="res-num">Fail</th>
+              <th data-sort="time" class="res-num">Time</th>
+              <th data-sort="owner">Owner</th>
+              <th>Tags</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="resTableBody"></tbody>
+        </table>
+      </div>
+      <div class="res-pager">
+        <span id="resPagerSummary"></span>
+        <span class="res-pager-links">
+          | <button type="button" class="res-link" id="resExportLink">export as csv</button>
+          | <button type="button" class="res-link" id="resSelectAllMatching">select all</button>
+          | <label class="res-goto">go to page <input type="number" id="resGotoPage" min="1" class="field"></label>
+        </span>
+        <span class="res-pager-gap"></span>
+        <select id="resPageSize" class="field" aria-label="Results per page">
+          <option value="25">25 / page</option>
+          <option value="50">50 / page</option>
+          <option value="100">100 / page</option>
+        </select>
+        <nav id="resPagerNav" class="res-pager-nav" aria-label="Results pages"></nav>
+      </div>
     </div>
-    <!-- Bulk toolbar: acts on the checkbox column below, same pattern as the
-         Testcases table's (see tc-bulk-bar). Always present so the table
-         doesn't shift when a row is ticked. -->
-    <div class="tc-bulk-bar">
-      <span id="resBulkCount" class="tc-bulk-count">none selected</span>
-      <button type="button" id="resBulkDeleteBtn" class="tc-bulk-danger" disabled>Delete&hellip;</button>
-    </div>
-    <table>
-      <thead>
-        <tr>
-          <th class="tc-check-col"><input type="checkbox" id="resSelectAll" title="Select all on this page"></th>
-          <th>Type</th><th>Name</th><th>Status</th><th>Started</th><th>Completed</th><th>Duration</th><th></th>
-        </tr>
-      </thead>
-      <tbody id="resTableBody"></tbody>
-    </table>
   </div>
 
-  <div id="resDetailView" class="panel captures-panel hidden">
-    <div class="row" style="align-items: center; margin-bottom: 0.75rem; gap: 0.5rem;">
-      <button type="button" id="resDetailBackBtn" style="flex: 0 0 auto;">&larr; Back</button>
-      <h2 id="resDetailTitle" style="margin: 0 0 0 0.25rem; font-size: 1rem; flex: 1 1 auto;"></h2>
-      <span id="resDetailStatus" class="cmd-status pending"></span>
-      <span id="resDetailStopHost" class="tc-stop-host"></span>
-      <button type="button" id="resDetailRerunBtn" style="flex: 0 0 auto;">Rerun</button>
-      <button type="button" id="resDetailDeleteBtn" class="tc-bulk-danger" style="flex: 0 0 auto;">Delete</button>
+  <!-- One run, laid out like CDRouter's result page (#results/<kind>/<id>):
+       a Filter Tests / Test Navigation sidebar, then a summary card
+       (status, progress, PASS/FAIL/TIME), the package/device card and a
+       paged table of the run's tests - a testsuite's testcases, or a
+       testcase's step runs. Live runs update in place, so this is also where
+       a running testcase/testsuite is watched. See results-tab.js. -->
+  <div id="resDetailView" class="res-layout hidden">
+    <aside class="panel res-sidebar" aria-label="Filter and navigate tests">
+      <div class="res-run-flags">
+        <button type="button" class="icon-btn res-run-flag" data-flag="starred" id="resRunStarBtn"></button>
+        <button type="button" class="icon-btn res-run-flag" data-flag="archived" id="resRunArchiveBtn"></button>
+        <button type="button" class="icon-btn res-run-flag" data-flag="locked" id="resRunLockBtn"></button>
+      </div>
+      <h2 class="res-run-id" id="resRunTitle"></h2>
+      <div class="hint res-run-kind" id="resRunKind"></div>
+
+      <section class="res-side-section">
+        <h3>Filter Tests</h3>
+        <label class="res-side-label" for="resTestStatus">Status</label>
+        <select id="resTestStatus" class="field">
+          <option value="all">All Tests</option>
+          <option value="run">Run</option>
+          <option value="completed">Completed</option>
+          <option value="passed">Passes</option>
+          <option value="failed">Failures</option>
+          <option value="running">Running</option>
+          <option value="pending">Pending</option>
+          <option value="skipped">Skipped</option>
+          <option value="stopped">Stopped</option>
+        </select>
+        <button type="button" class="res-link res-run-package" id="resRunPackageLink" title="Show every run of this in Results"></button>
+        <label class="res-side-label" for="resTestSearch">Search</label>
+        <input type="text" id="resTestSearch" class="field" placeholder="Enter test name">
+      </section>
+
+      <section class="res-side-section">
+        <h3>Test Navigation</h3>
+        <label class="res-side-label" for="resJumpTo">Jump to</label>
+        <input type="text" id="resJumpTo" class="field" placeholder="Enter test name" list="resJumpList" autocomplete="off">
+        <datalist id="resJumpList"></datalist>
+        <div class="res-fail-nav">
+          <button type="button" id="resPrevFailBtn">&larr; Prev Failure</button>
+          <button type="button" id="resNextFailBtn">Next Failure &rarr;</button>
+        </div>
+      </section>
+
+      <section class="res-side-section res-run-links">
+        <button type="button" class="res-link" id="resRunBackLink">&larr; All results</button>
+        <button type="button" class="res-link" id="resRunExportLink">Export as CSV</button>
+        <button type="button" class="res-link" id="resRunArchiveLink"></button>
+        <button type="button" class="res-link" id="resRunLockLink"></button>
+        <button type="button" class="res-link res-danger-link" id="resRunDeleteLink">Delete this Result&hellip;</button>
+      </section>
+    </aside>
+
+    <div class="res-run-main">
+      <div class="panel res-run-summary">
+        <div class="res-run-state">
+          <div id="resRunStatusBig" class="res-run-status"></div>
+          <div class="res-run-progress-row">
+            <span id="resRunProgress" class="res-run-progress"></span>
+            <div class="res-progress-bar" role="progressbar" id="resRunProgressBar" aria-valuemin="0" aria-valuemax="100"><span></span></div>
+          </div>
+          <div id="resRunMessage" class="res-run-message"></div>
+        </div>
+        <div class="res-run-big res-pass"><span id="resRunPass">0</span><small>PASS</small></div>
+        <div class="res-run-big res-fail-big"><span id="resRunFail">0</span><small>FAIL</small></div>
+        <div class="res-run-big"><span id="resRunTime">–</span><small>TIME</small></div>
+        <div class="res-run-actions">
+          <span id="resRunStopHost" class="tc-stop-host"></span>
+          <button type="button" id="resRunRerunBtn">&#8635; Re-run&hellip;</button>
+        </div>
+      </div>
+
+      <div class="panel res-run-info">
+        <div><h4>Package</h4><div id="resRunInfoPackage"></div></div>
+        <div><h4>Device</h4><div id="resRunInfoDevice"></div></div>
+        <div><h4>Owner</h4><div id="resRunInfoOwner"></div></div>
+        <div><h4>Started</h4><div id="resRunInfoStarted"></div></div>
+        <div><h4>Tags</h4><div id="resRunInfoTags"></div></div>
+      </div>
+
+      <div class="panel res-main res-run-tests">
+        <div class="res-table-wrap">
+          <table class="res-table res-tests-table">
+            <thead>
+              <tr>
+                <th class="res-icon-col" title="Status"><span class="res-th-icon" aria-label="Status">&#10003;</span></th>
+                <th class="res-num">Time</th>
+                <th>Test Name</th>
+                <th>Description</th>
+                <th class="res-num" title="Passed - steps of a testcase, Pis of a step">Pass</th>
+                <th class="res-num" title="Failed - steps of a testcase, Pis of a step">Fail</th>
+                <th>Log</th>
+                <th>Details</th>
+                <th class="res-num">Seq</th>
+              </tr>
+            </thead>
+            <tbody id="resTestsBody"></tbody>
+          </table>
+        </div>
+        <div class="res-pager">
+          <span id="resTestsSummary"></span>
+          <span class="res-pager-links">| <label class="res-goto">go to page <input type="number" id="resTestsGoto" min="1" class="field"></label></span>
+          <span class="res-pager-gap"></span>
+          <select id="resTestsPageSize" class="field" aria-label="Tests per page">
+            <option value="25">25 / page</option>
+            <option value="50">50 / page</option>
+            <option value="100">100 / page</option>
+          </select>
+          <nav id="resTestsNav" class="res-pager-nav" aria-label="Test pages"></nav>
+        </div>
+      </div>
     </div>
-    <div id="resDetailMeta" class="hint" style="margin-bottom: 0.6rem;"></div>
-    <div id="resDetailBody"></div>
+  </div>
+  <!-- One test's log (#results/<kind>/<id>/tests/<seq>), like CDRouter's
+       test log page: the syslog its Pis produced while it ran, one SECTION
+       per step, PASS/FAIL lines for the outcome. Follows a live test. See
+       results-tab.js ("one test's log"). -->
+  <div id="resLogView" class="res-log-page hidden">
+    <div class="panel res-log-head" id="resLogHead">
+      <div class="res-log-heading">
+        <h2 class="res-log-title"><span id="resLogTitle"></span>
+          <button type="button" class="res-link res-log-run" id="resLogRunLink" title="Back to this run"></button></h2>
+        <div class="res-log-meta" id="resLogMeta"></div>
+      </div>
+      <div class="res-log-tools">
+        <div class="res-log-nav" role="group" aria-label="Other tests in this run">
+          <button type="button" data-nav="first" title="First test" aria-label="First test">&#9198;</button>
+          <button type="button" data-nav="prev" title="Previous test" aria-label="Previous test">&#9194;</button>
+          <button type="button" data-nav="next" title="Next test" aria-label="Next test">&#9193;</button>
+          <button type="button" data-nav="last" title="Last test" aria-label="Last test">&#9197;</button>
+        </div>
+        <button type="button" id="resLogDownloadBtn" title="Download this log as text">&#8681; Download</button>
+        <input type="text" id="resLogFilter" class="field" placeholder="Filter logs..." aria-label="Filter log lines">
+        <select id="resLogKind" class="field" aria-label="Which lines">
+          <option value="all">All Lines</option>
+          <option value="syslog">Syslog Only</option>
+          <option value="packets">Packets Only</option>
+          <option value="passfail">Pass/Fail Only</option>
+          <option value="problems">Errors &amp; Warnings</option>
+        </select>
+        <select id="resLogPi" class="field" aria-label="Pi"><option value="">All Pis</option></select>
+        <label class="res-log-follow"><input type="checkbox" id="resLogFollow" checked> Follow</label>
+      </div>
+    </div>
+    <div class="res-log-partial hidden" id="resLogPartial" role="status"></div>
+    <div class="panel res-log-panel">
+      <div class="res-log-lines" id="resLogLines" role="log" aria-live="off"></div>
+    </div>
   </div>
 </section>
 
 <section id="packages" class="view">
-  <div id="tcListView">
-    <div class="panel captures-panel ts-list-panel">
-      <h3 style="margin: 0 0 0.5rem;">Testsuites</h3>
-      <div class="row" style="margin-bottom: 0.5rem; align-items: center; gap: 0.5rem;">
-        <input type="text" id="tsSearchInput" class="field" placeholder="Search…" style="flex: 1 1 auto;">
-        <button type="button" id="tsRunHistoryBtn" style="flex: 0 0 auto;">History</button>
-        <button type="button" id="tsNewBtn" style="flex: 0 0 auto;">+ New</button>
-      </div>
-      <input type="text" id="tsTagFilterInput" class="field" placeholder="Filter by tag" style="margin-bottom: 0.5rem;">
-      <table id="tsTable">
-        <thead>
-          <tr><th class="ts-name-cell">Name<span class="col-resize-handle" id="tsNameColResize" title="Drag to resize"></span></th><th>Testcases</th><th></th></tr>
-        </thead>
-        <tbody id="tsTableBody"></tbody>
-      </table>
+  <!-- Testcases and Testsuites as two full-width sub-tabs (#packages/testcases,
+       #packages/testsuites - see packages-tabs in testcases-tab.js), each
+       with its own title row (main actions on the right), one compact filter
+       row and its table. -->
+  <div id="tcListView" class="pkg-layout">
+    <div class="pkg-switch" role="tablist" aria-label="Packages">
+      <button type="button" class="pkg-tab" role="tab" id="pkgTabTestcases" data-pkg="testcases" aria-controls="pkgTestcases">
+        Testcases <span class="pkg-count" id="pkgCountTestcases"></span>
+      </button>
+      <button type="button" class="pkg-tab" role="tab" id="pkgTabTestsuites" data-pkg="testsuites" aria-controls="pkgTestsuites">
+        Testsuites <span class="pkg-count" id="pkgCountTestsuites"></span>
+      </button>
     </div>
 
-    <div class="gutter" id="tcListGutter"></div>
-
-    <div class="panel captures-panel tc-list-panel">
-      <div class="row" style="margin-bottom: 0.5rem; align-items: center; gap: 0.5rem;">
-        <input type="text" id="tcSearchInput" class="field" placeholder="Search name/description…" style="flex: 1 1 auto;">
-        <input type="text" id="tcTagFilterInput" class="field" placeholder="Filter by tag" style="flex: 0 0 160px;">
-        <button type="button" id="tcRunHistoryBtn" style="flex: 0 0 auto;">Run History</button>
-        <button type="button" id="tcNewBtn" style="flex: 0 0 auto;">+ New Testcase</button>
+    <!-- Testcases -->
+    <div id="pkgTestcases" class="panel captures-panel kt-card pkg-pane tc-list-panel" role="tabpanel" aria-labelledby="pkgTabTestcases">
+      <div class="pkg-head">
+        <h2>Testcases</h2>
+        <div class="pkg-head-actions">
+          <button type="button" id="tcRunHistoryBtn">Run History</button>
+          <button type="button" id="tcNewBtn" class="pkg-primary">+ New Testcase</button>
+        </div>
+      </div>
+      <div class="pkg-filters" role="search">
+        <label class="pkg-search">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input type="text" id="tcSearchInput" placeholder="Search name or description" aria-label="Search testcases">
+        </label>
+        <input type="text" id="tcTagFilterInput" class="field pkg-tag-filter" placeholder="Tag" aria-label="Filter testcases by tag" list="pkgTagList" autocomplete="off">
+        <button type="button" class="res-link pkg-clear" id="tcClearFilters">Clear</button>
       </div>
 
       <!-- Bulk toolbar: acts on the checkbox column below. Always present so
            the table doesn't shift when a row is ticked; its buttons are
-           disabled until something is selected (see tcRenderBulkBar). -->
-      <div class="tc-bulk-bar">
+           disabled until something is selected (see tcRenderBulkBar). The
+           less frequent actions sit in the More menu. -->
+      <div class="tc-bulk-bar pkg-bulk-bar">
         <span id="tcBulkCount" class="tc-bulk-count">none selected</span>
-        <button type="button" id="tcBulkRunBtn">Run</button>
-        <button type="button" id="tcBulkDuplicateBtn">Duplicate</button>
-        <button type="button" id="tcBulkTagBtn">Tag&hellip;</button>
-        <button type="button" id="tcBulkEditStepsBtn" title="Find-and-replace across the steps of many testcases">Edit steps&hellip;</button>
-        <button type="button" id="tcBulkUndoEditBtn" class="hidden" title="Undo the last mass step edit">Undo step edit</button>
+        <button type="button" id="tcBulkRunBtn"><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg> Run</button>
         <button type="button" id="tcBulkAddToSuiteBtn">Add to Testsuite&hellip;</button>
-        <button type="button" id="tcBulkExportBtn">Export</button>
+        <button type="button" id="tcBulkTagBtn">Tag&hellip;</button>
+        <div class="pkg-more">
+          <button type="button" id="tcBulkMoreBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="tcBulkMoreMenu">More &#9662;</button>
+          <div class="pkg-more-menu hidden" id="tcBulkMoreMenu" role="menu">
+            <button type="button" role="menuitem" id="tcBulkDuplicateBtn">Duplicate</button>
+            <button type="button" role="menuitem" id="tcBulkEditStepsBtn" title="Find-and-replace across the steps of many testcases">Edit steps&hellip;</button>
+            <button type="button" role="menuitem" id="tcBulkUndoEditBtn" class="hidden" title="Undo the last mass step edit">Undo step edit</button>
+            <button type="button" role="menuitem" id="tcBulkExportBtn">Export</button>
+          </div>
+        </div>
+        <span class="pkg-gap"></span>
         <button type="button" id="tcBulkDeleteBtn" class="tc-bulk-danger">Delete&hellip;</button>
       </div>
 
-      <table id="tcTable">
+      <table id="tcTable" class="kaon-table">
         <thead>
           <tr>
-            <th class="tc-check-col"><input type="checkbox" id="tcSelectAll" title="Select all on this page"></th>
+            <th class="tc-check-col"><input type="checkbox" id="tcSelectAll" title="Select all on this page" aria-label="Select all on this page"></th>
             <th class="tc-name-cell">Name<span class="col-resize-handle" id="tcNameColResize" title="Drag to resize"></span></th><th>Tags</th><th>Status</th><th>Steps</th><th>Author</th><th>Updated</th><th></th>
           </tr>
         </thead>
@@ -246,6 +562,32 @@
       </table>
       <div id="tcPager" class="tc-pager"></div>
     </div>
+
+    <!-- Testsuites -->
+    <div id="pkgTestsuites" class="panel captures-panel kt-card pkg-pane ts-list-panel hidden" role="tabpanel" aria-labelledby="pkgTabTestsuites">
+      <div class="pkg-head">
+        <h2>Testsuites</h2>
+        <div class="pkg-head-actions">
+          <button type="button" id="tsRunHistoryBtn">Run History</button>
+          <button type="button" id="tsNewBtn" class="pkg-primary">+ New Testsuite</button>
+        </div>
+      </div>
+      <div class="pkg-filters" role="search">
+        <label class="pkg-search">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input type="text" id="tsSearchInput" placeholder="Search name or description" aria-label="Search testsuites">
+        </label>
+        <input type="text" id="tsTagFilterInput" class="field pkg-tag-filter" placeholder="Tag" aria-label="Filter testsuites by tag" list="pkgTagList" autocomplete="off">
+        <button type="button" class="res-link pkg-clear" id="tsClearFilters">Clear</button>
+      </div>
+      <table id="tsTable" class="kaon-table">
+        <thead>
+          <tr><th class="ts-name-cell">Name<span class="col-resize-handle" id="tsNameColResize" title="Drag to resize"></span></th><th>Testcases</th><th>Tags</th><th>Author</th><th>Updated</th><th></th></tr>
+        </thead>
+        <tbody id="tsTableBody"></tbody>
+      </table>
+    </div>
+    <datalist id="pkgTagList"></datalist>
   </div>
 
   <div id="tcRunView" class="panel captures-panel hidden">
@@ -292,7 +634,7 @@
           <select id="tcBeAction" class="field"><option value="">any action</option></select>
         </label>
         <label>Target Pi
-          <input id="tcBePi" class="field" type="text" placeholder="any (e.g. pi03)">
+          <input id="tcBePi" class="field" type="text" list="tcBePiList" autocomplete="off" placeholder="any (e.g. pi03)">
         </label>
         <label>Parameter
           <select id="tcBeParamName" class="field"><option value="">any</option></select>
@@ -301,6 +643,11 @@
           <input id="tcBeParamValue" class="field" type="text" placeholder="any value">
         </label>
       </div>
+
+      <!-- Known Pi ids / interface names for the Pi and interface boxes
+           (filled by tcBeRefreshSuggestions in tc-bulk-edit.js). -->
+      <datalist id="tcBePiList"></datalist>
+      <datalist id="tcBeIfaceList"></datalist>
 
       <h4 class="tc-be-h">2. What to change <button type="button" id="tcBeAddOp" class="tc-be-add">+ add change</button></h4>
       <div id="tcBeOps"></div>
@@ -459,7 +806,7 @@
       <button type="button" class="icon-btn" id="tsRunConfirmCloseBtn" title="Close">&times;</button>
     </div>
     <div class="wifi-info-modal-body">
-      <div id="tsRunConfirmName" style="font-weight: 600; color: #ddd; margin-bottom: 0.3rem;"></div>
+      <div id="tsRunConfirmName" style="font-weight: 600; color: var(--text-2); margin-bottom: 0.3rem;"></div>
       <div class="hint" id="tsRunConfirmMeta" style="margin-bottom: 0.5rem;"></div>
       <div id="tsRunConfirmList" class="ts-picker-list"></div>
       <div class="row" style="margin-top: 1rem; gap: 0.5rem;">
@@ -522,112 +869,154 @@
   </div>
 </div>
 
-<!-- Live runs - testsuites and standalone testcases. Pressing Run on either
-     (or View in their run history) lands here; see testsuites-tab.js. -->
-<section id="running" class="view">
-  <div class="ts-live-layout">
-    <div class="panel ts-live-list-panel">
-      <div class="row" style="align-items: center; margin-bottom: 0.5rem;">
-        <h2 style="margin: 0; font-size: 1rem; flex: 1 1 auto;">Runs</h2>
-        <button type="button" id="tsLiveRefreshBtn" style="flex: 0 0 auto;">Refresh</button>
-      </div>
-      <div id="tsLiveList"></div>
-    </div>
-    <div class="panel ts-live-detail-panel">
-      <div id="tsRunEmpty" class="pi-log-empty">No run selected - start a testcase or testsuite from Packages, or pick a run on the left.</div>
-      <div id="tsRunDetail" class="hidden">
-        <div class="row" style="align-items: center; margin-bottom: 0.75rem;">
-          <h2 id="tsRunTitle" style="margin: 0; font-size: 1rem; flex: 1 1 auto;"></h2>
-          <span id="tsRunStopHost" class="tc-stop-host"></span>
-          <span id="tsRunStatus" class="cmd-status pending"></span>
-        </div>
-        <div id="tsRunMeta" class="hint" style="margin-bottom: 0.6rem;"></div>
-        <div id="tsRunTestcases"></div>
-      </div>
-      <div id="tcLiveDetail" class="hidden">
-        <div class="row" style="align-items: center; margin-bottom: 0.75rem;">
-          <h2 id="tcLiveTitle" style="margin: 0; font-size: 1rem; flex: 1 1 auto;"></h2>
-          <span id="tcLiveStopHost" class="tc-stop-host"></span>
-          <span id="tcLiveStatus" class="cmd-status pending"></span>
-        </div>
-        <div id="tcLiveMeta" class="hint" style="margin-bottom: 0.6rem;"></div>
-        <div id="tcLiveSteps"></div>
-      </div>
-    </div>
-  </div>
-</section>
-
 <section id="captures" class="view">
-  <div class="panel captures-panel">
-    <div class="capture-filters">
-      <label>Pi<select id="capFilterPi"><option value="">all</option></select></label>
-      <label>Category<select id="capFilterCategory"><option value="">all</option><option value="logs">logs</option><option value="pcap">pcap</option></select></label>
-      <label>Name<input id="capFilterName" type="search" placeholder="contains…"></label>
-      <label>Log text<input id="capFilterText" type="search" placeholder="search inside logs…"></label>
-      <label>Lines ≥<input id="capFilterLinesMin" type="number" min="0"></label>
-      <label>Lines ≤<input id="capFilterLinesMax" type="number" min="0"></label>
-      <label>Start from<input id="capFilterFrom" type="datetime-local"></label>
-      <label>Stop until<input id="capFilterTo" type="datetime-local"></label>
-      <button id="capFilterReset" type="button" class="icon-btn" title="Clear filters">&#10005;</button>
+  <!-- Saved syslog / pcap recordings (captures.js): title + summary, one
+       filter row (rarely used ones under "More filters"), sortable table. -->
+  <div class="panel captures-panel kt-card cap-panel">
+    <div class="pkg-head">
+      <h2>Captures <span class="if-summary" id="capSummary"></span></h2>
+      <div class="pkg-head-actions">
+        <button type="button" id="capRefreshBtn" class="kt-btn" title="Reload the list">&#8635; Refresh</button>
+      </div>
+    </div>
+    <div class="pkg-filters" role="search">
+      <label class="pkg-search">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="capFilterName" type="search" placeholder="Search capture name" aria-label="Search capture name">
+      </label>
+      <div class="seg" role="radiogroup" aria-label="Type" id="capCategorySeg">
+        <button type="button" role="radio" data-cat="" aria-checked="true">All</button>
+        <button type="button" role="radio" data-cat="logs" aria-checked="false">Syslog</button>
+        <button type="button" role="radio" data-cat="pcap" aria-checked="false">Pcap</button>
+      </div>
+      <input type="hidden" id="capFilterCategory" value="">
+      <select id="capFilterPi" class="field" aria-label="Pi"><option value="">All Pis</option></select>
+      <label class="pkg-search cap-text-search" title="Searches the contents of every saved log file">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7"/></svg>
+        <input id="capFilterText" type="search" placeholder="Search inside log files" aria-label="Search inside log files">
+      </label>
+      <button type="button" id="capMoreBtn" class="kt-btn" aria-expanded="false" aria-controls="capMore">More filters &#9662;</button>
+      <button type="button" id="capFilterReset" class="res-link pkg-clear">Clear</button>
+      <span class="pkg-gap"></span>
       <span id="capFilterCount" class="capture-filter-count"></span>
     </div>
-    <table>
-      <thead>
-        <tr><th>Pi</th><th>Category</th><th>Name</th><th>Lines</th><th>Start</th><th>Stop</th><th>Duration</th><th></th></tr>
-      </thead>
-      <tbody id="capturesTableBody"></tbody>
-    </table>
+    <div class="cap-more hidden" id="capMore">
+      <label>Lines at least<input id="capFilterLinesMin" type="number" min="0" class="field"></label>
+      <label>Lines at most<input id="capFilterLinesMax" type="number" min="0" class="field"></label>
+      <label>Started from<input id="capFilterFrom" type="datetime-local" class="field"></label>
+      <label>Stopped until<input id="capFilterTo" type="datetime-local" class="field"></label>
+    </div>
+    <div class="res-table-wrap">
+      <table class="res-table kaon-table cap-table">
+        <thead>
+          <tr id="capSortRow">
+            <th data-sort="pi">Pi</th><th data-sort="category">Type</th><th data-sort="name">Name</th>
+            <th data-sort="lines" class="res-num">Lines</th><th data-sort="start">Started</th><th data-sort="stop">Stopped</th>
+            <th data-sort="duration" class="res-num">Duration</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="capturesTableBody"></tbody>
+      </table>
+    </div>
   </div>
 </section>
 
 <section id="history" class="view">
-  <div class="panel captures-panel">
-    <div class="row" style="margin-bottom: 0.5rem; align-items: center;">
-      <button id="historyDeleteSelectedBtn" type="button" class="icon-btn" disabled style="flex: 0 0 auto;" title="Delete selected">&#128465;</button>
+  <!-- Every command sent to a Pi (history.js): title + summary, filters,
+       a bulk bar for deleting, and a table whose rows open their result. -->
+  <div class="panel captures-panel kt-card hist-panel">
+    <div class="pkg-head">
+      <h2>Command history <span class="if-summary" id="histSummary"></span></h2>
+      <div class="pkg-head-actions">
+        <button type="button" id="historyRefreshBtn" class="kt-btn" title="Reload the list">&#8635; Refresh</button>
+      </div>
     </div>
-    <table>
-      <thead>
-        <tr>
-          <th><input type="checkbox" id="historySelectAll" title="Select all"></th>
-          <th>Pi</th><th>Action</th><th>Status</th><th>Created</th><th></th>
-        </tr>
-      </thead>
-      <tbody id="historyTableBody"></tbody>
-    </table>
+    <div class="pkg-filters" role="search">
+      <label class="pkg-search">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="histSearch" type="search" placeholder="Search Pi, action or result" aria-label="Search command history">
+      </label>
+      <div class="seg" role="radiogroup" aria-label="Status" id="histStatusSeg">
+        <button type="button" role="radio" data-status="" aria-checked="true">All</button>
+        <button type="button" role="radio" data-status="complete" aria-checked="false">Complete</button>
+        <button type="button" role="radio" data-status="failed" aria-checked="false">Failed</button>
+        <button type="button" role="radio" data-status="timeout" aria-checked="false">Timeout</button>
+        <button type="button" role="radio" data-status="pending" aria-checked="false">Pending</button>
+      </div>
+      <select id="histPiFilter" class="field" aria-label="Pi"><option value="">All Pis</option></select>
+      <select id="histActionFilter" class="field" aria-label="Action"><option value="">All actions</option></select>
+      <button type="button" id="histClearFilters" class="res-link pkg-clear">Clear</button>
+    </div>
+    <div class="tc-bulk-bar hist-bulk-bar">
+      <span id="histBulkCount" class="tc-bulk-count">none selected</span>
+      <button type="button" id="historyDeleteSelectedBtn" class="kt-btn tc-bulk-danger" disabled>Delete&hellip;</button>
+      <button type="button" id="histDeleteAllBtn" class="kt-btn tc-bulk-danger" disabled title="Delete every command matching the filters, on all pages">Delete all&hellip;</button>
+    </div>
+    <div class="res-table-wrap">
+      <table class="res-table kaon-table hist-table">
+        <thead>
+          <tr>
+            <th class="tc-check-col"><input type="checkbox" id="historySelectAll" title="Select all shown" aria-label="Select all shown"></th>
+            <th>Pi</th><th>Action</th><th>Status</th><th>Sent</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="historyTableBody"></tbody>
+      </table>
+    </div>
+    <div class="res-pager hist-pager">
+      <span id="histRange"></span>
+      <span class="res-pager-gap"></span>
+      <label class="res-goto">Per page
+        <select id="histPageSize" aria-label="Commands per page">
+          <option value="50">50</option><option value="100" selected>100</option><option value="200">200</option><option value="500">500</option>
+        </select>
+      </label>
+      <button type="button" id="histPrev" class="kt-btn">&lsaquo; Newer</button>
+      <span id="histPageInfo" class="hist-page-info"></span>
+      <button type="button" id="histNext" class="kt-btn">Older &rsaquo;</button>
+    </div>
   </div>
 </section>
 
 <section id="piDetail" class="view">
-  <div class="panel" style="margin-bottom:0; flex: 0 0 auto; position: relative; z-index: 1;">
-    <div class="row" style="align-items:center;">
-      <button id="piDetailBack" type="button" style="flex: 0 0 auto; padding: 0.2rem 0.5rem; font-size: 0.75rem;" title="Back to fleet">&larr; Back</button>
-      <h2 id="piDetailTitle" style="margin:0 0 0 0.75rem; font-size:1rem;"></h2>
+  <!-- Header: the Pi at a glance (detail-page.js renderDetailInfo /
+       pdRenderHeroStats) and its power actions. -->
+  <div class="panel pd-hero" id="pdHero">
+    <button id="piDetailBack" type="button" class="res-link pd-back" title="Back to the fleet">&larr; Fleet</button>
+    <div class="pd-hero-main">
+      <div class="pd-hero-title">
+        <h2 id="piDetailTitle"></h2>
+        <span id="pdHeroStatus"></span>
+      </div>
+      <div class="pd-hero-meta" id="pdInfoFields"></div>
       <span class="pi-power-actions" id="piDetailPower"></span>
     </div>
+    <div class="pd-hero-stats" id="pdHeroStats"></div>
   </div>
   <div id="piDetailGrid">
-    <div class="panel" id="pdInfoPanel">
-      <div class="pd-panel-header">
-        <h3>Pi info</h3>
-        <button type="button" class="icon-btn pd-panel-collapse-btn" id="pdInfoCollapseBtn" title="Collapse"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform: rotate(180deg);"><polyline points="9 6 15 12 9 18"/></svg></button>
-      </div>
-      <div class="pd-panel-body">
-        <div id="pdInfoFields"></div>
-        <label>Interfaces</label>
+    <!-- Interfaces on the left, always visible; Syslog | Packets beside
+         them, one log window at a time. Both log windows stay live while
+         hidden; their tabs show a dot while streaming (or recording). The
+         divider between the two is draggable (layout.js). -->
+    <div class="panel pd-main" id="pdMainPanel">
+      <div class="pd-ifaces-col" id="pdInterfacesPane">
+        <div class="pd-col-head"><h3>Interfaces</h3><span class="pkg-count" id="pdIfaceCount"></span></div>
         <div id="pdInterfaceList"></div>
       </div>
-    </div>
-
-    <div class="gutter" id="pdGutterLeft"></div>
-
-    <div class="panel" id="pdLogPanel">
+      <div class="gutter" id="pdGutterIface" title="Drag to resize"></div>
+      <div class="pd-logs-col">
+        <div class="pkg-switch pd-tabs" role="tablist" aria-label="Logs">
+          <button type="button" class="pkg-tab" role="tab" data-pd-tab="logs" aria-controls="pdLogPanel">Syslog <span class="pd-live" data-live="logs" aria-hidden="true"></span></button>
+          <button type="button" class="pkg-tab" role="tab" data-pd-tab="tcpdump" aria-controls="pdLogPanel">Packets <span class="pd-live" data-live="tcpdump" aria-hidden="true"></span></button>
+        </div>
+        <div class="pd-pane" id="pdLogPanel" role="tabpanel" data-show="logs">
       <div class="pd-log-block" data-kind="logs">
         <div class="pi-log-heading">
           <span>syslog / stream_logs</span>
           <span class="pi-log-actions">
             <button class="pi-log-stream icon-btn" type="button" title="Start streaming"><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><polygon points="6 4 20 12 6 20"/></svg></button>
-            <button class="pi-log-capture icon-btn" type="button" title="Start Capture">&#9210;</button>
-            <button class="pi-log-clear icon-btn" type="button" title="Clear">&#128465;</button>
+            <button class="pi-log-capture icon-btn" type="button" title="Start Capture" aria-label="Start Capture"><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="7"/></svg></button>
+            <button class="pi-log-clear icon-btn" type="button" title="Clear" aria-label="Clear"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button>
             <button class="pi-log-collapse icon-btn" type="button" title="Collapse"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform: rotate(-90deg);"><polyline points="9 6 15 12 9 18"/></svg></button>
           </span>
         </div>
@@ -640,8 +1029,8 @@
             <select class="pi-stream-iface"><option value="">select interface</option></select>
             <button class="pi-log-popout icon-btn" type="button" title="Open this interface's capture in a new tab"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><line x1="20" y1="4" x2="11" y2="13"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></button>
             <button class="pi-log-stream icon-btn" type="button" title="Start streaming"><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><polygon points="6 4 20 12 6 20"/></svg></button>
-            <button class="pi-log-capture icon-btn" type="button" title="Start Capture">&#9210;</button>
-            <button class="pi-log-clear icon-btn" type="button" title="Clear">&#128465;</button>
+            <button class="pi-log-capture icon-btn" type="button" title="Start Capture" aria-label="Start Capture"><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="7"/></svg></button>
+            <button class="pi-log-clear icon-btn" type="button" title="Clear" aria-label="Clear"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button>
             <button class="pi-log-collapse icon-btn" type="button" title="Collapse"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform: rotate(-90deg);"><polyline points="9 6 15 12 9 18"/></svg></button>
           </span>
         </div>
@@ -670,60 +1059,96 @@
           </div>
         </div>
       </div>
+        </div>
+      </div>
     </div>
 
     <div class="gutter" id="pdGutterRight"></div>
 
-    <div class="panel" id="pdActionPanel" style="overflow-y: hidden;">
+    <div class="panel" id="pdActionPanel">
       <div class="pd-panel-header">
-        <h3>Actions</h3>
-        <button type="button" class="icon-btn pd-panel-collapse-btn" id="pdActionCollapseBtn" title="Collapse"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></button>
+        <h3>Send command</h3>
+        <button type="button" class="icon-btn pd-panel-collapse-btn" id="pdActionCollapseBtn" title="Hide" aria-label="Hide the command panel"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></button>
       </div>
       <div class="pd-panel-body">
-        <label>Action</label>
+        <label for="pdAction">Action</label>
         <select id="pdAction" class="field"></select>
         <div id="pdActionParams"></div>
         <div class="row" style="margin-top: 0.75rem;">
-          <button id="pdActionSendBtn">Send command</button>
+          <button id="pdActionSendBtn" class="pkg-primary">Send command</button>
         </div>
-        <div class="pd-results-panel">
-          <div class="pd-results-heading">Results</div>
-          <div id="pdActionResults" class="pd-results-body"></div>
+        <div class="fleet-results-head">
+          <h3>Results</h3>
+          <button type="button" class="res-link" id="pdActionResultsClear">Clear</button>
         </div>
+        <div id="pdActionResults" class="pd-results-body"></div>
       </div>
     </div>
   </div>
 </section>
+<!-- The Kaon slide template's content-slide footer. -->
+</main>
 <footer id="appFooter">
-  <img src="assets/kaon-icon-logo.png" alt="Kaon Broadband">
-  <span>&copy; <span id="footerYear"></span> Kaon Broadband. All rights reserved.</span>
+  <span class="footer-brand">
+    <span class="kaon-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+    <span class="kaon-logo" role="img" aria-label="Kaon Broadband"><span class="kaon-logo-text"></span><span class="kaon-logo-mark"></span></span>
+    <span class="footer-corp">KAON BROADBAND Co., Ltd.</span>
+  </span>
+  <span class="footer-copy">Copyright &copy; <span id="footerYear"></span> KAON Broadband Co., Ltd. All rights reserved<span class="sep" aria-hidden="true">|</span>Confidential</span>
 </footer>
+</div>
+
+<!-- Settings popup - theme and accent pickers, see js/settings.js.
+     Choices are per-browser (localStorage), not per-user. -->
+<div id="settingsOverlay" class="wifi-info-overlay settings-overlay hidden">
+  <div class="wifi-info-modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <div class="wifi-info-modal-header">
+      <span id="settingsTitle">Settings</span>
+      <button type="button" class="icon-btn wifi-info-modal-close" id="settingsCloseBtn" title="Close" aria-label="Close settings">&times;</button>
+    </div>
+    <div class="wifi-info-modal-body">
+      <section class="settings-section">
+        <h4 id="themeLabel">Theme</h4>
+        <p class="hint">System follows your operating system's light/dark setting.</p>
+        <div class="theme-options" id="themeOptions" role="radiogroup" aria-labelledby="themeLabel"></div>
+      </section>
+      <section class="settings-section">
+        <h4 id="accentLabel">Accent color</h4>
+        <p class="hint">Used for links, the active tab, selections and focus rings.</p>
+        <div class="accent-options" id="accentOptions" role="radiogroup" aria-labelledby="accentLabel"></div>
+      </section>
+      <div class="settings-footer">
+        <button type="button" id="settingsResetBtn">Reset to defaults</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- Loaded in this exact order - plain global-scope scripts (no modules),
      later files call functions defined in earlier ones. -->
-<script src="js/auth.js?v=2"></script>
-<script src="js/layout.js"></script>
-<script src="js/fleet-table.js?v=7"></script>
-<script src="js/interfaces-tab.js"></script>
-<script src="js/captures.js?v=2"></script>
-<script src="js/history.js"></script>
-<script src="js/command-builder.js?v=11"></script>
+<script src="js/settings.js?v=4"></script>
+<script src="js/auth.js?v=3"></script>
+<script src="js/layout.js?v=6"></script>
+<script src="js/fleet-table.js?v=10"></script>
+<script src="js/interfaces-tab.js?v=3"></script>
+<script src="js/captures.js?v=4"></script>
+<script src="js/history.js?v=5"></script>
+<script src="js/command-builder.js?v=14"></script>
 <!-- ?v= busts the browser's cache on each edit - these three change often
      during active development and have no other cache-busting (StaticFiles
      serves them with only Last-Modified/ETag, which Chrome's heuristic
      cache treats as "reuse without revalidating" for a warm tab), so a
      plain reload can otherwise keep serving a stale copy indefinitely. -->
-<script src="js/testcases-tab.js?v=14"></script>
-<script src="js/tc-bulk-edit.js?v=1"></script>
-<script src="js/testsuites-tab.js?v=8"></script>
+<script src="js/testcases-tab.js?v=21"></script>
+<script src="js/tc-bulk-edit.js?v=4"></script>
+<script src="js/testsuites-tab.js?v=15"></script>
 <!-- After testcases-tab.js: reuses its tcRenderRunSteps/tcStatusClass so a
      run's step detail renders identically in both places. -->
-<script src="js/results-tab.js?v=8"></script>
+<script src="js/results-tab.js?v=23"></script>
 <script src="js/wifi-scan.js?v=2"></script>
 <script src="js/wifi-info-modal.js?v=5"></script>
 <script src="js/log-rendering.js"></script>
 <script src="js/wireshark-table.js"></script>
-<script src="js/detail-page.js?v=15"></script>
+<script src="js/detail-page.js?v=23"></script>
 </body>
 </html>

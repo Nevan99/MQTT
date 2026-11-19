@@ -1,8 +1,7 @@
 // --- Testsuites: named, ordered collections of existing testcases ---------
-// Lives as its own panel inside the Testcases tab (see the "ts-list-panel"
-// in index.html), not a separate top-level tab - the list is always
-// visible alongside the testcase list; editing, running, and run history
-// each open as their own popup instead of navigating anywhere.
+// The Testsuites sub-tab of Packages (#packages/testsuites - see pkgShow in
+// testcases-tab.js); editing, running, and run history each open as their
+// own popup instead of navigating anywhere.
 //
 // A testsuite doesn't own its testcases - the editor's picker lists every
 // testcase that exists (see fetchAllTestcasesForPicker), whether or not
@@ -10,35 +9,16 @@
 // its id to this suite's own list (routers/TestSuites.py's testcase_ids).
 // Running a suite runs each of those testcases in order through the exact
 // same run engine a standalone testcase uses (routers/TestCases._run_testcase,
-// called directly by routers/TestSuites._run_testsuite) - this tab only
-// displays/polls the resulting TestSuiteRun, same as testcases-tab.js does
-// for a TestRun.
+// called directly by routers/TestSuites._run_testsuite). The resulting
+// TestSuiteRun is watched in the Results tab, like any other run (see
+// openTsRunView below and results-tab.js).
 
 let tsList = [];
 let tsAllTestcases = [];   // fetched fresh whenever the editor opens - the picker's pool
 let tsEditingId = null;
 let tsSelectedIds = [];    // ordered testcase ids for the suite being edited
-let tsActiveRunId = null;
-let tsRunPollTimer = null;
-let tsLastRunRenderSignature = null;
-// testcase_id -> name, fetched once per opened run (see openTsRunView) so
-// the live view can show every testcase the suite will run - not just the
-// ones that have reported a result yet - without an id-only placeholder for
-// whichever one is still pending or currently running.
-let tsRunTestcaseNames = {};
-// testcase_id -> steps (its own definition, not a run) - fetched alongside
-// the names above so a testcase the suite hasn't reached yet can still show
-// its planned step list (all "pending") instead of nothing at all.
-let tsRunTestcaseSteps = {};
 
 // --- popups -------------------------------------------------------------
-
-function stopTsRunPolling() {
-  if (tsRunPollTimer) {
-    clearInterval(tsRunPollTimer);
-    tsRunPollTimer = null;
-  }
-}
 
 function openTsEditorModal() {
   document.getElementById('tsEditorOverlay').classList.remove('hidden');
@@ -54,189 +34,18 @@ function tsEditorModalKeydown(e) {
   if (e.key === 'Escape') closeTsEditorModal();
 }
 
-// --- Running tab ------------------------------------------------------------
-// Testsuite runs are watched in their own top-level tab (#running) rather
-// than a pop-up: a list of running + recent suite runs on the left, the
-// selected one's live detail on the right. Polling only happens while the
-// tab is visible; leaving it pauses (tsActiveRunId is kept, so coming back
-// resumes the same run).
-let tsLivePollTimer = null;
-const TS_LIVE_RECENT = 15;
-
-// The selected standalone testcase run (null when a suite run - or nothing
-// - is selected; tsActiveRunId is the suite equivalent). Only one of the
-// two is ever set.
-let tcLiveRunId = null;
-let tcLivePollTimer = null;
-let tcLiveRefreshing = false;
-
-function stopTcLivePolling() {
-  if (tcLivePollTimer) {
-    clearInterval(tcLivePollTimer);
-    tcLivePollTimer = null;
-  }
+// --- watching a run -------------------------------------------------------
+// There is no separate Running tab: as in CDRouter, a run - live or finished
+// - opens as its own result page in the Results tab (results-tab.js,
+// #results/<kind>/<id>), which updates in place while it runs. These two
+// names stay because starting a run (here and in testcases-tab.js) and the
+// run history popup's View buttons call them.
+function openTsRunView(runId) {
+  openResDetail('testsuite', runId);
 }
 
-function tsShowLivePane(which) {
-  document.getElementById('tsRunEmpty').classList.toggle('hidden', which !== null);
-  document.getElementById('tsRunDetail').classList.toggle('hidden', which !== 'testsuite');
-  document.getElementById('tcLiveDetail').classList.toggle('hidden', which !== 'testcase');
-}
-
-// Selects a standalone testcase run in the Running tab, switching to it.
-async function openLiveTestcaseRun(runId) {
-  if (tsActiveRunId !== null) {
-    stopTsRunPolling();
-    tsActiveRunId = null;
-  }
-  if (tcLiveRunId !== runId) {
-    tcLiveRunId = runId;
-    document.getElementById('tcLiveSteps').innerHTML = '<div class="pi-log-empty">loading…</div>';
-  }
-  tsShowLivePane('testcase');
-  tsMarkLiveSelection();
-  if (location.hash !== '#running') {
-    location.hash = '#running';   // tabshown resumes polling on this run
-    return;
-  }
-  await refreshTcLive();
-  startTcLivePolling();
-}
-
-function startTcLivePolling() {
-  stopTcLivePolling();
-  tcLivePollTimer = setInterval(refreshTcLive, 1500);
-}
-
-async function refreshTcLive() {
-  if (tcLiveRunId === null || tcLiveRefreshing) return;
-  const runId = tcLiveRunId;
-  tcLiveRefreshing = true;
-  try {
-    // Expanded while running: the pass/step in flight opens by itself.
-    const sm = await tcRenderRunInto(document.getElementById('tcLiveSteps'), runId);
-    if (!sm || tcLiveRunId !== runId) return;
-    document.getElementById('tcLiveTitle').textContent = `Testcase run: ${sm.testcase_name}`;
-    const statusEl = document.getElementById('tcLiveStatus');
-    statusEl.textContent = sm.status;
-    statusEl.className = `cmd-status ${tcStatusClass(sm.status)}`;
-    const c = k => sm.counts[k] || 0;
-    const done = sm.total - c('pending') - c('running') - c('skipped');
-    document.getElementById('tcLiveMeta').textContent = [
-      `started ${formatVnDateTime(sm.started_at)}`,
-      sm.completed_at ? `completed ${formatVnDateTime(sm.completed_at)}` : null,
-      `${done}/${sm.total} step runs done`,
-      c('skipped') ? `${c('skipped')} skipped` : null,
-      sm.current !== null && sm.current !== undefined ? `now on #${sm.current + 1}` : null,
-    ].filter(Boolean).join('  ·  ');
-    tcRenderStopControls(document.getElementById('tcLiveStopHost'), 'testcase', sm);
-    if (sm.status !== 'running') stopTcLivePolling();
-  } catch {
-    // transient; the next tick retries
-  } finally {
-    tcLiveRefreshing = false;
-  }
-}
-
-function startTsRunPolling() {
-  stopTsRunPolling();
-  tsRunPollTimer = setInterval(refreshTsRun, 1500);
-}
-
-function startTsLivePolling() {
-  stopTsLivePolling();
-  tsLivePollTimer = setInterval(loadTsLiveList, 3000);
-}
-
-function stopTsLivePolling() {
-  if (tsLivePollTimer) {
-    clearInterval(tsLivePollTimer);
-    tsLivePollTimer = null;
-  }
-}
-
-// Called when navigating away from the tab (and from showPiDetail, which
-// bypasses the tabshown event).
-function pauseTsRunTab() {
-  stopTsRunPolling();
-  stopTcLivePolling();
-  stopTsLivePolling();
-}
-
-let tsLiveLoading = false;
-
-async function loadTsLiveList() {
-  if (tsLiveLoading) return;
-  tsLiveLoading = true;
-  try {
-    const [sRes, cRes] = await Promise.all([
-      apiFetch(`${API}/testsuites/runs?limit=${TS_LIVE_RECENT + 20}`),
-      apiFetch(`${API}/testcases/runs?limit=${TS_LIVE_RECENT + 20}&light=true`),
-    ]);
-    if (!sRes.ok || !cRes.ok) return;
-    const runs = [
-      ...(await sRes.json()).map(r => ({ ...r, kind: 'testsuite' })),
-      ...(await cRes.json()).map(r => ({ ...r, kind: 'testcase' })),
-    ].sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)));
-    renderTsLiveList(runs);
-    // Nothing picked yet: open the newest running one by itself.
-    if (tsActiveRunId === null && tcLiveRunId === null) {
-      const first = runs.find(r => r.status === 'running');
-      if (first && first.kind === 'testsuite') openTsRunView(first.id);
-      else if (first) openLiveTestcaseRun(first.id);
-    }
-  } catch {
-    // transient; the next tick retries
-  } finally {
-    tsLiveLoading = false;
-  }
-}
-
-function tsLiveIsSelected(kind, id) {
-  return kind === 'testsuite' ? id === tsActiveRunId : id === tcLiveRunId;
-}
-
-function tsLiveItemHtml(r) {
-  const when = r.status === 'running'
-    ? `started ${formatVnDateTime(r.started_at)}`
-    : `${formatVnDateTime(r.completed_at || r.started_at)}`;
-  let sub;
-  if (r.kind === 'testsuite') {
-    const done = (r.results || []).filter(e => !['pending', 'running', 'skipped'].includes(e.status)).length;
-    sub = `suite · ${done}/${(r.testcase_ids || []).length} testcases · ${when}`;
-  } else {
-    sub = `testcase · ${when}`;
-  }
-  const name = r.kind === 'testsuite' ? r.testsuite_name : r.testcase_name;
-  return `
-    <div class="ts-live-item${tsLiveIsSelected(r.kind, r.id) ? ' selected' : ''}" data-kind="${r.kind}" data-id="${r.id}">
-      <span class="ts-live-name">${tcEsc(name)} <span class="tc-run-meta">#${r.id}</span>
-        <span class="ts-live-sub">${sub}</span>
-      </span>
-      <span class="cmd-status ${tcStatusClass(r.status)}">${r.status}</span>
-    </div>`;
-}
-
-function renderTsLiveList(runs) {
-  const running = runs.filter(r => r.status === 'running');
-  const recent = runs.filter(r => r.status !== 'running').slice(0, TS_LIVE_RECENT);
-  const el = document.getElementById('tsLiveList');
-  el.innerHTML = `
-    <div class="ts-live-section">Running (${running.length})</div>
-    ${running.map(tsLiveItemHtml).join('') || '<div class="pi-log-empty">nothing running</div>'}
-    <div class="ts-live-section">Recent</div>
-    ${recent.map(tsLiveItemHtml).join('') || '<div class="pi-log-empty">no finished runs</div>'}
-  `;
-  el.querySelectorAll('.ts-live-item').forEach(item => item.addEventListener('click', () => {
-    if (item.dataset.kind === 'testsuite') openTsRunView(Number(item.dataset.id));
-    else openLiveTestcaseRun(Number(item.dataset.id));
-  }));
-}
-
-function tsMarkLiveSelection() {
-  document.querySelectorAll('#tsLiveList .ts-live-item').forEach(item => {
-    item.classList.toggle('selected', tsLiveIsSelected(item.dataset.kind, Number(item.dataset.id)));
-  });
+function openLiveTestcaseRun(runId) {
+  openResDetail('testcase', runId);
 }
 
 function openTsRunHistoryModal() {
@@ -274,32 +83,27 @@ async function loadTestsuites() {
 
 function renderTsTable() {
   const body = document.getElementById('tsTableBody');
+  document.getElementById('pkgCountTestsuites').textContent = tsList.length;
+  pkgAddKnownTags(tsList.flatMap(t => t.tags || []));
   if (!tsList.length) {
-    body.innerHTML = '<tr><td colspan="3" class="pi-log-empty">no testsuites yet</td></tr>';
+    body.innerHTML = '<tr><td colspan="6" class="pi-log-empty">no testsuites yet</td></tr>';
     return;
   }
-  // Narrower panel than the testcase list (see .ts-list-panel) - tags/
-  // author/updated are folded into the name cell's title tooltip instead of
-  // their own columns, rather than competing for the width to show them.
-  body.innerHTML = tsList.map(s => {
-    const details = [
-      s.tags && s.tags.length ? `tags: ${s.tags.join(', ')}` : null,
-      s.author ? `author: ${s.author}` : null,
-      `updated: ${formatVnDateTime(s.updated_at)}`,
-    ].filter(Boolean).join(' · ');
-    return `
+  body.innerHTML = tsList.map(s => `
     <tr>
-      <td class="ts-name-cell" title="${details}">${s.name}</td>
-      <td>${s.testcase_ids.length}</td>
+      <td class="ts-name-cell">${tcEsc(s.name)}${s.description ? `<div class="hint pkg-desc">${tcEsc(s.description)}</div>` : ''}</td>
+      <td class="res-num">${s.testcase_ids.length}</td>
+      <td class="pkg-tags">${pkgTagChips(s.tags, 'ts')}</td>
+      <td class="kt-author">${tcEsc(s.author || '')}</td>
+      <td class="res-date">${ktDateTimeHtml(s.updated_at)}</td>
       <td class="capture-actions">
-        <button class="icon-btn ts-run-btn" data-id="${s.id}" title="Run">&#9654;</button>
-        <button class="icon-btn ts-edit-btn" data-id="${s.id}" title="Edit">&#9998;</button>
-        <button class="icon-btn ts-dup-btn" data-id="${s.id}" title="Duplicate">${DUPLICATE_ICON_SVG}</button>
-        <button class="icon-btn ts-delete-btn" data-id="${s.id}" title="Delete">&#128465;</button>
+        <button class="icon-btn ts-run-btn" data-id="${s.id}" title="Run" aria-label="Run ${tcEsc(s.name)}">${ROW_RUN_SVG}</button>
+        <button class="icon-btn ts-edit-btn" data-id="${s.id}" title="Edit" aria-label="Edit ${tcEsc(s.name)}">${ROW_EDIT_SVG}</button>
+        <button class="icon-btn ts-dup-btn" data-id="${s.id}" title="Duplicate" aria-label="Duplicate ${tcEsc(s.name)}">${DUPLICATE_ICON_SVG}</button>
+        <button class="icon-btn ts-delete-btn" data-id="${s.id}" title="Delete" aria-label="Delete ${tcEsc(s.name)}">${ROW_DELETE_SVG}</button>
       </td>
     </tr>
-  `;
-  }).join('');
+  `).join('');
 
   body.querySelectorAll('.ts-run-btn').forEach(btn => btn.addEventListener('click', () => openTsRunConfirmModal(Number(btn.dataset.id))));
   body.querySelectorAll('.ts-edit-btn').forEach(btn => btn.addEventListener('click', () => openEditTestsuite(btn.dataset.id)));
@@ -354,7 +158,7 @@ function renderTsSelectedList() {
           <span class="ts-picker-controls">
             <button type="button" class="icon-btn ts-move-up" title="Move up">&#8593;</button>
             <button type="button" class="icon-btn ts-move-down" title="Move down">&#8595;</button>
-            <button type="button" class="icon-btn ts-remove" title="Remove from suite">&#128465;</button>
+            <button type="button" class="icon-btn ts-remove" title="Remove from suite">${TRASH_ICON_SVG}</button>
           </span>
         </div>
       `).join('')
@@ -555,279 +359,6 @@ async function runTestsuiteById(id) {
   }
 }
 
-// Selects a suite run in the Running tab (switching to the tab if needed) -
-// used by starting a run, the run history's View buttons, and the tab's own
-// list.
-async function openTsRunView(runId) {
-  if (tcLiveRunId !== null) {
-    stopTcLivePolling();
-    tcLiveRunId = null;
-  }
-  tsShowLivePane('testsuite');
-  if (tsActiveRunId !== runId) {
-    tsActiveRunId = runId;
-    tsLastRunRenderSignature = null;
-    tsRunTestcaseNames = {};
-    tsRunTestcaseSteps = {};
-    tsResetRunDetailState();
-    document.getElementById('tsRunTestcases').innerHTML = '<div class="pi-log-empty">loading…</div>';
-  }
-  tsMarkLiveSelection();
-  if (location.hash !== '#running') {
-    // tabshown for #running resumes polling on this run.
-    location.hash = '#running';
-    return;
-  }
-  await refreshTsRun();
-  startTsRunPolling();
-}
-
-// Every testcase_id the suite run will step through, by name - fetched once
-// per opened run rather than per poll tick, since a run's own testcase_ids
-// don't change once it's launched (see TestSuiteRun.testcase_ids_json).
-async function tsLoadRunTestcaseNames(ids) {
-  const results = await Promise.all(ids.map(async (id) => {
-    try {
-      const res = await apiFetch(`${API}/testcases/${id}`);
-      if (res.ok) {
-        const t = await res.json();
-        return [id, t.name, t.steps];
-      }
-    } catch {
-      // transient; this testcase's row just falls back to "#<id>" below
-    }
-    return [id, null, null];
-  }));
-  results.forEach(([id, name, steps]) => {
-    if (name) tsRunTestcaseNames[id] = name;
-    if (steps) tsRunTestcaseSteps[id] = steps;
-  });
-}
-
-// A fake TestRunOut-shaped object for a testcase the suite hasn't reached
-// yet, built from its own step definitions rather than an actual run (there
-// is none to fetch) - so tcRenderRunSteps can show the planned step list,
-// every one "pending", the same way it shows a real run's steps.
-function tsPendingStepsRun(testcaseId) {
-  const steps = tsRunTestcaseSteps[testcaseId] || [];
-  return {
-    id: `pending-${testcaseId}`, status: 'pending',
-    results: steps.map((s, i) => ({
-      action: s.action, target: s.target, status: 'pending', step_index: i,
-      pass_index: 0, iteration: 1,
-    })),
-  };
-}
-
-let tsRunRefreshing = false;
-
-async function refreshTsRun() {
-  if (!tsActiveRunId || tsRunRefreshing) return;
-  tsRunRefreshing = true;
-  try {
-    const runId = tsActiveRunId;
-    const res = await apiFetch(`${API}/testsuites/runs/${runId}`);
-    if (!res.ok || tsActiveRunId !== runId) return;
-    const run = await res.json();
-    if (!Object.keys(tsRunTestcaseNames).length && (run.testcase_ids || []).length) {
-      await tsLoadRunTestcaseNames(run.testcase_ids);
-    }
-    renderTsRunView(run);
-    await tsRefreshRunningStepDetail(run);
-    if (run.status !== 'running') stopTsRunPolling();
-  } catch {
-    // transient; the next tick retries
-  } finally {
-    tsRunRefreshing = false;
-  }
-}
-
-// One testcase's step-level detail, rendered inside its row when expanded.
-// Reuses tcRenderRunInto (testcases-tab.js)
-// - the exact renderer the Testcases tab's own run view uses - so a suite run
-// shows the same per-step targets, checks, logs and timings, live, instead of
-// a stripped-down summary.
-//
-// Refetched on every poll tick while that testcase is still running (the old
-// version loaded once and cached, which is why an expanded row sat on
-// "starting…" for the whole run); a finished one is fetched once more to pick
-// up its final state and then left alone (tsFinishedDetailRunIds).
-const tsExpandedRunIds = new Set();       // testcase run_ids whose detail is open
-const tsAutoExpandedRunIds = new Set();   // ones this view opened by itself
-const tsFinishedDetailRunIds = new Set(); // detail is final - stop refetching
-// testcase_ids whose row is expanded while the suite hasn't reached them yet
-// (no run_id to key off, unlike tsExpandedRunIds above).
-const tsExpandedPendingIds = new Set();
-
-function tsResetRunDetailState() {
-  tsExpandedRunIds.clear();
-  tsAutoExpandedRunIds.clear();
-  tsFinishedDetailRunIds.clear();
-  tsExpandedPendingIds.clear();
-}
-
-// tcRenderRunInto does the in-flight guard and skip-if-unchanged itself, and
-// only loads the loop passes that are open - a looped testcase inside a
-// suite no longer pulls every step result on every tick.
-async function tsLoadTestcaseRunDetail(resultEl, runId) {
-  if (!resultEl.childElementCount) resultEl.innerHTML = '<div class="pi-log-empty">loading…</div>';
-  const summary = await tcRenderRunInto(resultEl, runId);
-  if (summary && summary.status !== 'running') tsFinishedDetailRunIds.add(runId);
-}
-
-// Every open row that still has something new to show, refreshed on each
-// poll tick - run separately from the row rendering below so a tick that
-// changes nothing at the suite level still advances the open testcase.
-function tsRefreshExpandedDetails() {
-  document.querySelectorAll('#tsRunTestcases .cmd-entry[data-run-id]').forEach(entry => {
-    const runId = Number(entry.dataset.runId);
-    if (!tsExpandedRunIds.has(runId) || tsFinishedDetailRunIds.has(runId)) return;
-    tsLoadTestcaseRunDetail(entry.querySelector('.result'), runId);
-  });
-}
-
-function tsRunTestcaseRowHtml(r, i, expanded) {
-  const name = r.testcase_name || `#${r.testcase_id} (deleted)`;
-  return `
-    <div class="cmd-entry"${r.run_id ? ` data-run-id="${r.run_id}"` : ''}>
-      <div class="hdr ts-run-toggle">
-        <span><span class="toggle">${expanded ? '&#9660;' : '&#9654;'}</span>Testcase ${i + 1}: ${name}</span>
-        <span class="cmd-status ${tcStatusClass(r.status)}">${r.status}</span>
-      </div>
-      <div class="result${expanded ? '' : ' hidden'}"></div>
-    </div>
-  `;
-}
-
-function renderTsRunView(run) {
-  document.getElementById('tsRunTitle').textContent = `Run: ${run.testsuite_name}`;
-  const statusEl = document.getElementById('tsRunStatus');
-  statusEl.textContent = run.status;
-  statusEl.className = `cmd-status ${tcStatusClass(run.status)}`;
-  tcRenderStopControls(document.getElementById('tsRunStopHost'), 'testsuite', run);
-  const done = run.results.filter(e => !['pending', 'running', 'skipped'].includes(e.status)).length;
-  const current = run.results.find(e => e.status === 'running');
-  document.getElementById('tsRunMeta').textContent = [
-    `started ${formatVnDateTime(run.started_at)}`,
-    run.completed_at ? `completed ${formatVnDateTime(run.completed_at)}` : null,
-    `${done}/${run.testcase_ids.length} testcases done`,
-    current ? `now running: ${current.testcase_name || `#${current.testcase_id}`}` : null,
-  ].filter(Boolean).join('  ·  ');
-
-  // The testcase the suite is on right now opens by itself, so the steps are
-  // visible without a click - once per run_id, so collapsing it by hand isn't
-  // undone by the next tick.
-  const active = run.results.find(r => r.status === 'running' && r.run_id);
-  if (active && !tsAutoExpandedRunIds.has(active.run_id)) {
-    tsAutoExpandedRunIds.add(active.run_id);
-    tsExpandedRunIds.add(active.run_id);
-  }
-
-  // Rows are rebuilt only when something about them actually changed - the
-  // 1.5s poll would otherwise wipe every open row's detail each tick. Step
-  // detail inside an open row refreshes on its own, below, either way.
-  // Expanding/collapsing by hand isn't part of this - the click already
-  // updated the DOM, and a rebuild triggered by anything else restores every
-  // open row from tsExpandedRunIds anyway.
-  const signature = JSON.stringify({
-    status: run.status,
-    results: run.results.map(r => [r.status, r.run_id]),
-  });
-  if (signature !== tsLastRunRenderSignature) {
-    tsLastRunRenderSignature = signature;
-    tsRenderRunTestcaseRows(run);
-  }
-
-  tsRefreshExpandedDetails();
-}
-
-function tsRenderRunTestcaseRows(run) {
-  const container = document.getElementById('tsRunTestcases');
-  // Rebuilding throws away whatever was rendered inside each open row, so the
-  // per-row caches go with it - otherwise an unchanged testcase would be
-  // skipped as "already rendered" and its row left blank.
-  tsFinishedDetailRunIds.clear();
-  container.innerHTML = run.results.length
-    ? run.results.map((r, i) => tsRunTestcaseRowHtml(r, i, r.run_id
-        ? tsExpandedRunIds.has(r.run_id)
-        : tsExpandedPendingIds.has(r.testcase_id))).join('')
-    : `<div class="pi-log-empty">${run.status === 'running' ? 'starting…' : 'no testcases ran'}</div>`;
-
-  // Older suite runs (and any run recorded before the backend seeded every
-  // testcase up front) only carry entries for what already finished.
-  if (run.status === 'running' && run.results.length < run.testcase_ids.length) {
-    container.insertAdjacentHTML('beforeend', '<div class="pi-log-empty">running…</div>');
-  }
-
-  container.querySelectorAll('.cmd-entry').forEach((entry, i) => {
-    const r = run.results[i];
-    const toggle = entry.querySelector('.ts-run-toggle');
-    if (!toggle) return;
-    // A testcase the suite hasn't reached yet has no run_id - nothing to
-    // poll - but its own step list is already known (fetched up front via
-    // tsLoadRunTestcaseNames), so it can still show every step as "pending"
-    // rather than nothing at all.
-    const pending = !r.run_id && tsRunTestcaseSteps[r.testcase_id];
-    if (r.status === 'running') {
-      // Loaded immediately (not lazily on click, like the finished-row path
-      // below) - it starts expanded, and tsRefreshRunningStepDetail below
-      // keeps it live on every subsequent poll tick.
-      tcRenderRunSteps(entry.querySelector('.result'), { id: r.run_id, results: [], status: 'running', steps: [] });
-    } else if (pending) {
-      tcRenderRunSteps(entry.querySelector('.result'), tsPendingStepsRun(r.testcase_id));
-    }
-    // Nothing to drill into for a testcase that both hasn't run and has no
-    // step list to fall back on (e.g. it was deleted before the suite
-    // reached it) - only that case skips wiring the toggle at all.
-    if (!r.run_id && !pending) {
-      toggle.addEventListener('click', () => {
-        const resultEl = entry.querySelector('.result');
-        const expanding = resultEl.classList.contains('hidden');
-        resultEl.classList.toggle('hidden');
-        entry.querySelector('.toggle').innerHTML = expanding ? '&#9660;' : '&#9654;';
-        if (expanding) resultEl.innerHTML = `<div class="pi-log-empty">${r.error || 'not run yet'}</div>`;
-      });
-      return;
-    }
-    toggle.addEventListener('click', () => {
-      const resultEl = entry.querySelector('.result');
-      const expanding = resultEl.classList.contains('hidden');
-      resultEl.classList.toggle('hidden');
-      entry.querySelector('.toggle').innerHTML = expanding ? '&#9660;' : '&#9654;';
-      if (!r.run_id) {
-        // Pending: the step list is static (nothing to poll), so toggling
-        // just shows/hides what was already rendered above.
-        if (expanding) tsExpandedPendingIds.add(r.testcase_id);
-        else tsExpandedPendingIds.delete(r.testcase_id);
-        return;
-      }
-      if (expanding) {
-        tsExpandedRunIds.add(r.run_id);
-        tsLoadTestcaseRunDetail(resultEl, r.run_id);
-      } else {
-        tsExpandedRunIds.delete(r.run_id);
-      }
-    });
-  });
-}
-
-// Keeps the currently-running testcase's step-by-step detail live - called
-// on every poll tick regardless of renderTsRunView's own skip-if-unchanged
-// (that skip is keyed on each row's *status*, which stays "running" for
-// many ticks while the steps underneath it keep changing).
-async function tsRefreshRunningStepDetail(run) {
-  const idx = run.results.findIndex(r => r.status === 'running');
-  if (idx === -1) return;
-  const runId = run.results[idx].run_id;
-  if (!runId) return;
-  const entry = document.querySelectorAll('#tsRunTestcases .cmd-entry')[idx];
-  const resultEl = entry && entry.querySelector('.result');
-  // Not rendered, or the user collapsed it by hand - leave it alone rather
-  // than fight a deliberate click.
-  if (!resultEl || resultEl.classList.contains('hidden')) return;
-  await tcRenderRunInto(resultEl, runId);
-}
-
 async function loadTsRunHistory() {
   try {
     const res = await apiFetch(`${API}/testsuites/runs?limit=100`);
@@ -860,7 +391,6 @@ document.getElementById('tsEditorCloseBtn').addEventListener('click', closeTsEdi
 document.getElementById('tsEditorOverlay').addEventListener('click', (e) => {
   if (e.target.id === 'tsEditorOverlay') closeTsEditorModal();
 });
-document.getElementById('tsLiveRefreshBtn').addEventListener('click', loadTsLiveList);
 document.getElementById('tsRunHistoryBtn').addEventListener('click', openTsRunHistoryModal);
 document.getElementById('tsRunHistoryCloseBtn').addEventListener('click', closeTsRunHistoryModal);
 document.getElementById('tsRunHistoryOverlay').addEventListener('click', (e) => {
@@ -895,18 +425,5 @@ document.addEventListener('tabshown', (e) => {
   } else {
     closeTsEditorModal();
     closeTsRunHistoryModal();
-  }
-  if (e.detail.viewId === 'running') {
-    loadTsLiveList();
-    startTsLivePolling();
-    if (tsActiveRunId !== null) {
-      refreshTsRun();
-      startTsRunPolling();
-    } else if (tcLiveRunId !== null) {
-      refreshTcLive();
-      startTcLivePolling();
-    }
-  } else {
-    pauseTsRunTab();
   }
 });

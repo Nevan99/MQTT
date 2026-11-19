@@ -9,7 +9,7 @@ from pathlib import Path
 
 from database.database import get_session_direct
 from database.models import Capture
-from service import recordings
+from service import recordings, run_logs
 from service.pcap_decoder import PcapStreamDecoder
 from src.connection_manager import manager
 
@@ -125,6 +125,10 @@ class _CaptureHandler(socketserver.StreamRequestHandler):
             # the old per-line tcpdump batching over MQTT.
             decoded = decoder.feed(chunk)
             if decoded:
+                # A test run sniffing this interface files them under its own
+                # log too (service/run_logs.py) - the same stream serves the
+                # live view and the run's packet log.
+                run_logs.append_packets(pi_id, interface, decoded)
                 self._relay_packets(pi_id, interface, decoded)
 
     def _handle_stream_syslog(self, header):
@@ -138,6 +142,7 @@ class _CaptureHandler(socketserver.StreamRequestHandler):
             if not line:
                 continue
             recordings.append_log_line(pi_id, line)
+            run_logs.append(pi_id, line)
             _relay(pi_id, "logs", line)
 
     def _relay_packets(self, pi_id, interface, decoded):

@@ -15,6 +15,14 @@ function formatVnDateTime(value) {
   return d.toLocaleString('en-GB', { timeZone: VN_TIME_ZONE });
 }
 
+// "23/10/2026, 14:05:01" as a bold date and a muted time (.kt-date/.kt-time).
+function ktDateTimeHtml(value) {
+  const text = formatVnDateTime(value);
+  if (!text) return '<span class="kt-muted">—</span>';
+  const [date, time] = text.split(', ');
+  return `<span class="kt-date">${date}</span> <span class="kt-time">${time || ''}</span>`;
+}
+
 function wifiFailureDetail(result) {
   const parts = [];
   if (result && result.output) parts.push(result.output);

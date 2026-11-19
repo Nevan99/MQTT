@@ -130,6 +130,32 @@ class MQTTService:
         pi.status = status_value
         pi.last_seen = datetime.now(timezone.utc)
         session.add(pi)
+        if status_value != "online":
+            self._mark_interfaces_down(session, pi_id)
+
+    # InterfaceStatus fields that describe the live link - meaningless once
+    # the Pi is gone (MAC, type and radio capabilities stay as they were).
+    LIVE_LINK_FIELDS = (
+        "ip_address", "ipv6_address", "ssid", "bssid", "frequency_mhz", "band",
+        "signal_dbm", "rx_bitrate_mbps", "tx_bitrate_mbps", "gateway", "key_mgmt",
+        "pairwise_cipher", "group_cipher", "wpa_state", "noise_dbm", "avg_signal_dbm",
+        "link_speed_mbps", "channel_width", "wifi_generation",
+        "mlo", "mld_address", "ap_mld_address", "mlo_links",
+    )
+
+    def _mark_interfaces_down(self, session, pi_id: str):
+        """An offline Pi stops reporting interface status, so its last
+        report would otherwise show UP/connected until it comes back (when
+        its interface status loop overwrites these again)."""
+        rows = session.exec(select(InterfaceStatus).where(InterfaceStatus.pi_id == pi_id)).all()
+        for row in rows:
+            for field in self.LIVE_LINK_FIELDS:
+                setattr(row, "mlo_links_json" if field == "mlo_links" else field, None)
+            row.state = "DOWN"
+            if row.connected is not None:
+                row.connected = False
+            row.updated_at = datetime.now(timezone.utc)
+            session.add(row)
 
     # Actions whose result reports a failed attempt as connected=false
     # rather than with an "error" key - the agent only sets "error" when the
