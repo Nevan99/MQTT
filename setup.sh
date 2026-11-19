@@ -31,8 +31,10 @@ ENV_FILE="$BACKEND_DIR/.env"
 MOSQUITTO_SRC="$ROOT_DIR/mosquitto.conf"
 MOSQUITTO_DST="/etc/mosquitto/conf.d/pi-fleet.conf"
 
-DEFAULT_HOST="192.168.150.20"
-DEFAULT_PORT="8000"
+# Defaults: what a previous run saved in .env, else these.
+_saved() { grep -m1 "^$1=" "$ENV_FILE" 2>/dev/null | cut -d= -f2- | tr -d "'\"" || true; }
+DEFAULT_HOST="$(_saved SERVER_HOST)"; DEFAULT_HOST="${DEFAULT_HOST:-192.168.150.20}"
+DEFAULT_PORT="$(_saved SERVER_PORT)"; DEFAULT_PORT="${DEFAULT_PORT:-8000}"
 HOST="${HOST:-}"
 PORT="${PORT:-}"
 MQTT_PORT="${MQTT_PORT:-1883}"
@@ -253,6 +255,11 @@ if [[ $edit_env == 1 ]]; then
     cp -p "$ENV_FILE" "$ENV_FILE.bak"
     echo "  (press Enter to keep the value in brackets)"
 
+    if [[ $ENV_ONLY == 1 ]]; then
+        ask HOST    "Web page IP (0.0.0.0 = all)"    "$DEFAULT_HOST"  valid_ip
+        ask PORT    "Web page port"                  "$DEFAULT_PORT"  valid_port
+    fi
+
     # Broker runs on this machine; 0.0.0.0 isn't connectable, so use loopback.
     def_broker=$(env_get MQTT_BROKER_HOST)
     [[ -n $def_broker ]] || def_broker=$([[ $HOST == 0.0.0.0 ]] && echo 127.0.0.1 || echo "$HOST")
@@ -269,6 +276,9 @@ if [[ $edit_env == 1 ]]; then
     ask expire      "Login session length (minutes)" "$def_expire"    valid_num
     ask db_url      "Database URL"                   "$def_db"
 
+    if [[ $broker_host != 127.0.0.1 ]] && ! ip -4 -o addr show | grep -qw "inet $broker_host"; then
+        echo "  Warning: $broker_host is not an IP of this machine; the back-end won't reach the broker." >&2
+    fi
     for p in "$MQTT_PORT" "$CAPTURE_SOCKET_PORT"; do
         [[ $p != "$PORT" ]] || die "port $p clashes with the web page port"
     done
@@ -280,6 +290,8 @@ if [[ $edit_env == 1 ]]; then
     env_set CAPTURE_SOCKET_PORT "$CAPTURE_SOCKET_PORT"
     env_set AUTH_USERNAME       "$auth_user"
     env_set JWT_EXPIRE_MINUTES  "$expire"
+    env_set SERVER_HOST         "$HOST"
+    env_set SERVER_PORT         "$PORT"
 
     # Single quotes stop python-dotenv expanding the "$2b$..." in the hash.
     if [[ -z $(env_get AUTH_PASSWORD_HASH) ]] || yes_no "Change the web login password?"; then
@@ -300,6 +312,12 @@ if [[ $edit_env == 1 ]]; then
 else
     # Keep Mosquitto's listener in step with what the back-end connects to.
     MQTT_PORT=$(env_get MQTT_BROKER_PORT); MQTT_PORT=${MQTT_PORT:-1883}
+    # Save the IP/port chosen above so a later restart.sh uses them too.
+    if [[ $(env_get SERVER_HOST) != "$HOST" || $(env_get SERVER_PORT) != "$PORT" ]]; then
+        env_set SERVER_HOST "$HOST"
+        env_set SERVER_PORT "$PORT"
+        echo "Saved web page address $HOST:$PORT to .env"
+    fi
 fi
 
 if [[ $ENV_ONLY == 1 ]]; then
